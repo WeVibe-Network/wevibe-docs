@@ -40,7 +40,7 @@ make localnet-reset
 make build
 
 # Initialize the chain (creates ~/.wevibed)
-CHAIN_ID=echo-local-1 MONIKER=my-validator WEVIBED_BINARY=./build/wevibe-chain ./scripts/init-chain.sh start
+CHAIN_ID=wevibe-local-1 MONIKER=my-validator WEVIBED_BINARY=./build/wevibe-chain ./scripts/init-chain.sh start
 
 # In another terminal, check status
 curl -s http://localhost:26657/status
@@ -48,25 +48,25 @@ curl -s http://localhost:26657/status
 
 ## Genesis Configuration
 
-Chain ID: `echo-local-1` | Denom: `uecho`
+Chain ID: `wevibe-local-1` | Denom: `uvibe`
 
 ### Accounts
 
 | Account | Balance | Purpose |
 |---------|---------|---------|
-| `validator` | 1000000000uecho | Initial genesis account |
-| `validator` (gentx) | 500000000uecho | Self-delegation for validator |
+| `validator` | 1000000000uvibe | Initial genesis account |
+| `validator` (gentx) | 500000000uvibe | Self-delegation for validator |
 
 ### Genesis Initialization Flow (`init-chain.sh`)
 
-1. `wevibed init <moniker> --chain-id echo-local-1 --home ~/.wevibed`
+1. `wevibed init <moniker> --chain-id wevibe-local-1 --home ~/.wevibed`
 2. Patch `config.toml`: change `laddr` from `127.0.0.1:26657` to `0.0.0.0:26657`
 3. `wevibed keys add validator --keyring-backend test --home ~/.wevibed`
-4. `wevibed genesis add-genesis-account <validator_addr> 1000000000uecho`
-5. `wevibed genesis gentx validator 500000000uecho --chain-id echo-local-1`
+4. `wevibed genesis add-genesis-account <validator_addr> 1000000000uvibe`
+5. `wevibed genesis gentx validator 500000000uvibe --chain-id wevibe-local-1`
 6. Patch gentx if `delegator_address` is empty
 7. `wevibed genesis collect-gentxs --home ~/.wevibed`
-8. Configure `echo_epoch` (60s for local, 86400s for production)
+8. Configure `wevibe_epoch` (60s for local, 86400s for production)
 9. Configure governance params (deposit, voting periods)
 10. Disable `x/mint` inflation (emissions module handles supply)
 11. Validate genesis
@@ -86,7 +86,7 @@ The `x/operator` module uses `MsgRegisterOperator` with these fields:
 operator_address  - bech32 address
 operator_id      - unique identifier
 cons_pub_key     - consensus public key (tendermint pubkey)
-bond_amount      - Coin in uecho
+bond_amount      - Coin in uvibe
 ```
 
 ### Register via CLI
@@ -96,19 +96,19 @@ wevibed tx operator register-operator \
   --operator-address <address> \
   --operator-id <unique-id> \
   --cons-pub-key <tendermint-pubkey> \
-  --bond-amount 1000000uecho \
+  --bond-amount 1000000uvibe \
   --keyring-backend test \
-  --chain-id echo-local-1
+  --chain-id wevibe-local-1
 ```
 
 ### Query Operators
 
 ```bash
 # Via gRPC gateway (port 9090)
-curl -s http://localhost:9090/echo.operator.v1.Query/GetOperator
+curl -s http://localhost:9090/wevibe.operator.v1.Query/GetOperator
 
 # Via REST (port 1317)
-curl -s http://localhost:1317/echo/operator/v1/operators
+curl -s http://localhost:1317/wevibe/operator/v1/operators
 ```
 
 ## Monitoring
@@ -173,7 +173,7 @@ wevibed genesis validate-genesis --home ~/.wevibed
 curl -s http://localhost:26657/status
 
 # Check if container is running
-docker ps | grep echo-validator
+docker ps | grep wevibe-validator
 ```
 
 ### pprof errors in binary
@@ -213,15 +213,15 @@ These are warnings from Cosmos SDK store registration — safe to ignore.
 make build
 
 # Initialize (native)
-wevibed init <moniker> --chain-id echo-local-1
+wevibed init <moniker> --chain-id wevibe-local-1
 
 # Keys
 wevibed keys list --keyring-backend test
 wevibed keys add validator --keyring-backend test
 
 # Genesis
-wevibed genesis add-genesis-account <addr> 1000000000uecho
-wevibed genesis gentx validator 500000000uecho --chain-id echo-local-1
+wevibed genesis add-genesis-account <addr> 1000000000uvibe
+wevibed genesis gentx validator 500000000uvibe --chain-id wevibe-local-1
 wevibed genesis collect-gentxs
 wevibed genesis validate-genesis
 
@@ -242,7 +242,7 @@ wevibed start --home ~/.wevibed
 
 - **Path**: `m/44'/118'/0'/0/0`
 - **Key name**: `submitter`
-- **Denomination**: `uecho`
+- **Denomination**: `uvibe`
 
 ## Upgrading wevibed
 

@@ -3,7 +3,7 @@
 This guide walks through running a complete local stack:
 
 1. `wevibed` (wevibe-chain validator + full node)
-2. echo-client tooling (wevibe-mcp, wevibe-guard, wevibe-sdk)
+2. wevibe-client tooling (wevibe-mcp, wevibe-guard, wevibe-sdk)
 
 ## Prerequisites
 
@@ -47,10 +47,10 @@ This burns the registration fee, funds the org treasury with test tokens, and ou
 ```bash
 npm install -g wevibe-mcp
 
-cat <<JSON > ~/.config/echo/mcp.json
+cat <<JSON > ~/.config/wevibe/mcp.json
 {
   "mcpServers": {
-    "echo": {
+    "wevibe": {
       "command": "wevibe-mcp",
       "env": {
         "WEVIBE_CHAIN_RPC": "http://localhost:26657",
@@ -68,8 +68,8 @@ On first run wevibe-mcp will prompt you to join the org with the invitation gene
 ## Step 4: Run wevibe-guard (optional sidecar)
 
 ```bash
-git clone https://github.com/WeVibe-Network/echo
-cd echo/wevibe-guard
+git clone https://github.com/WeVibe-Network/wevibe
+cd wevibe/wevibe-guard
 cargo build --release
 export WEVIBE_GUARD_BIN="$(pwd)/target/release/wevibe-guard"
 ```
@@ -88,4 +88,4 @@ wevibe-mcp auto-detects the binary when `WEVIBE_GUARD_BIN` is set.
 
 ## Cleanup
 
-Stop `wevibed`, delete the data directory (`~/.wevibe-chain` by default), and remove the cached config at `~/.echo/`.
+Stop `wevibed`, delete the data directory (`~/.wevibe-chain` by default), and remove the cached config at `~/.wevibe/`.

@@ -41,7 +41,7 @@ Add to your agent's MCP config:
 ```json
 {
   "mcpServers": {
-    "echo": {
+    "wevibe": {
       "command": "wevibe-mcp",
       "env": {
         "WEVIBE_CHAIN_RPC": "http://localhost:26657",
@@ -56,7 +56,7 @@ Add to your agent's MCP config:
 ## Step 2: Set up your identity
 
 ```
-> Call echo_setup_identity
+> Call wevibe_setup_identity
 ```
 
 This generates your Ed25519 signing keypair and X25519 encryption keypair, stored in
@@ -65,7 +65,7 @@ your OS keychain. Your Ed25519 public key is your permanent leader identity for 
 ## Step 3: Create your org
 
 ```
-> Call echo_create_org with:
+> Call wevibe_create_org with:
   - org_name: "Your Org Name"
   - domain: "yourorg.example.com"
 ```
@@ -87,14 +87,14 @@ epoch key re-derivation is not possible and existing memories cannot be decrypte
 For each team member who should contribute memories:
 
 ```
-> Call echo_invite_member with:
-  - org_id: [your org ID from echo_orgs]
+> Call wevibe_invite_member with:
+  - org_id: [your org ID from wevibe_orgs]
   - invitee_pubkey: [member's Ed25519 pubkey hex]
   - invitee_x25519_pubkey: [member's X25519 pubkey hex]
   - role: "member"
 ```
 
-Members retrieve their pubkeys by calling `echo_setup_identity` on their device
+Members retrieve their pubkeys by calling `wevibe_setup_identity` on their device
 and sharing the output with you.
 
 ## Step 5: Invite moderators
@@ -103,7 +103,7 @@ Moderators review and approve submitted memories before they enter the knowledge
 Invite trusted team members as moderators:
 
 ```
-> Call echo_invite_member with:
+> Call wevibe_invite_member with:
   - org_id: [your org ID]
   - invitee_pubkey: [moderator's Ed25519 pubkey hex]
   - invitee_x25519_pubkey: [moderator's X25519 pubkey hex]
@@ -119,19 +119,19 @@ leader, you also hold `SK_mod` and can moderate directly.
 You and your designated moderators can review and act on pending submissions:
 
 ```
-> Call echo_moderate_queue for org [org ID]
+> Call wevibe_moderate_queue for org [org ID]
 ```
 
 This returns pending items with decrypted plaintext (if your mod key is loaded).
 
 To approve:
 ```
-> Call echo_moderate_approve for submission [hash]
+> Call wevibe_moderate_approve for submission [hash]
 ```
 
 To deny:
 ```
-> Call echo_moderate_deny for submission [hash] with reason: "..."
+> Call wevibe_moderate_deny for submission [hash] with reason: "..."
 ```
 
 ## Step 7: Verify org health
@@ -139,7 +139,7 @@ To deny:
 After setup, confirm everything is working:
 
 ```
-> Call echo_orgs
+> Call wevibe_orgs
 ```
 
 Check:
@@ -151,8 +151,8 @@ Check:
 
 If you lose access to your device:
 
-1. On the new device, call `echo_setup_identity` to generate a new identity.
-2. Call `echo_recover_org` with your 24-word recovery phrase to restore `K_master`
+1. On the new device, call `wevibe_setup_identity` to generate a new identity.
+2. Call `wevibe_recover_org` with your 24-word recovery phrase to restore `K_master`
    and re-derive epoch keys.
 3. Re-import your personal sealed envelope (managed by anchor) to recover `SK_mod`.
 

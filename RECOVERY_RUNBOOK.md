@@ -8,7 +8,7 @@ For background on the key hierarchy, see [KEY_MANAGEMENT.md](KEY_MANAGEMENT.md).
 All recovery procedures assume:
 - An wevibe-chain endpoint is reachable at your configured `WEVIBE_CHAIN_RPC` / `WEVIBE_CHAIN_GRPC`
 - The recovering agent has `wevibe-mcp` installed and configured
-- You know the org ID (`echo_orgs` will list it once your identity is loaded)
+- You know the org ID (`wevibe_orgs` will list it once your identity is loaded)
 
 ---
 
@@ -23,7 +23,7 @@ All recovery procedures assume:
 
 1. On the new device, set up an identity:
    ```
-   > Call echo_setup_identity
+   > Call wevibe_setup_identity
    ```
    This generates a new Ed25519 + X25519 keypair in the OS keychain.
 
@@ -38,22 +38,22 @@ All recovery procedures assume:
 
 2. Restore K_master from the recovery phrase:
    ```
-   > Call echo_recover_org with your 24-word recovery phrase
+   > Call wevibe_recover_org with your 24-word recovery phrase
    ```
    This reconstructs K_master and re-derives all epoch keys into local memory.
 
 3. Verify epoch keys are accessible:
    ```
-   > Call echo_orgs
+   > Call wevibe_orgs
    ```
    Your org should appear with non-zero `encKeys` and `searchKeys` counts.
 
 4. `SK_mod` is recovered automatically by `loadMemberships` (called internally by
-   `echo_orgs`) from your sealed leader envelope — no manual step required.
+   `wevibe_orgs`) from your sealed leader envelope — no manual step required.
 
 5. Verify moderation access:
    ```
-   > Call echo_moderate_queue for your org
+   > Call wevibe_moderate_queue for your org
    ```
    If items are returned and decrypt successfully, recovery is complete.
 
@@ -75,10 +75,10 @@ New epoch key derivation is not possible.
 
 2. Once the on-chain leader record (or your analytics surface) reflects the new pubkey, set up a new identity on the new device:
    ```
-   > Call echo_setup_identity
+   > Call wevibe_setup_identity
    ```
 
-3. Re-import your sealed leader envelope (created by anchor). Once the blockchain recognizes the new leader pubkey, `echo_orgs` will hydrate `SK_mod` automatically.
+3. Re-import your sealed leader envelope (created by anchor). Once the blockchain recognizes the new leader pubkey, `wevibe_orgs` will hydrate `SK_mod` automatically.
 
 4. For members: existing envelopes are sealed to old member pubkeys. Re-invite affected members so fresh envelopes can be delivered.
 
@@ -95,7 +95,7 @@ The leader's identity keypair is intact.
 
 **Steps:**
 
-No manual steps required. `loadMemberships` (called by `echo_orgs` and moderation tools)
+No manual steps required. `loadMemberships` (called by `wevibe_orgs` and moderation tools)
 re-imports `SK_mod` from the leader’s sealed envelope on every call. The local keychain
 entry is used by the anchor tooling when sealing `SK_mod` to new moderators, but is not
 required for the leader’s own moderation operations.
@@ -104,12 +104,12 @@ If you need to re-seal SK_mod to a new moderator and the local entry is missing:
 
 1. Recover K_master from the recovery phrase:
    ```
-   > Call echo_recover_org with your 24-word recovery phrase
+   > Call wevibe_recover_org with your 24-word recovery phrase
    ```
 
 2. After recovery, re-invite the moderator:
    ```
-   > Call echo_invite_member with the moderator's pubkey and role: moderator
+   > Call wevibe_invite_member with the moderator's pubkey and role: moderator
    ```
 
 ---
@@ -124,24 +124,24 @@ If you need to re-seal SK_mod to a new moderator and the local entry is missing:
 
 1. Moderator sets up a new identity on the new device:
    ```
-   > Call echo_setup_identity
+   > Call wevibe_setup_identity
    ```
    This generates a new Ed25519 + X25519 keypair. The new pubkey is different from
    the old one.
 
 2. Moderator shares their new pubkey with the org leader:
    ```
-   > Call echo_orgs
+   > Call wevibe_orgs
    ```
    The pubkey is shown in the identity info output.
 
 3. If your analytics/dashboard surface supports membership removal, use it; otherwise
    simply re-invite the moderator under the new pubkey:
    ```
-   > Call echo_invite_member with the moderator's new pubkey and role: moderator
+   > Call wevibe_invite_member with the moderator's new pubkey and role: moderator
    ```
 
-4. On the new device, moderator calls `echo_orgs` to load their membership.
+4. On the new device, moderator calls `wevibe_orgs` to load their membership.
    SK_mod will be included in the sealed invitation.
 
 ---
@@ -154,17 +154,17 @@ If you need to re-seal SK_mod to a new moderator and the local entry is missing:
 
 1. Member sets up a new identity:
    ```
-   > Call echo_setup_identity
+   > Call wevibe_setup_identity
    ```
 
 2. Member shares new pubkey with org leader.
 
 3. Leader re-invites:
    ```
-   > Call echo_invite_member with the member's new pubkey and role: member
+   > Call wevibe_invite_member with the member's new pubkey and role: member
    ```
 
-4. Member calls `echo_orgs` to load the new membership and epoch keys.
+4. Member calls `wevibe_orgs` to load the new membership and epoch keys.
 
 ---
 
@@ -172,7 +172,7 @@ If you need to re-seal SK_mod to a new moderator and the local entry is missing:
 
 After any recovery procedure, verify:
 
-- [ ] `echo_orgs` returns the expected org with correct role
+- [ ] `wevibe_orgs` returns the expected org with correct role
 - [ ] `encKeys` and `searchKeys` counts are non-zero
-- [ ] For leaders/moderators: `echo_moderate_queue` returns items and decrypts without error
-- [ ] For members: `echo_contribute` completes without error on a test submission
+- [ ] For leaders/moderators: `wevibe_moderate_queue` returns items and decrypts without error
+- [ ] For members: `wevibe_contribute` completes without error on a test submission

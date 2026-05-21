@@ -1,4 +1,4 @@
-# Echo Matching Engine — Architecture Decision Record
+# WeVibe Matching Engine — Architecture Decision Record
 
 **ADR-025: Contested Memory Disambiguation + Moderation Similarity Detection**
 **Date:** 2026-04-09
@@ -21,17 +21,17 @@ At scale (2,000+ memories), this becomes the dominant failure. More memories mea
 
 ### When results are clear
 
-The developer types a prompt. The agent calls `echo_recall`. One memory scores well above the rest. The MCP client returns it. The agent weaves it into the response. The developer never sees Echo. This is the common case and it stays exactly as it is today.
+The developer types a prompt. The agent calls `wevibe_recall`. One memory scores well above the rest. The MCP client returns it. The agent weaves it into the response. The developer never sees WeVibe. This is the common case and it stays exactly as it is today.
 
 ### When results are contested
 
-The developer types a prompt. The agent calls `echo_recall`. Two or three memories score within striking distance of each other. They address the same problem with different approaches.
+The developer types a prompt. The agent calls `wevibe_recall`. Two or three memories score within striking distance of each other. They address the same problem with different approaches.
 
 The MCP client detects this. It calls the local LLM to read the competing memories and produce three things for each: a one-line summary, a "best when" statement, and the key tradeoff. This gets returned to the agent as structured guidance.
 
 The agent reads the guidance. It asks the developer 2-3 clarifying questions — the kind it would ask anyway when a problem has multiple valid solutions. "Are you optimizing for security isolation or latency?" "Is this for a VPS or a cloud deployment?" Based on the answers, the agent picks the right memory and proceeds.
 
-The developer experiences this as a normal conversation with a thoughtful agent. They don't see scoring breakdowns. They don't see "ECHO WARNING." They see an agent that asks good questions before giving advice. The 5-10 seconds spent answering questions save 30 minutes of following the wrong approach.
+The developer experiences this as a normal conversation with a thoughtful agent. They don't see scoring breakdowns. They don't see "VIBE WARNING." They see an agent that asks good questions before giving advice. The 5-10 seconds spent answering questions save 30 minutes of following the wrong approach.
 
 ### What the developer never does
 
@@ -39,9 +39,9 @@ The developer experiences this as a normal conversation with a thoughtful agent.
 - Tag or categorize memories
 - Choose between memories in a UI
 - Configure scoring weights
-- Interact with Echo directly in any way
+- Interact with WeVibe directly in any way
 
-The agent is the interface. Echo is invisible infrastructure.
+The agent is the interface. WeVibe is invisible infrastructure.
 
 ---
 
@@ -87,7 +87,7 @@ The moderator is a quality gate for content. The system handles indexing and ret
 ### Recall flow (updated)
 
 ```
-Agent calls echo_recall(query)
+Agent calls wevibe_recall(query)
         │
         ▼
 MCP extracts keywords + embedding from query
@@ -159,7 +159,7 @@ using new memory's keywords + embedding
 
 4. **Works across every MCP client identically.** The disambiguation is text returned by the tool. Claude Code, OpenCode, Codex, Cursor — they all read text, they all know how to ask clarifying questions. No client-specific integration needed.
 
-5. **Keeps Echo invisible in the common case.** Clear winner → silent injection. Only contested results trigger the disambiguation path. Most recalls won't be contested.
+5. **Keeps WeVibe invisible in the common case.** Clear winner → silent injection. Only contested results trigger the disambiguation path. Most recalls won't be contested.
 
 ## What This Does Not Do
 
@@ -205,7 +205,7 @@ using new memory's keywords + embedding
 
 This ADR covers the architectural decisions. Implementation is split across COs:
 
-- **CO-078:** LLM-based query keyword extraction (replaces deterministic splitter in echo_recall/echo_context)
+- **CO-078:** LLM-based query keyword extraction (replaces deterministic splitter in wevibe_recall/wevibe_context)
 - **CO-079:** Extraction prompt tuning (mandatory keyword categories + few-shot examples)
 - **CO-080:** Hub contested detection (score gap threshold, contested flag in response)
 - **CO-081:** MCP disambiguation flow (local LLM comparison when contested, structured response format)

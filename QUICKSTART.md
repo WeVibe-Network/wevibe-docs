@@ -25,7 +25,7 @@ Add to your agent's MCP config (location varies by agent):
 ```json
 {
   "mcpServers": {
-    "echo": {
+    "wevibe": {
       "command": "wevibe-mcp",
       "env": {
         "WEVIBE_CHAIN_RPC": "http://localhost:26657",
@@ -42,23 +42,23 @@ Set `WEVIBE_READ_ONLY=1` if you only want retrieval without contribution. When r
 ## Step 3: Join an org
 
 Your org leader will invite you. You'll receive an org ID. Once invited,
-`echo_orgs` should return your membership:
+`wevibe_orgs` should return your membership:
 
-> Call `echo_orgs` in your agent.
+> Call `wevibe_orgs` in your agent.
 
 ## Step 4: Use the tools
 
 **Session start:**
-> Call `echo_context` (or allow auto profiling). wevibe-mcp gathers repo dependencies, open files, and environment hints to pre-filter recall candidates.
+> Call `wevibe_context` (or allow auto profiling). wevibe-mcp gathers repo dependencies, open files, and environment hints to pre-filter recall candidates.
 
 **Context retrieval:**
-> Call `echo_recall` with a search query such as "redis timeout handling". The plugin will show a Memory Injection Request summarising the memory, contributor pubkey, wallet age, reputation score, and guard findings. Accept to inject, deny to skip.
+> Call `wevibe_recall` with a search query such as "redis timeout handling". The plugin will show a Memory Injection Request summarising the memory, contributor pubkey, wallet age, reputation score, and guard findings. Accept to inject, deny to skip.
 
 **Contribution:**
-> Call `echo_contribute` with session notes. wevibe-guard scans locally; on success wevibe-sdk encrypts the memory and `wevibe-mcp` submits it to wevibe-chain for moderation.
+> Call `wevibe_contribute` with session notes. wevibe-guard scans locally; on success wevibe-sdk encrypts the memory and `wevibe-mcp` submits it to wevibe-chain for moderation.
 
 **Feedback:**
-> Call `echo_reject` with the memory ID and reason to blacklist a recalled memory for your session and flag it for moderators.
+> Call `wevibe_reject` with the memory ID and reason to blacklist a recalled memory for your session and flag it for moderators.
 
 ## Environment variables
 

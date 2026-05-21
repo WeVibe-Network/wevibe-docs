@@ -14,14 +14,14 @@ Classification: Confidential — Not for public distribution
 
 v2.0 is a fundamental architectural revision. The centralized hub model (wevibe-hub as a hosted service with PostgreSQL, Qdrant, and Ollama) is replaced by a fully decentralized architecture where encrypted memories are stored on-chain and orgs run local retrieval software. The key changes:
 
-1. **Memories stored on-chain.** Encrypted memory blobs go directly on the Echo chain as state. No hosted blob storage. No single point of failure. Validators maintain the data as part of consensus.
-2. **Local retrieval.** Orgs run echo-client locally — a wallet-like tool that syncs from chain, decrypts with org keys, builds a local vector index, and serves retrieval to the developer's agent. No hosted backend touches plaintext.
-3. **wevibe-hub eliminated.** The hosted Go server is replaced by echo-client (local software). The chain is the backend.
+1. **Memories stored on-chain.** Encrypted memory blobs go directly on the WeVibe chain as state. No hosted blob storage. No single point of failure. Validators maintain the data as part of consensus.
+2. **Local retrieval.** Orgs run wevibe-client locally — a wallet-like tool that syncs from chain, decrypts with org keys, builds a local vector index, and serves retrieval to the developer's agent. No hosted backend touches plaintext.
+3. **wevibe-hub eliminated.** The hosted Go server is replaced by wevibe-client (local software). The chain is the backend.
 4. **Serve attestations.** When a human approves a memory in the plugin, the approval is attested on-chain. This is the economic primitive — contributors earn when their knowledge gets used. Serve events build the social graph.
-5. **Orgs as economic units.** Orgs burn ECHO to create (Bittensor-style dynamic pricing). Org pays for contributor uploads. Org sets rep-tier payout rules. Protocol enforces bandwidth allocation per org.
+5. **Orgs as economic units.** Orgs burn VIBE to create (Bittensor-style dynamic pricing). Org pays for contributor uploads. Org sets rep-tier payout rules. Protocol enforces bandwidth allocation per org.
 6. **Contributor reputation from serves.** Memories are tied to contributor pub keys. Serves accumulate on-chain. Reputation = verified usefulness, not self-reported credentials.
-7. **Anti-DDOS at protocol level.** Chain enforces per-org bandwidth caps based on ECHO burned/staked. No org can flood the network.
-8. **Three software pieces.** wevibe-chain (validators run), echo-client (orgs run locally), plugins (agent-specific gates).
+7. **Anti-DDOS at protocol level.** Chain enforces per-org bandwidth caps based on VIBE burned/staked. No org can flood the network.
+8. **Three software pieces.** wevibe-chain (validators run), wevibe-client (orgs run locally), plugins (agent-specific gates).
 9. **Simplified module set.** x/serving, x/challenge, and x/receipt eliminated. Replaced by x/bandwidth and x/serve (serve attestation). Storage is guaranteed by consensus, not separate challenges.
 
 Sprint 22 chain hardening work (CO-162 through CO-170) remains valid — the Cosmos SDK app, module infrastructure, CometBFT consensus, and operator economics are the foundation this pivot builds on.
@@ -37,7 +37,7 @@ Sprint 22 delivered chain production hardening: governance-adjustable module par
 
 ### Revision notes (v1.4 → v1.5)
 
-Sprint 21–22 delivered the first runnable Echo chain binary and validated the node bootstrap workflow.
+Sprint 21–22 delivered the first runnable WeVibe chain binary and validated the node bootstrap workflow.
 
 ### v1.3 → v1.4
 
@@ -64,7 +64,7 @@ Key hierarchy iterations. Moderation keypairs. BIP39 recovery. Authorization hea
 
 ## Abstract
 
-Echo is plugin-gated shared memory infrastructure for AI coding agents. It provides an on-chain encrypted knowledge network where domain experts create, operate, and curate memory organizations. Coding agents connect via plugins installed in their IDE or terminal. Each organization is an autonomous knowledge product — a curated collection with its own membership roster, role hierarchy, curation standards, and domain focus — administered by its leader.
+WeVibe is plugin-gated shared memory infrastructure for AI coding agents. It provides an on-chain encrypted knowledge network where domain experts create, operate, and curate memory organizations. Coding agents connect via plugins installed in their IDE or terminal. Each organization is an autonomous knowledge product — a curated collection with its own membership roster, role hierarchy, curation standards, and domain focus — administered by its leader.
 
 The system has seven design commitments. First, memories are encrypted before they leave the contributor's machine and stored as opaque blobs on-chain — no infrastructure operator can read content. Second, retrieval operates locally within the org through vector-first staged scoring: semantic vector similarity determines the candidate set, calibrated keyword matching provides precision boost, selective LLM re-ranking resolves ambiguous cases, and model-origin priors adjust relevance. Third, the chain is the storage and attestation layer — trusted for availability and ordering through consensus, not trusted for content. Fourth, every recalled memory passes through a plugin-rendered approval UI before reaching the agent — the human sees the memory, sees wevibe-guard's detection results, sees the contributor's reputation and wallet age, and explicitly approves or denies injection. Fifth, the system is designed as a curator workbench: leaders and reviewers manufacture high-quality domain memory through direct authorship, moderation, gap analysis, and skill packaging. Sixth, serve events are attested on-chain, creating an economic primitive where contributors earn when their knowledge helps others. Seventh, sessions are optionally attested (CommitLLM for open-weight models, proxy for closed-weight) and memories are difficulty-scored, building verifiable reputation profiles for AI-native developers.
 
@@ -76,11 +76,11 @@ The system has seven design commitments. First, memories are encrypted before th
 
 AI coding agents start every session from zero. Institutional knowledge — what works, what fails, what to avoid — exists in the heads of senior engineers and is lost between sessions. When one agent discovers that an SSE timeout behind Nginx requires a specific keepalive configuration, that knowledge should persist and be available to every agent in the organization. Today it isn't.
 
-The problem is worse for developers running local models. A 27B parameter model working on Solana development lacks training data about specific framework versions, deployment gotchas, and stack-specific configuration. These developers are the core audience for Echo — domain-specific memories fill the gap between their model's training data and their actual stack.
+The problem is worse for developers running local models. A 27B parameter model working on Solana development lacks training data about specific framework versions, deployment gotchas, and stack-specific configuration. These developers are the core audience for WeVibe — domain-specific memories fill the gap between their model's training data and their actual stack.
 
 A second problem compounds the first: the internet is being polluted with LLM-generated content at accelerating rates. Developer knowledge platforms are filling with AI-generated articles that are superficially correct but miss critical nuance — the kind of nuance you only learn by hitting the bug in production. A verified memory from a real session where a real developer fought with a real Redis cluster becomes dramatically more valuable in that environment. The provenance is the scarce resource.
 
-A third problem is social: vibe coders — developers who work primarily by directing AI agents — have no way to prove their skills. GitHub tracks commits, but the AI wrote the code. Stack Overflow requires context-switching into documentation mode. No platform captures the problem-solving work that happens every day between a developer and their coding agent. Echo's on-chain serve attestations and contributor reputation create the first verifiable social graph for AI-native developers.
+A third problem is social: vibe coders — developers who work primarily by directing AI agents — have no way to prove their skills. GitHub tracks commits, but the AI wrote the code. Stack Overflow requires context-switching into documentation mode. No platform captures the problem-solving work that happens every day between a developer and their coding agent. WeVibe's on-chain serve attestations and contributor reputation create the first verifiable social graph for AI-native developers.
 
 ### 1.2 The Organization Model
 
@@ -96,7 +96,7 @@ Each organization is a self-governing memory network with its own:
 
 This model places domain experts in charge of their domains. A leader who has built 50 production React applications can evaluate React memories in ways no automated system can. Their reputation is tied to the quality of their network.
 
-Organizations are economic units analogous to Bittensor subnets — they burn ECHO to create, pay for storage bandwidth, and set the rules for contributor compensation within their domain. The org's public keyword tags (Redis, Kubernetes, AWS) are discovery signals, not secrets — they tell developers what knowledge this community offers.
+Organizations are economic units analogous to Bittensor subnets — they burn VIBE to create, pay for storage bandwidth, and set the rules for contributor compensation within their domain. The org's public keyword tags (Redis, Kubernetes, AWS) are discovery signals, not secrets — they tell developers what knowledge this community offers.
 
 ### 1.3 The Curator Workbench
 
@@ -108,7 +108,7 @@ The curator's core workflows are: review pending memories (approve, reject, edit
 
 Every memory must pass through human eyes before it enters an agent's context. This is the product invariant.
 
-The plugin is installed in the developer's coding agent (OpenCode, Claude Code, Cursor, Cline, etc.). When the agent needs context, it calls a tool registered by the plugin. The plugin retrieves candidate memories from the local echo-client, scans each with wevibe-guard, and renders an approval UI:
+The plugin is installed in the developer's coding agent (OpenCode, Claude Code, Cursor, Cline, etc.). When the agent needs context, it calls a tool registered by the plugin. The plugin retrieves candidate memories from the local wevibe-client, scans each with wevibe-guard, and renders an approval UI:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -131,7 +131,7 @@ The plugin is installed in the developer's coding agent (OpenCode, Claude Code, 
 └─────────────────────────────────────────┘
 ```
 
-**Accept + Attest:** Memory injected into agent context. Serve attestation queued for epoch batch (using per-org pseudonymous serve key). Contributor earns reputation and ECHO payout per org's rep-tier rules.
+**Accept + Attest:** Memory injected into agent context. Serve attestation queued for epoch batch (using per-org pseudonymous serve key). Contributor earns reputation and VIBE payout per org's rep-tier rules.
 
 **Accept Private:** Memory injected into agent context. No serve attestation. No contributor payout. No public record. For stealth sessions or when the user doesn't want their retrieval activity recorded. Org leaders can configure whether private accepts are allowed (`serve_attestation_required = true | false`).
 
@@ -141,22 +141,22 @@ The plugin is installed in the developer's coding agent (OpenCode, Claude Code, 
 
 **Why not MCP elicitation?** MCP elicitation is a spec feature where the server asks the client for structured user input mid-tool-call. It fails the security requirements: most coding agents don't support it (silent fail-open on 80% of clients), it renders as a chat bubble rather than a hard modal (easy to miss), and there's no "are you sure?" confirmation chain. The plugin provides all three: interruption, clear modal UI, and confirmation. MCP remains the retrieval and contribution backend. The plugin is the delivery and approval surface.
 
-### 1.5 Echo's Architecture: Protocol, Not Platform
+### 1.5 WeVibe's Architecture: Protocol, Not Platform
 
-Echo is a protocol, not a hosted service. No single entity owns the memory infrastructure. The chain holds the data. Local software serves it. The protocol coordinates everything.
+WeVibe is a protocol, not a hosted service. No single entity owns the memory infrastructure. The chain holds the data. Local software serves it. The protocol coordinates everything.
 
 **What the protocol provides:**
 
 1. **On-chain encrypted storage.** Memories are encrypted blobs stored as chain state. Every validator replicates them. No single point of failure.
 2. **Serve attestation.** On-chain record when a memory is approved for injection. This is the economic primitive — it drives contributor rewards and builds the social graph.
 3. **Contributor reputation.** On-chain aggregates tied to contributor pub keys — serve count, domain expertise, wallet age, rep score. Visible in the approval UI at the point of decision.
-4. **Bandwidth allocation.** Protocol-enforced per-org caps on submissions and storage. Prevents DDOS. Scaled by ECHO burned/staked.
-5. **Memory sanitization.** Defense-in-depth pipeline: wevibe-guard scanning, OCR sanitization, artifact extraction, egress enforcement — all running locally on the org's echo-client.
+4. **Bandwidth allocation.** Protocol-enforced per-org caps on submissions and storage. Prevents DDOS. Scaled by VIBE burned/staked.
+5. **Memory sanitization.** Defense-in-depth pipeline: wevibe-guard scanning, OCR sanitization, artifact extraction, egress enforcement — all running locally on the org's wevibe-client.
 6. **Delivery via context injection.** Approved memories are formatted as `context:\n{memory content}` and injected into the agent's prompt.
 7. **Optional session attestation.** CommitLLM for open-weight models, proxy attestation for closed-weight. See Section 3.10.
 8. **Optional difficulty scoring and reputation.** Two-layer grading feeds developer profiles. See Section 3.11 and Section 6.
 
-**Trust boundaries.** The chain is trusted for availability, ordering, and state integrity through consensus. The chain is **not** trusted for content confidentiality — it stores encrypted blobs it cannot read. The org's echo-client is the trust boundary for plaintext — it decrypts locally and never sends plaintext off-machine. Validators observe encrypted blobs, org IDs, contributor pub keys, and serve attestation metadata — but never memory content.
+**Trust boundaries.** The chain is trusted for availability, ordering, and state integrity through consensus. The chain is **not** trusted for content confidentiality — it stores encrypted blobs it cannot read. The org's wevibe-client is the trust boundary for plaintext — it decrypts locally and never sends plaintext off-machine. Validators observe encrypted blobs, org IDs, contributor pub keys, and serve attestation metadata — but never memory content.
 
 ---
 
@@ -180,13 +180,13 @@ All roles require epoch-specific encryption keys for content access. The leader 
 
 ### 2.3 Organization Lifecycle
 
-**Creation.** The leader burns ECHO to create an org (dynamic pricing — see Section 10.3). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). The chain allocates bandwidth to the org based on ECHO burned.
+**Creation.** The leader burns VIBE to create an org (dynamic pricing — see Section 10.3). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). The chain allocates bandwidth to the org based on VIBE burned.
 
-**First-run detection.** When echo-client starts and discovers no org membership, it surfaces an actionable message to the agent, prompting guided setup.
+**First-run detection.** When wevibe-client starts and discovers no org membership, it surfaces an actionable message to the agent, prompting guided setup.
 
 **Operation.** Members join through leader invitation. Once approved, the leader issues sealed key envelopes containing the epoch keys to the new member. For reviewers and leaders, the envelope also includes SK_mod(e) for the current epoch.
 
-**Contributor onboarding.** Contributors opt in once — they install the plugin and join the org. After that, Echo runs invisibly in the background. Sessions are mined for memories automatically. The contributor never needs to actively trigger contributions. Their echo-client handles extraction, encryption, and submission to the chain (paid for by the org).
+**Contributor onboarding.** Contributors opt in once — they install the plugin and join the org. After that, WeVibe runs invisibly in the background. Sessions are mined for memories automatically. The contributor never needs to actively trigger contributions. Their wevibe-client handles extraction, encryption, and submission to the chain (paid for by the org).
 
 **Key rotation (epoch advancement).** When a member is removed, the org enters `rotation_pending` state:
 
@@ -200,45 +200,45 @@ All roles require epoch-specific encryption keys for content access. The leader 
 
 ### 2.4 The Three Software Pieces
 
-Echo's architecture has three software components. No hosted backend. No centralized service.
+WeVibe's architecture has three software components. No hosted backend. No centralized service.
 
 **wevibe-chain (validators run this):**
 Cosmos SDK + CometBFT sovereign L1 appchain. Stores encrypted memory blobs, org state, contributor reputation, serve attestations, and bandwidth accounting. Validators maintain consensus and replicate all data. They never see plaintext.
 
-**echo-client (orgs run this locally):**
+**wevibe-client (orgs run this locally):**
 A wallet-like local application that syncs from the chain, manages org keys, decrypts memories, builds a local vector index, and serves retrieval to the developer's agent. Handles memory extraction from coding sessions, wevibe-guard scanning, encryption, and submission to chain. All plaintext operations happen here and only here. Think of it as a local-first app that reads from a shared blockchain backend.
 
 **plugins (installed in coding agents):**
-Platform-specific gates (OpenCode, Claude Code, Cursor, Cline) that register tools in the agent, intercept memory delivery from echo-client, run wevibe-guard scans, render the approval UI with contributor trust signals, and attest serves on-chain when the user approves. All plugins call the same wevibe-guard binary and the same echo-client backend.
+Platform-specific gates (OpenCode, Claude Code, Cursor, Cline) that register tools in the agent, intercept memory delivery from wevibe-client, run wevibe-guard scans, render the approval UI with contributor trust signals, and attest serves on-chain when the user approves. All plugins call the same wevibe-guard binary and the same wevibe-client backend.
 
 ### 2.5 Tool Surface
 
-The plugin registers tools in the coding agent. The echo-client provides the local backend. The separation:
+The plugin registers tools in the coding agent. The wevibe-client provides the local backend. The separation:
 
 **Plugin-registered tools (visible to the agent):**
 
 | Tool | Purpose |
 |------|---------|
-| `echo_recall` | Search organizational memory. Plugin calls echo-client for candidates, runs wevibe-guard scan, renders approval UI with contributor reputation, injects approved memories as `context:` ambient content. On approval, attests serve on-chain. |
-| `echo_contribute` | Record technical learnings. Agent calls this at natural phase transitions. Extracts atomic memories, encrypts, submits to chain via echo-client (org pays). |
-| `echo_reject` | Flag a recalled memory as unhelpful. Adds to local blacklist and reports feedback on-chain for quarantine. |
+| `wevibe_recall` | Search organizational memory. Plugin calls wevibe-client for candidates, runs wevibe-guard scan, renders approval UI with contributor reputation, injects approved memories as `context:` ambient content. On approval, attests serve on-chain. |
+| `wevibe_contribute` | Record technical learnings. Agent calls this at natural phase transitions. Extracts atomic memories, encrypts, submits to chain via wevibe-client (org pays). |
+| `wevibe_reject` | Flag a recalled memory as unhelpful. Adds to local blacklist and reports feedback on-chain for quarantine. |
 
-**echo-client backend (invisible to the agent):**
+**wevibe-client backend (invisible to the agent):**
 
-The echo-client handles retrieval queries, embedding computation, encryption/decryption, chain synchronization, local vector index management, and serve attestation submission. It returns structured candidate data to the plugin — never directly to the agent.
+The wevibe-client handles retrieval queries, embedding computation, encryption/decryption, chain synchronization, local vector index management, and serve attestation submission. It returns structured candidate data to the plugin — never directly to the agent.
 
-**Contribution behavior.** The `echo_contribute` tool description instructs agents on when to contribute: at natural transition points during sessions, when they discover something non-obvious. Negative knowledge (what NOT to do and why) is especially valuable. In practice, contribution is mostly automatic — the session buffer captures learnings and the extraction pipeline processes them without developer intervention.
+**Contribution behavior.** The `wevibe_contribute` tool description instructs agents on when to contribute: at natural transition points during sessions, when they discover something non-obvious. Negative knowledge (what NOT to do and why) is especially valuable. In practice, contribution is mostly automatic — the session buffer captures learnings and the extraction pipeline processes them without developer intervention.
 
 **Session buffer safety net.** A session buffer is initialized lazily on the first tool call and records session activity. If the agent does not explicitly contribute during the session, `autoContribute()` fires on session exit. On next session startup, orphaned buffers from crashed sessions are processed.
 
-All administrative operations (org creation, member invitation, moderation, epoch rotation, keyword management, recovery) are handled by the separate `echo-admin` CLI.
+All administrative operations (org creation, member invitation, moderation, epoch rotation, keyword management, recovery) are handled by the separate `wevibe-admin` CLI.
 
 ### 2.6 Product Handbook Map
 
-Echo has grown into a family of interoperable services. This general whitepaper captures the shared threat model, encryption design, and contributor experience. Deep dives now live alongside the source for each product:
+WeVibe has grown into a family of interoperable services. This general whitepaper captures the shared threat model, encryption design, and contributor experience. Deep dives now live alongside the source for each product:
 
 - `wevibe-chain/docs/WHITEPAPER.md` — consensus layer economics, lifecycle pressure, and keeper architecture.
-- `Echo/docs/WHITEPAPER.md` — client stack (SDK, MCP server, guard, protocol assets) and plugin UX.
+- `wevibe-docs/WHITEPAPER.md` — client stack (SDK, MCP server, guard, protocol assets) and plugin UX.
 - `wevibe-server/**/docs/WHITEPAPER.md` — operational surfaces (Hub, Dashboard, Infra) and their deployment models.
 
 Each directory also contains accompanying PDP and topology documents. Use this handbook for cross-cutting concerns; jump to the per-product sets when you need implementation specifics.
@@ -264,8 +264,8 @@ The system does NOT protect against: a compromised active member who leaks epoch
 Each organization has a master key K_master generated by the leader at org creation. Per-epoch keys are derived via HKDF:
 
 ```
-K_enc(e)    = HKDF-SHA256(K_master, info="echo-enc-" || epoch_be_bytes)
-K_audit(e)  = HKDF-SHA256(K_master, info="echo-audit-" || epoch_be_bytes)
+K_enc(e)    = HKDF-SHA256(K_master, info="wevibe-enc-" || epoch_be_bytes)
+K_audit(e)  = HKDF-SHA256(K_master, info="wevibe-audit-" || epoch_be_bytes)
 ```
 
 **K_enc(e)** wraps Data Encryption Keys (DEKs) for approved memories in epoch e.
@@ -296,27 +296,27 @@ The approved memory (ciphertext + wrapped_dek_enc + metadata) is then submitted 
 The `seal_to_pubkey` operation:
 1. Generate ephemeral X25519 keypair
 2. ECDH between ephemeral private key and recipient's X25519 public key
-3. Derive symmetric key via HKDF (info: `"echo-envelope-v1"`)
+3. Derive symmetric key via HKDF (info: `"wevibe-envelope-v1"`)
 4. Encrypt with AES-256-GCM
 5. Output: `ephemeral_pubkey (32 bytes) || nonce (12 bytes) || ciphertext+tag`
 
 **Custody model invariant (ADR-023).** Each organization's K_master is generated as an independent random value.
 
-**Recovery.** BIP39 24-word recovery phrase (ADR-019). Threshold recovery via Shamir 2-of-3 (ADR-024). Encrypted leader vault (`~/.echo/vault.enc`) with Argon2id key derivation (t=3, m=64MB, p=4).
+**Recovery.** BIP39 24-word recovery phrase (ADR-019). Threshold recovery via Shamir 2-of-3 (ADR-024). Encrypted leader vault (`~/.wevibe/vault.enc`) with Argon2id key derivation (t=3, m=64MB, p=4).
 
 ### 3.5 Retrieval Architecture
 
-Retrieval is fully local. The org's echo-client maintains a local vector index built from decrypted chain data. The pipeline:
+Retrieval is fully local. The org's wevibe-client maintains a local vector index built from decrypted chain data. The pipeline:
 
 #### Context Profiling (Session Start)
 
-When a coding session starts, echo-client automatically profiles the environment — dependencies, directory structure, language, framework versions, current file context. This profile acts as a pre-filter, narrowing the memory search space before any query runs. A developer working in a Python/Django project only searches against Python/Django memories, not the entire org corpus.
+When a coding session starts, wevibe-client automatically profiles the environment — dependencies, directory structure, language, framework versions, current file context. This profile acts as a pre-filter, narrowing the memory search space before any query runs. A developer working in a Python/Django project only searches against Python/Django memories, not the entire org corpus.
 
 #### Keyword Extraction
 Keywords are extracted by the host agent's LLM at approval time. 10-20 domain-specific keywords with percentage-based weights summing to 100%. Stored alongside the encrypted memory on-chain (plaintext keywords are an accepted metadata tradeoff — see Section 3.7).
 
 #### Semantic Embedding
-768-dimensional embedding via bundled `nomic-embed-text` model (ONNX runtime). Computed locally at approval time by the reviewer's echo-client. Stored in the local vector index (not on-chain — embeddings are derived data that each org member reconstructs locally).
+768-dimensional embedding via bundled `nomic-embed-text` model (ONNX runtime). Computed locally at approval time by the reviewer's wevibe-client. Stored in the local vector index (not on-chain — embeddings are derived data that each org member reconstructs locally).
 
 #### Atomic Memory Format
 Each memory is a single, self-contained technical insight:
@@ -341,7 +341,7 @@ Vector similarity drives recall (local index top-30 by cosine). Keywords break t
 **Blacklist and quarantine filtering.** Chain-level quarantine flag (`quarantined=true` after 3+ rejections). Client excludes locally blacklisted CIDs.
 
 #### Selective Re-ranking
-When top-2 scores are within ε=0.20 (contested query), the echo-client uses the host agent's LLM to re-rank. Fallback: original order preserved on error.
+When top-2 scores are within ε=0.20 (contested query), the wevibe-client uses the host agent's LLM to re-rank. Fallback: original order preserved on error.
 
 ### 3.6 Side Channel: On-Chain Metadata
 
@@ -349,7 +349,7 @@ With memories stored on-chain, the following metadata is publicly observable: or
 
 ### 3.7 Metadata Visibility Model
 
-Echo orgs are public developer communities, not private enterprises. On-chain metadata is intentionally public — it enables discovery, reputation, and the social graph.
+WeVibe orgs are public developer communities, not private enterprises. On-chain metadata is intentionally public — it enables discovery, reputation, and the social graph.
 
 **On-chain (public by design):** Org IDs, org topic tags, contributor pub keys, encrypted memory blobs, plaintext keyword terms/weights (discovery signal — "this org covers Redis"), submission timestamps, memory sizes, epoch boundaries, serve attestations (batched per epoch), reputation aggregates, bandwidth consumption, quarantine state.
 
@@ -359,7 +359,7 @@ Plaintext keywords on-chain are a feature, not a leak. They tell developers what
 
 ### 3.8 Defense-in-Depth: Memory Sanitization Pipeline
 
-Echo's security model focuses on what it can control: the form and content of recalled memory before it reaches the agent. All sanitization runs locally on the org's echo-client.
+WeVibe's security model focuses on what it can control: the form and content of recalled memory before it reaches the agent. All sanitization runs locally on the org's wevibe-client.
 
 #### The Pipeline
 
@@ -415,13 +415,13 @@ These decisions are final:
 
 **Pending memories: commitment on-chain, blob off-chain.** Contributors submit only a commitment (hash, org ID, contributor pubkey, expiry epoch, size) on-chain. The encrypted blob is delivered to the reviewer through temporary off-chain channels (local transfer, P2P, or org-hosted mailbox). If approved, the finalized encrypted blob goes on-chain. If rejected or expired, the commitment is removed and the temporary blob is deleted. This ensures rejected content never enters committed block data.
 
-**Local retrieval, not hosted retrieval.** Orgs run their own echo-client. No hosted search service.
+**Local retrieval, not hosted retrieval.** Orgs run their own wevibe-client. No hosted search service.
 
 **Orgs pay for contributors.** Contributors need a protocol identity (auto-generated keypair) but never need to hold, buy, or manage tokens. The org covers all on-chain costs.
 
 **Serve attestations: public reputation, pseudonymous retrieval.** Contributor reputation (serve counts, domain tags, payout amounts) is public on-chain. Retriever identity is represented by a per-org pseudonymous serve key — not the user's global contributor identity. This separates "my knowledge helped others" (public) from "this exact user needed this exact memory" (pseudonymous). Users can optionally link their org serve keys to their public profile as a learning trail.
 
-**Serve attestations are batched per epoch.** Plugin queues approvals locally. Echo-client submits one batch transaction per user per epoch using the org serve key. Not one tx per click.
+**Serve attestations are batched per epoch.** Plugin queues approvals locally. WeVibe-client submits one batch transaction per user per epoch using the org serve key. Not one tx per click.
 
 **Three-button approval UX.** Plugin offers: [Accept + Attest] (memory injected, serve attestation queued, contributor earns), [Accept Privately] (memory injected, no attestation, no payout — for stealth sessions), [Deny] (memory blocked, feedback logged). Public orgs with payouts may require attestation. Personal/local orgs may allow private accepts.
 
@@ -439,7 +439,7 @@ CommitLLM (Lambda Class, MIT licensed) is a cryptographic commit-and-audit proto
 
 #### Tier 2: Proxy-as-Trust-Layer (Closed-Weight Models)
 
-For closed-weight API models, route traffic through an Echo-controlled session proxy. Content-addresses each turn, signs the transcript with Echo's key. Weaker trust model than Tier 1 but sufficient for internal teams.
+For closed-weight API models, route traffic through a WeVibe-controlled session proxy. Content-addresses each turn, signs the transcript with WeVibe's key. Weaker trust model than Tier 1 but sufficient for internal teams.
 
 ### 3.11 Two-Layer Difficulty Scoring (Optional, Requires Attestation)
 
@@ -453,9 +453,9 @@ Separate grading LLM evaluates non-obviousness, specificity, and reasoning progr
 
 ## 4. Local Client Architecture
 
-### 4.1 echo-client
+### 4.1 wevibe-client
 
-echo-client is local software that every org member runs. It replaces the centralized wevibe-hub. Think of it as a wallet + local search engine + sync daemon.
+wevibe-client is local software that every org member runs. It replaces the centralized wevibe-hub. Think of it as a wallet + local search engine + sync daemon.
 
 **Components:**
 - **Chain syncer.** Subscribes to chain events, downloads encrypted memories for the org, maintains local state.
@@ -464,21 +464,21 @@ echo-client is local software that every org member runs. It replaces the centra
 - **Retrieval engine.** Vector-first staged scoring (Section 3.5). Context profiling. Keyword boost. Re-ranking.
 - **Session monitor.** Watches the coding session, captures learnings, runs the extraction pipeline, triggers autoContribute on session exit.
 - **Submission pipeline.** Encrypts memories, signs with contributor key, submits to chain (org pays gas/bandwidth).
-- **Serve attestation.** When the plugin approves a memory, echo-client submits the serve attestation on-chain.
+- **Serve attestation.** When the plugin approves a memory, wevibe-client submits the serve attestation on-chain.
 
 ### 4.2 Dependencies
 
-echo-client requires: a running wevibe-chain node (or RPC endpoint to one), nomic-embed-text ONNX model (bundled), ImageMagick, Tesseract, wevibe-guard binary.
+wevibe-client requires: a running wevibe-chain node (or RPC endpoint to one), nomic-embed-text ONNX model (bundled), ImageMagick, Tesseract, wevibe-guard binary.
 
 Does NOT require: PostgreSQL, Qdrant server (embedded vector index), Ollama, any hosted service.
 
 ### 4.3 Sync and Bootstrapping
 
-**First sync.** When a member joins an org, echo-client downloads all encrypted memories for that org from the chain, decrypts them with the epoch keys, generates embeddings, and builds the local vector index. For a large org with thousands of memories, this may take several minutes. After initial sync, updates are incremental — new memories arrive via chain event subscription.
+**First sync.** When a member joins an org, wevibe-client downloads all encrypted memories for that org from the chain, decrypts them with the epoch keys, generates embeddings, and builds the local vector index. For a large org with thousands of memories, this may take several minutes. After initial sync, updates are incremental — new memories arrive via chain event subscription.
 
-**Incremental sync.** echo-client subscribes to new block events. When a new memory is submitted to the org on-chain, echo-client downloads it, decrypts, embeds, and adds to the local index. Latency: seconds after on-chain confirmation.
+**Incremental sync.** wevibe-client subscribes to new block events. When a new memory is submitted to the org on-chain, wevibe-client downloads it, decrypts, embeds, and adds to the local index. Latency: seconds after on-chain confirmation.
 
-**Offline tolerance.** echo-client caches the local index. If the developer goes offline, retrieval still works against the cached index. New memories are synced when connectivity returns.
+**Offline tolerance.** wevibe-client caches the local index. If the developer goes offline, retrieval still works against the cached index. New memories are synced when connectivity returns.
 
 ### 4.4 Retrieval Flow (Plugin-Gated)
 
@@ -486,13 +486,13 @@ Does NOT require: PostgreSQL, Qdrant server (embedded vector index), Ollama, any
 Developer prompts their coding agent
      │
      ▼
-  Agent calls echo_recall (registered by plugin)
+  Agent calls wevibe_recall (registered by plugin)
      │
      ▼
-  Plugin calls echo-client with query + session context profile
+  Plugin calls wevibe-client with query + session context profile
      │
      ▼
-  echo-client (local):
+  wevibe-client (local):
      1. Context profile filtering (deps, stack, framework)
      2. Query keyword extraction (deterministic, <1ms)
      3. Query embedding (~200ms, local ONNX)
@@ -512,7 +512,7 @@ Developer prompts their coding agent
      ├── ACCEPT + ATTEST → memory injected as context:\n{content}
      │                     serve approval queued locally (org serve key)
      │                     (batched on-chain at epoch boundary)
-     │                     contributor earns rep + ECHO (per org payout rules)
+     │                     contributor earns rep + VIBE (per org payout rules)
      │
      ├── ACCEPT PRIVATE → memory injected as context:\n{content}
      │                    no attestation, no payout, no public record
@@ -527,7 +527,7 @@ Developer prompts their coding agent
 ### 4.5 Contribution Flow
 
 ```
-Agent calls echo_contribute (or autoContribute on session exit)
+Agent calls wevibe_contribute (or autoContribute on session exit)
      │
      ▼
   1. Memory extraction via LLM (atomic format)
@@ -539,14 +539,14 @@ Agent calls echo_contribute (or autoContribute on session exit)
      Org pays bandwidth for the commitment tx.
   7. Deliver encrypted blob to reviewer via off-chain channel
      (local transfer, P2P, org-hosted temporary mailbox)
-  8. Response: "Echo: captured N learning(s). Pending review."
+  8. Response: "WeVibe: captured N learning(s). Pending review."
 ```
 
 **Pending memory lifecycle:** Only the commitment goes on-chain. The encrypted blob is delivered off-chain to reviewers. If approved: the reviewer re-wraps the DEK, the finalized encrypted blob goes on-chain as permanent state, keywords are extracted, the commitment transitions to approved. If rejected or expired (configurable retention window, default 72 hours): the commitment is removed from chain state and the off-chain blob is deleted. Because rejected blobs never enter committed block data, there is no permanent trace of rejected content — even on archival nodes.
 
 ### 4.6 Reviewer Flow
 
-Reviewers use echo-client's moderation UI (local web dashboard or CLI). Approval includes: DEK re-wrap under K_enc(e), keyword extraction via local LLM, embedding computation (local ONNX), canonical signature. Approved memory submitted on-chain as finalized.
+Reviewers use wevibe-client's moderation UI (local web dashboard or CLI). Approval includes: DEK re-wrap under K_enc(e), keyword extraction via local LLM, embedding computation (local ONNX), canonical signature. Approved memory submitted on-chain as finalized.
 
 ### 4.7 Plugin Architecture
 
@@ -559,7 +559,7 @@ Each coding agent gets its own plugin codebase:
 | Cursor | Hooks + marketplace plugin | Claude Code hook format compatibility |
 | Cline | VS Code extension + hooks | `.clinerules/hooks/`, custom hook system |
 
-All plugins call the same wevibe-guard binary (configured via `WEVIBE_GUARD_BIN` env var) and the same local echo-client. The plugin is the platform shim.
+All plugins call the same wevibe-guard binary (configured via `WEVIBE_GUARD_BIN` env var) and the same local wevibe-client. The plugin is the platform shim.
 
 ---
 
@@ -567,7 +567,7 @@ All plugins call the same wevibe-guard binary (configured via `WEVIBE_GUARD_BIN`
 
 ### 5.1 Review Flow
 
-All contributed memories are submitted to the chain as pending (encrypted, only the org's reviewers can decrypt). Pending memories are visible only to reviewers and leaders via their local echo-client.
+All contributed memories are submitted to the chain as pending (encrypted, only the org's reviewers can decrypt). Pending memories are visible only to reviewers and leaders via their local wevibe-client.
 
 ### 5.2 What Review Can and Cannot Catch
 
@@ -587,7 +587,7 @@ Reviewers see pending content in plaintext on their local machine. The system is
 
 No platform captures the problem-solving work vibe coders do every day. GitHub shows what you built (commits) but the AI wrote the code. Stack Overflow requires context-switching. LinkedIn is self-reported nonsense. The knowledge generated during daily AI-assisted coding dies in terminal history.
 
-Echo solves this with on-chain cross-org reputation. Your memories are tied to your pub key. When they get served across multiple orgs, that's verifiable proof your knowledge is useful. Not self-reported. Not endorsement-based. Backed by on-chain serve attestations across the entire network.
+WeVibe solves this with on-chain cross-org reputation. Your memories are tied to your pub key. When they get served across multiple orgs, that's verifiable proof your knowledge is useful. Not self-reported. Not endorsement-based. Backed by on-chain serve attestations across the entire network.
 
 ### 6.2 Cross-Org Reputation from Serve Attestations
 
@@ -642,7 +642,7 @@ Raw serve count is NOT the only factor. Saturated scoring, org weighting, and do
 
 Additional anti-gaming from optional attestation: CommitLLM prevents fabricated sessions, structural scoring catches inflated sessions, LLM grading catches trivial memories.
 
-**Note on leaderboards:** Echo does not ship global leaderboards. However, contributor reputation statistics are public on-chain — third parties can build rankings. The protocol mitigates toxic competition by using saturated scores, domain-specific profiles, and quality-weighted serves instead of raw global counts.
+**Note on leaderboards:** WeVibe does not ship global leaderboards. However, contributor reputation statistics are public on-chain — third parties can build rankings. The protocol mitigates toxic competition by using saturated scores, domain-specific profiles, and quality-weighted serves instead of raw global counts.
 
 ### 6.6 Serve Attestation as Economic Primitive
 
@@ -665,7 +665,7 @@ MsgSubmitServeBatch {
 }
 ```
 
-Where `serve_nullifier = H("echo-serve-v1" || org_id || epoch_id || memory_cid || retriever_serve_secret)` ensures deduplication without exposing the raw relationship.
+Where `serve_nullifier = H("wevibe-serve-v1" || org_id || epoch_id || memory_cid || retriever_serve_secret)` ensures deduplication without exposing the raw relationship.
 
 **Accept + Attest** clicks queue into the batch. **Accept Private** clicks inject the memory but skip the batch entirely — no on-chain record, no payout. Denied memories get no attestation. Contributors only earn for memories people actively chose to attest.
 
@@ -681,7 +681,7 @@ Where `serve_nullifier = H("echo-serve-v1" || org_id || epoch_id || memory_cid |
 
 ### 7.2 Leader Interface
 
-echo-client local dashboard: pending review queue, memory browser, historical decisions, member management, org configuration, keyword taxonomy management, recovery status, direct memory authoring, rep-tier payout configuration, bandwidth usage monitoring.
+wevibe-client local dashboard: pending review queue, memory browser, historical decisions, member management, org configuration, keyword taxonomy management, recovery status, direct memory authoring, rep-tier payout configuration, bandwidth usage monitoring.
 
 ### 7.3 Member Interface
 
@@ -693,7 +693,7 @@ Members see: role, contribution count, serve count, pending submission status, r
 
 ### 8.1 On-Chain Encrypted Memory Storage
 
-Memory content is stored as encrypted blobs directly on the Echo chain. Each approved memory is a transaction that writes:
+Memory content is stored as encrypted blobs directly on the WeVibe chain. Each approved memory is a transaction that writes:
 - Encrypted ciphertext (AES-256-GCM)
 - Wrapped DEK (sealed to epoch key)
 - Plaintext metadata: org ID, epoch, contributor pub key, keywords/weights, stack tags, timestamp, provenance tier
@@ -709,7 +709,7 @@ Plaintext keywords are stored alongside encrypted memories on-chain. This enable
 
 ### 8.3 Semantic Vector Index (Local Only)
 
-Vector embeddings are NOT stored on-chain. Each org member's echo-client computes embeddings locally from decrypted memory content and maintains a local vector index. This means:
+Vector embeddings are NOT stored on-chain. Each org member's wevibe-client computes embeddings locally from decrypted memory content and maintains a local vector index. This means:
 - No embedding data leaks to the chain
 - Each member has a complete, searchable index of their org's memories
 - Index rebuild is deterministic — same memories produce same embeddings
@@ -745,7 +745,7 @@ K_master compromise exposes all epoch-derived content. Mitigation: offline recov
 On-chain data is public (encrypted blobs + plaintext metadata). An observer can see: org sizes, submission frequency, keyword distributions, serve patterns, contributor activity, reputation scores. They cannot see: memory content, decryption keys, member identities beyond pub keys, local blacklist state.
 
 ### 9.5 Network-Level Anti-DDOS
-Protocol-enforced per-org bandwidth caps. Orgs receive submission and storage bandwidth proportional to ECHO burned/staked. Chain rejects submissions exceeding the org's allocation. No org can flood the network regardless of off-chain resources.
+Protocol-enforced per-org bandwidth caps. Orgs receive submission and storage bandwidth proportional to VIBE burned/staked. Chain rejects submissions exceeding the org's allocation. No org can flood the network regardless of off-chain resources.
 
 ### 9.6 Content Suitability Policy
 
@@ -759,36 +759,36 @@ Protocol-enforced per-org bandwidth caps. Orgs receive submission and storage ba
 
 ### 10.1 Chain Architecture
 
-Echo's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a rollup — Echo requires deterministic finality (CometBFT provides this; rollups have multi-day challenge windows). The chain halts before it forks — safety-over-liveness is correct for memory attestation and storage.
+WeVibe's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a rollup — WeVibe requires deterministic finality (CometBFT provides this; rollups have multi-day challenge windows). The chain halts before it forks — safety-over-liveness is correct for memory attestation and storage.
 
 ### 10.2 The Four Roles
 
-**Developer (user).** Codes with an LLM. Memories accumulate as exhaust. Never holds ECHO tokens, never thinks about chains. Experience: "I code, my memories accumulate, my profile shows what I've solved." Echo runs invisibly in the background after initial opt-in.
+**Developer (user).** Codes with an LLM. Memories accumulate as exhaust. Never holds VIBE tokens, never thinks about chains. Experience: "I code, my memories accumulate, my profile shows what I've solved." WeVibe runs invisibly in the background after initial opt-in.
 
-**Org leader (curator).** Creates orgs (burns ECHO), pays for contributor bandwidth, curates memories, manages membership, sets rep-tier payout rules. The org leader is the economic actor and quality gatekeeper.
+**Org leader (curator).** Creates orgs (burns VIBE), pays for contributor bandwidth, curates memories, manages membership, sets rep-tier payout rules. The org leader is the economic actor and quality gatekeeper.
 
-**Validator.** Stakes ECHO, runs CometBFT consensus, stores all chain state (including encrypted memories), earns staking rewards. Everything deterministic — no subjective judgments. Validators are the storage and availability layer.
+**Validator.** Stakes VIBE, runs CometBFT consensus, stores all chain state (including encrypted memories), earns staking rewards. Everything deterministic — no subjective judgments. Validators are the storage and availability layer.
 
-**Echo-the-protocol.** Open-source software. No company in the middle. Echo-the-company may run validators and operate orgs early on, but the protocol does not depend on any single entity.
+**WeVibe-the-protocol.** Open-source software. No company in the middle. WeVibe-the-company may run validators and operate orgs early on, but the protocol does not depend on any single entity.
 
 ### 10.3 Token Economics
 
-Single token: **ECHO**. Used for staking, org creation burns, bandwidth allocation, and contributor payouts.
+Single token: **VIBE**. Used for staking, org creation burns, bandwidth allocation, and contributor payouts.
 
-**Dynamic org pricing.** Org creation costs ECHO, algorithmically adjusted (Bittensor-style: creation pushes price up, time decays it down). Burned, not paid to anyone. Prevents spam-org attacks.
+**Dynamic org pricing.** Org creation costs VIBE, algorithmically adjusted (Bittensor-style: creation pushes price up, time decays it down). Burned, not paid to anyone. Prevents spam-org attacks.
 
 **Annual renewal.** Flat rate for continued bandwidth allocation. Non-renewal marks the org dormant — memories persist on-chain but no new submissions or serves earn rewards.
 
-**Bandwidth allocation.** ECHO burned/staked by an org determines its per-epoch submission cap and storage budget. This is the anti-DDOS mechanism and the economic unit that makes the network sustainable.
+**Bandwidth allocation.** VIBE burned/staked by an org determines its per-epoch submission cap and storage budget. This is the anti-DDOS mechanism and the economic unit that makes the network sustainable.
 
-**Contributor payouts.** Org sets rep-tier rules: contributors with reputation in tier X earn Y ECHO per serve. The org funds these payouts. Contributors never need their own tokens.
+**Contributor payouts.** Org sets rep-tier rules: contributors with reputation in tier X earn Y VIBE per serve. The org funds these payouts. Contributors never need their own tokens.
 
 **Rep-tier example:**
 | Tier | Rep Range | Contributions/Day | Payout per Serve |
 |------|-----------|-------------------|-----------------|
-| 1 | 0–50 | 3 | 1 ECHO |
-| 2 | 51–200 | 10 | 3 ECHO |
-| 3 | 201+ | 50 | 5 ECHO |
+| 1 | 0–50 | 3 | 1 VIBE |
+| 2 | 51–200 | 10 | 3 VIBE |
+| 3 | 201+ | 50 | 5 VIBE |
 
 Org leaders can adjust these tiers. Protocol enforces them on-chain.
 
@@ -802,7 +802,7 @@ The serve attestation is the core economic event:
 1. Developer approves a memory in the plugin
 2. Plugin submits serve attestation on-chain (signed by retrieving user)
 3. Chain credits the contributor's reputation
-4. If org payout rules allow, ECHO flows from org treasury to contributor
+4. If org payout rules allow, VIBE flows from org treasury to contributor
 
 This creates a clean incentive loop: contributors produce useful knowledge → it gets served → they earn reputation and tokens → higher reputation earns better payout tiers → incentive to produce more useful knowledge.
 
@@ -815,7 +815,7 @@ Six custom Cosmos SDK modules:
 - `x/serve` — batched serve attestation recording (per-org pseudonymous serve keys), deduplication (memory_cid + serve_key + epoch), self-serve detection/discounting, payout caps and org budget enforcement, contributor cross-org serve count aggregation, payout trigger from org treasury to contributor
 - `x/reputation` — per-contributor cross-org aggregated stats (serve count, org breadth, domain tags, rep score, wallet age). Enhanced mode per-org when attestation enabled (difficulty histogram, XP, provenance breakdown).
 - `x/emissions` — validator staking rewards, contributor payout distribution from org treasuries, protocol-level emission schedule
-- `x/bandwidth` — per-org submission and storage caps, DDOS protection, bandwidth allocation based on ECHO burned/staked, rate limiting enforcement
+- `x/bandwidth` — per-org submission and storage caps, DDOS protection, bandwidth allocation based on VIBE burned/staked, rate limiting enforcement
 
 Standard SDK modules: `x/staking`, `x/auth`, `x/bank`, `x/gov` (wired for on-chain param updates), `x/slashing`, `x/distribution`.
 
@@ -827,8 +827,8 @@ The chain ships a runnable Cosmos SDK application and CLI (`wevibed`). A single-
 
 1. `wevibed init {moniker} --chain-id {id}`
 2. `wevibed keys add validator --keyring-backend test`
-3. `wevibed genesis add-genesis-account {addr} 100000000uecho`
-4. `wevibed genesis gentx validator 50000000uecho --chain-id {id}`
+3. `wevibed genesis add-genesis-account {addr} 100000000uvibe`
+4. `wevibed genesis gentx validator 50000000uvibe --chain-id {id}`
 5. `wevibed genesis collect-gentxs`
 6. `wevibed start`
 
@@ -855,7 +855,7 @@ Federation operates at the skill level. Orgs publish skill packages. Receiving o
 ### Phase I: On-Chain Memory MVP (Current)
 
 - wevibe-chain: Cosmos SDK app with x/org, x/memory, x/serve, x/reputation, x/emissions, x/bandwidth
-- echo-client: local retrieval, key management, chain sync, vector index, submission pipeline
+- wevibe-client: local retrieval, key management, chain sync, vector index, submission pipeline
 - wevibe-guard: prompt injection scanning, memory injection gating
 - Plugins: OpenCode (primary), Claude Code, Cursor, Cline
 - On-chain memory storage (encrypted blobs)
@@ -889,7 +889,7 @@ Federation operates at the skill level. Orgs publish skill packages. Receiving o
 
 ## 13. Open Questions
 
-**Context profiling depth.** How much session context should echo-client gather at startup? Dependencies and directory structure are cheap. Current file content is expensive. Needs calibration.
+**Context profiling depth.** How much session context should wevibe-client gather at startup? Dependencies and directory structure are cheap. Current file content is expensive. Needs calibration.
 
 **Pending memory retention window.** How long do pending (unreviewed) memories stay on-chain before auto-purging? 72 hours? Configurable per org?
 
@@ -899,7 +899,7 @@ Federation operates at the skill level. Orgs publish skill packages. Receiving o
 
 **Cross-org retrieval.** Can a member of Org A retrieve memories from Org B? If so, how are keys shared? Federation at the skill level is designed but not implemented.
 
-**Chain open questions.** Dynamic pricing curve parameters, bandwidth sizing per ECHO burned, validator hardware requirements for memory storage, rep-tier parameter governance, bootstrap-to-steady-state transition.
+**Chain open questions.** Dynamic pricing curve parameters, bandwidth sizing per VIBE burned, validator hardware requirements for memory storage, rep-tier parameter governance, bootstrap-to-steady-state transition.
 
 **Anti-collusion for serve attestations.** Self-serves (contributor == retriever) are discountable. Cross-user collusion needs monitoring — serve pattern analysis, payout caps per contributor per epoch, cooldowns between repeated serves of the same memory.
 

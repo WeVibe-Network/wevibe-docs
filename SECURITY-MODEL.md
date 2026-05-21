@@ -32,7 +32,7 @@ Members who join cannot access epochs before `history_access_from_epoch`.
 
 ## Revocation Scope
 
-Revocation in Echo is cryptographic denial of future re-encryption; it does not erase endpoint-resident plaintext.
+Revocation in WeVibe is cryptographic denial of future re-encryption; it does not erase endpoint-resident plaintext.
 
 | Content Category | Revocation Effective? |
 |-----------------|----------------------|
@@ -68,7 +68,7 @@ Operationally, revocation removes PRE re-encryption capability by deleting the s
    b. Optionally sets relationships, validity bounds, or archives conflicts.
    c. Submits `MsgApproveMemory` carrying ciphertext, wrapped DEK, and metadata.
 4. wevibe-chain records the approval, initialises retrieval confidence, and updates lifecycle state.
-5. echo-clients sync the approval, rebuild local indexes, and keep blind tokens client-side.
+5. wevibe-clients sync the approval, rebuild local indexes, and keep blind tokens client-side.
 ```
 
 ## Wire format

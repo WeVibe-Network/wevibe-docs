@@ -31,7 +31,7 @@
 
 **Two packages (private, chain):**
 - wevibe-chain (Go/Cosmos SDK) — sovereign L1 appchain modules (8 modules, all production-hardened)
-- echo-commitllm-bridge (Rust) — CommitLLM ZK receipt verification bridge
+- wevibe-commitllm-bridge (Rust) — CommitLLM ZK receipt verification bridge
 
 **Retrieval:** Vector-first staged scoring (ADR-025) with selective LLM re-ranking for contested queries.
 
@@ -44,7 +44,7 @@ If top-2 within epsilon=0.20 -> MCP-side LLM re-ranking via MCP sampling
 
 **Security:** 8-layer defense-in-depth pipeline. Submit-time: wevibe-guard -> OCR sanitize -> encrypt -> human review. Recall-time: decrypt -> wevibe-guard -> OCR sanitize -> artifact extract -> egress policy -> selective transform -> privilege tag -> present. Tier 2 plugins run wevibe-guard on every cached memory at session start; blocked memories never inject.
 
-**MCP surface (Tier 1):** 3 agent-facing tools (`recall`, `contribute`, `reject`) + ambient memory resource. 16-command `echo-admin` CLI for all admin operations.
+**MCP surface (Tier 1):** 3 agent-facing tools (`recall`, `contribute`, `reject`) + ambient memory resource. 16-command `wevibe-admin` CLI for all admin operations.
 
 **Plugin surface (Tier 2, OpenCode):** System prompt injection via `experimental.chat.system.transform`. Session-start caching via retrieve-cli. Per-prompt keyword filtering. Context accumulation via `tool.execute.before`. Compaction preservation via `experimental.session.compacting`. Zero custom tools. Zero permission prompts.
 
@@ -57,7 +57,7 @@ If top-2 within epsilon=0.20 -> MCP-side LLM re-ranking via MCP sampling
 - x/receipt: retrieval receipt proofs, signature verification, budget consumption (22 tests passing)
 - x/reputation: per-developer aggregates, dormant by default (28 tests passing)
 
-**Chain status:** Cosmos SDK app wiring landed. `app/app.go` registers all standard SDK keepers alongside Echo modules, provides TxConfig via `x/auth/tx`, mounts KV stores, exposes gRPC/RPC services. `wevibed` CLI implements init/start/keys/genesis/query/tx flows; `wevibed init → gentx → collect-gentxs → start` produces a single-node CometBFT network (block height 1 confirmed). Docker compose validated; smoke test passes. Integration tests (CO-162) prove full tx pipeline via MsgServiceRouter; gRPC query services (CO-163) provide 17 RPCs across 7 modules with REST gateway annotations. All keeper tests green. Hub integration pending.
+**Chain status:** Cosmos SDK app wiring landed. `app/app.go` registers all standard SDK keepers alongside WeVibe modules, provides TxConfig via `x/auth/tx`, mounts KV stores, exposes gRPC/RPC services. `wevibed` CLI implements init/start/keys/genesis/query/tx flows; `wevibed init → gentx → collect-gentxs → start` produces a single-node CometBFT network (block height 1 confirmed). Docker compose validated; smoke test passes. Integration tests (CO-162) prove full tx pipeline via MsgServiceRouter; gRPC query services (CO-163) provide 17 RPCs across 7 modules with REST gateway annotations. All keeper tests green. Hub integration pending.
 
 **Dependencies (MCP server):** Node.js, ImageMagick, Tesseract, wevibe-guard binary. No Ollama.
 **Dependencies (admin CLI):** Above + Ollama (for moderation keyword extraction).
@@ -80,8 +80,8 @@ If top-2 within epsilon=0.20 -> MCP-side LLM re-ranking via MCP sampling
 | Theater tests | 0 | 0 | MET |
 | Ollama deps (MCP server) | 0 | 0 | MET |
 | wevibe-chain keeper tests | 157 | -- | all pass (CO-155) |
-| echo-commitllm-bridge tests | 10 | -- | 10 pass |
-| Echod smoke test | init→gentx→collect→start (single validator) | ≥1 per release | MET (CO-159) |
+| wevibe-commitllm-bridge tests | 10 | -- | 10 pass |
+| wevibed smoke test | init→gentx→collect→start (single validator) | ≥1 per release | MET (CO-159) |
 | app/app.go integration tests | 2 (keeper wiring + export) | maintain green | MET |
 | wevibe-chain integration tests | 20 (9 tx + 11 query tests) | maintain green | MET (CO-162, CO-163) |
 | gRPC query services | 17 RPCs across 7 modules + x/operator | complete | MET (CO-163, CO-169) |
@@ -102,7 +102,7 @@ Pipeline fixes, keyword overhaul (blind tokens -> plaintext), weighted scoring, 
 | CO-085 | benchmark | DONE | Parallelized benchmarks |
 | CO-086 | wevibe-mcp + wevibe-hub | DONE | Revert CO-084 |
 | CO-087 | wevibe-hub + wevibe-mcp | DONE | Vector-first retrieval + calibrated keyword boost (ADR-025) |
-| CO-088 | Echo-Retriever | DONE | Phase 3 training (FAILED -- representation collapse, nomic confirmed) |
+| CO-088 | WeVibe-Retriever | DONE | Phase 3 training (FAILED -- representation collapse, nomic confirmed) |
 | CO-089 | wevibe-hub | DONE | EnsureCollection before UpsertPoint |
 | CO-090/090a | benchmark | DONE | Fix benchmark scripts |
 
@@ -165,7 +165,7 @@ Pipeline fixes, keyword overhaul (blind tokens -> plaintext), weighted scoring, 
 | CO-141 | wevibe-mcp | DONE | Update all wevibe-guard callers to structured format. |
 | CO-142 | wevibe-guard | DONE | Structured memory scanning (breaking: old format dead). |
 | CO-143 | scripts + docs | DONE | Kill v2 collection name + fix clear/start scripts. |
-| CO-144 | wevibe-mcp | DONE | Fix MCP tool naming (echo_echo_ prefix) + extraction fallback. |
+| CO-144 | wevibe-mcp | DONE | Fix MCP tool naming (wevibe_ prefix) + extraction fallback. |
 | CO-145 | wevibe-dashboard | DONE | Dynamic hub URL for LAN access. |
 | CO-146 | .opencode plugin | DONE | Rebuild plugin: system prompt injection (Tier 2). |
 
@@ -173,9 +173,9 @@ Pipeline fixes, keyword overhaul (blind tokens -> plaintext), weighted scoring, 
 
 | CO | Package | Status | Topic |
 |---|---|---|---|
-| CO-154 | wevibe-chain + echo-commitllm-bridge | DONE | Chain foundation hardening: SDK store test panic, key corruption, Merkle proof stub, CI deps |
+| CO-154 | wevibe-chain + wevibe-commitllm-bridge | DONE | Chain foundation hardening: SDK store test panic, key corruption, Merkle proof stub, CI deps |
 | CO-155 | wevibe-chain | DONE | Migrate all 7 module keepers from in-memory maps to KVStore (157 tests passing) |
-| CO-160 | wevibe-chain + echo-commitllm-bridge | DONE | Repository split: extracted both repos from wevibe-server |
+| CO-160 | wevibe-chain + wevibe-commitllm-bridge | DONE | Repository split: extracted both repos from wevibe-server |
 | CO-161 | wevibe-chain | DONE | Local validator stack: Dockerfile, docker-compose, init-chain.sh, smoke-test.sh |
 | CO-162 | wevibe-chain | DONE | Chain integration tests: TestSuite with MsgServiceRouter dispatch, 9 tx tests, helpers.go |
 | CO-163 | wevibe-chain | DONE | gRPC query services: 17 RPCs across 7 modules, queryServer pattern, 11 query tests |
@@ -234,7 +234,7 @@ Cline:        extension API / .clinerules
 
 ### Chain Architecture (Sprint 19-22, evolving)
 
-Cosmos SDK + CometBFT sovereign L1 appchain. Single token (ECHO). Batched Merkle root attestation. Feeless stake-weighted bandwidth. Dynamic org pricing.
+Cosmos SDK + CometBFT sovereign L1 appchain. Single token (VIBE; base denom uvibe). Batched Merkle root attestation. Feeless stake-weighted bandwidth. Dynamic org pricing.
 
 **Chain status (Sprint 21 complete):**
 - All 7 module keepers migrated from in-memory `map[string]*Type` to `storetypes.KVStore` (CO-155)
@@ -260,7 +260,7 @@ wevibe-server/
 │   ├── x/receipt/           # Receipt proofs
 │   ├── x/reputation/        # Developer aggregates
 │   └── x/operator/        # Real operator staking, bond escrow, slash (CO-167)
-└── echo-commitllm-bridge/   # Rust - CommitLLM ZK bridge
+└── wevibe-commitllm-bridge/   # Rust - CommitLLM ZK bridge
     └── src/
         ├── verification.rs   # Receipt verification
         ├── commitllm_types.rs # Stub types (CI-safe)
@@ -286,13 +286,13 @@ wevibe-server/
 - Bootstrap credit pool handling
 
 ### Sprint 24: CommitLLM Bridge Integration (Tier 1)
-- `echo-commitllm-bridge` crate: receipt verification, attestation metadata generation
+- `wevibe-commitllm-bridge` crate: receipt verification, attestation metadata generation
 - Attestation hook in wevibe-mcp Merkle batching pipeline
 - Merkle leaf format with optional provenance field
 
 ### Sprint 25: Session Proxy Attestation (Tier 2) + Difficulty Scoring
 - Standalone session proxy for closed-weight models (Claude, GPT-4o)
-- Proxy attestation: content-addressed turns, Echo signing key, transparency log
+- Proxy attestation: content-addressed turns, WeVibe signing key, transparency log
 - Two-layer difficulty scoring: structural signal (model coefficient × turn-range × failed-alternative multiplier) + LLM grading
 - LLM grading service: non-obviousness, specificity, reasoning progression axes
 
@@ -322,31 +322,31 @@ S30: Mainnet launch prep, token launch, federation design
 
 | File | Description |
 |------|-------------|
-| /Users/jerrysmith/Desktop/Echo/PDP.md | This document (v2.20) |
-| /Users/jerrysmith/Desktop/Echo/S20-SESSION-CONTINUANCE.md | Sprint 20 session continuance |
+| /Users/jerrysmith/Desktop/wevibe-workspace/PDP.md | This document (v2.20) |
+| /Users/jerrysmith/Desktop/wevibe-workspace/S20-SESSION-CONTINUANCE.md | Sprint 20 session continuance |
 | wevibe-server/wevibe-hub/ | Private hub API repo (Go) |
 | wevibe-server/wevibe-dashboard/ | Private dashboard repo (Next.js) |
-| wevibe-server/echo-infra/ | Private infra repo (Terraform) |
-| Echo/wevibe-mcp/src/server.ts | MCP server -- Tier 1 (3 tools + 1 resource) |
-| Echo/wevibe-mcp/src/retrieve-cli.ts | Shared retrieval CLI (both tiers) |
-| Echo/wevibe-mcp/src/admin.ts | Admin CLI -- 16 commands |
-| Echo/wevibe-mcp/src/guard.ts | Shared wevibe-guard invocation |
-| Echo/wevibe-mcp/src/embedding.ts | Bundled nomic-embed-text ONNX |
-| Echo/wevibe-guard/src/main.rs | Scanner CLI entry point |
-| Echo/wevibe-guard/src/scanner.rs | YARA + credential + exfil scanning |
+| wevibe-server/wevibe-infra/ | Private infra repo (Terraform) |
+| wevibe-mcp/src/server.ts | MCP server -- Tier 1 (3 tools + 1 resource) |
+| wevibe-mcp/src/retrieve-cli.ts | Shared retrieval CLI (both tiers) |
+| wevibe-mcp/src/admin.ts | Admin CLI -- 16 commands |
+| wevibe-mcp/src/guard.ts | Shared wevibe-guard invocation |
+| wevibe-mcp/src/embedding.ts | Bundled nomic-embed-text ONNX |
+| wevibe-guard/src/main.rs | Scanner CLI entry point |
+| wevibe-guard/src/scanner.rs | YARA + credential + exfil scanning |
 | .opencode/plugins/wevibe-guard.ts | OpenCode Tier 2 plugin |
 
 **Private Repos (WeVibe-Network org):**
 - https://github.com/WeVibe-Network/wevibe-chain
-- https://github.com/WeVibe-Network/echo-commitllm-bridge
+- https://github.com/WeVibe-Network/wevibe-commitllm-bridge
 
 ---
 
 ## Environment
 
-- Docker services: wevibe-hub (:4440), echo-postgres (:5433), echo-qdrant (:6333)
+- Docker services: wevibe-hub (:4440), wevibe-postgres (:5433), wevibe-qdrant (:6333)
 - Ollama: :11434 (admin CLI only)
-- PostgreSQL: user=echo, db=echo_hub
+- PostgreSQL: user=wevibe, db=wevibe_hub
 - Qdrant collections: `org_{orgID}_memories` (768-dim, cosine, REST-only port 6333), created lazily per org
 - wevibe-guard binary: wevibe-guard/target/release/wevibe-guard
 
@@ -370,7 +370,7 @@ S30: Mainnet launch prep, token launch, federation design
 - CO-137: wevibe-hub error response standardization (deferred)
 
 ### Explicitly Killed
-- Echo-Retriever custom embedding model (representation collapse)
+- WeVibe-Retriever custom embedding model (representation collapse)
 - Vocabulary-constrained query extraction (CO-084, reverted)
 - Blind token keyword confidentiality (replaced by plaintext keywords)
 - MCP elicitation as primary gate (replaced by two-tier architecture)

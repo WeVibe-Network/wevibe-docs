@@ -11,9 +11,9 @@
 
 | Service | Container | Internal Address | Host Port | Purpose |
 |---------|-----------|------------------|-----------|---------|
-| postgres | echo-postgres | postgres:5432 | 5432 | Hub operational DB |
-| qdrant | echo-qdrant | qdrant:6333 | 6333, 6334 | Vector storage |
-| wevibed | echo-validator | wevibed:26657 (RPC), 9090 (gRPC), 1317 (REST) | 26657, 9090, 1317 | Cosmos appchain |
+| postgres | wevibe-postgres | postgres:5432 | 5432 | Hub operational DB |
+| qdrant | wevibe-qdrant | qdrant:6333 | 6333, 6334 | Vector storage |
+| wevibed | wevibe-validator | wevibed:26657 (RPC), 9090 (gRPC), 1317 (REST) | 26657, 9090, 1317 | Cosmos appchain |
 | hub | wevibe-hub | hub:4440 | 4440 | Go API server |
 | dashboard | wevibe-dashboard | dashboard:3000 | 3000 | Next.js UI |
 | umbral-sidecar | wevibe-umbral | umbral-sidecar:4460 | — | PRE encryption (GPL-3.0 sidecar) |
@@ -27,7 +27,7 @@
 
 ### Chain Broadcast (CO-258)
 
-Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uecho)`. Retry on transient state-load errors.
+Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uvibe)`. Retry on transient state-load errors.
 
 ### Schema Bootstrap
 
@@ -39,19 +39,18 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 
 ```
 ./
-├── Echo/                          # Public repository (Apache 2.0)
-│   ├── wevibe-guard/                 # Rust — YARA-X prompt injection scanner
-│   ├── wevibe-mcp/                  # TypeScript — MCP client for AI agents
-│   ├── wevibe-sdk/                  # Rust + Python — crypto primitives & WASM bindings
-│   ├── wevibe-umbral/       # Rust — PRE sidecar (GPL-3.0, NEW in CO-216)
-│   ├── anchor/                    # Rust/Solana — Solana Anchor programs
-│   ├── protocol/                  # Protocol definitions, OpenAPI spec
-│   └── docs/                      # Documentation
+├── wevibe-guard/          # Rust — YARA-X prompt injection scanner
+├── wevibe-mcp/           # TypeScript — MCP client for AI agents
+├── wevibe-sdk/           # Rust + Python — crypto primitives & WASM bindings
+├── wevibe-umbral/        # Rust — PRE sidecar (GPL-3.0, NEW in CO-216)
+├── anchor/               # Rust/Solana — Solana Anchor programs
+├── protocol/             # Protocol definitions, OpenAPI spec
+└── docs/                 # Documentation
 ```
 
 ## Sprint 23 Highlights (CO-230 through CO-234)
 
-- **Old-format memory wipe**: Qdrant echo_memories collection wiped and recreated. Hub PostgreSQL stale records cleared. Schema migrations applied to running database via RunMigrations.
+- **Old-format memory wipe**: Qdrant wevibe_memories collection wiped and recreated. Hub PostgreSQL stale records cleared. Schema migrations applied to running database via RunMigrations.
 - **Report flow**: Complete report lifecycle implemented. Reports are NOT blacklists — they enter moderation quorum. Reporter identity linked. Trial members cannot report. Upheld reports require leader wallet-signed chain TX (upheld_pending_tx → upheld). Dismissed reports track reporter's dismissed_reports_count.
 - **Deny/blacklist separation**: Deny triggers local blacklist + denial attestation (feeds confidence decay). Report triggers moderation queue (no local effect until resolved).
 - **Blacklist in recall pipeline**: `is_blacklisted()` wired into retrieve-cli.ts after PRE decrypt, before guard scan.
@@ -69,7 +68,7 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 ## Sprint 26 Highlights (CO-238)
 
 - **Multi-stage memory lifecycle**: Memory submissions now flow through four distinct states: `pending` → `pending_keyword` → `pending_chain` → `committed`. Moderator approval at `pending` only transitions to `pending_keyword` — keyword extraction, Qdrant indexing, and chain submission are decoupled and handled by separate pipeline stages.
-- **Batch keyword extraction**: Dashboard orchestrates keyword extraction via `echo_extract_memories` MCP tool. Results submitted to hub for verification (`POST /v1/orgs/{orgID}/submissions/{hash}/keywords`). Hub verifies keywords against vocabulary and transitions status to `pending_chain`.
+- **Batch keyword extraction**: Dashboard orchestrates keyword extraction via `wevibe_extract_memories` MCP tool. Results submitted to hub for verification (`POST /v1/orgs/{orgID}/submissions/{hash}/keywords`). Hub verifies keywords against vocabulary and transitions status to `pending_chain`.
 - **Hub keyword verification endpoints** (new in `internal/api/handlers/keyword_extraction.go`):
   - `POST /v1/orgs/{orgID}/submissions/{submissionHash}/keywords` — submit verified/extracted keywords
   - `POST /v1/orgs/{orgID}/submissions/{submissionHash}/keywords/rerun` — trigger re-extraction via Ollama
@@ -79,8 +78,8 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
   - `GET /v1/orgs/{orgID}/submissions/keywords/pending-chain` — list submissions ready for chain submission
 - **Batch chain submission**: Leaders review `pending_chain` submissions in dashboard and trigger `POST /v1/orgs/{orgID}/submissions/batch-chain-submit`. Multi-message Cosmos TX (atomic: all-or-nothing). Embeddings computed on-the-fly via Ollama at submit time. Post-commit: Qdrant upsert, `memory_keywords` population, status → `committed`.
 - **Leader activity tracking**: `leader_activity` table tracks `last_batch_extraction_at` and `last_chain_submission_at` per leader.
-- **GAP-O8 resolved**: `/api/extract` endpoint (dashboard) now proxies through MCP `echo_extract_memories` tool — no direct Ollama/OpenRouter calls.
-- **wevibe-mcp changes**: `src/extraction.ts` weight normalization (weights sum to 1.0). `approveSubmissionMessageSimple` replaces complex multi-step approval message. `echo_extract_keywords_batch` and `echo_extract_memories` MCP tools added.
+- **GAP-O8 resolved**: `/api/extract` endpoint (dashboard) now proxies through MCP `wevibe_extract_memories` tool — no direct Ollama/OpenRouter calls.
+- **wevibe-mcp changes**: `src/extraction.ts` weight normalization (weights sum to 1.0). `approveSubmissionMessageSimple` replaces complex multi-step approval message. `wevibe_extract_keywords_batch` and `wevibe_extract_memories` MCP tools added.
 
 ## Sprint 27 Highlights (CO-265)
 
@@ -94,8 +93,8 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 ## Sprint 28 Highlights (CO-266)
 
 - **Trial membership (GAP-N8):** New `members.is_trial`, `members.trial_expires_at`, `orgs.trial_days` schema fields. Join approval accepts `trial` boolean. Trial members blocked from contribution (`POST /v1/orgs/{orgID}/submit` and batch-submit return 403). Retrieval enforces expiry check and daily rate limit (default 5/day). Trial→full upgrade clears trial state.
-- **Provider policy enforcement (GAP-O11, N10):** wevibe-mcp `provider_policy` setting (`unrestricted|local_only|allowlist`) evaluated at recall time. `local_only` blocks non-local providers; `allowlist` checks against org-scoped allowed providers from hub membership. Block returns `reason_code: "provider_not_allowed"`. New MCP tool `echo_set_provider_policy` for configuration.
-- **Leader-only author memory (GAP-ARCH-G7):** `echo_author_memory` MCP tool restricted to leader role. Non-leaders receive explicit admin-path description in tool response.
+- **Provider policy enforcement (GAP-O11, N10):** wevibe-mcp `provider_policy` setting (`unrestricted|local_only|allowlist`) evaluated at recall time. `local_only` blocks non-local providers; `allowlist` checks against org-scoped allowed providers from hub membership. Block returns `reason_code: "provider_not_allowed"`. New MCP tool `wevibe_set_provider_policy` for configuration.
+- **Leader-only author memory (GAP-ARCH-G7):** `wevibe_author_memory` MCP tool restricted to leader role. Non-leaders receive explicit admin-path description in tool response.
 - **Unified finances UI (GAP-O6):** Dashboard billing page shows credits balance + chain financial data. New hub `GET /v1/orgs/{orgID}/finances` endpoint.
 - **Chain config relay (GAP-O7):** New hub `GET /v1/orgs/{orgID}/chain-config` endpoint (leader-only). Dashboard settings page exposes chain config read/edit UI.
 - **Moderation edit-before-approval fallback (GAP-N2):** Dashboard deny dialog offers "Save & Edit" option for encrypted content that cannot be previewed inline. Denial records original+edited content in reason field.
@@ -123,7 +122,7 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 - **Qdrant update**: Keyword weight changes reflected in Qdrant payload metadata.
 - **Crash recovery**: `SyncEpochData` resyncs from chain on hub restart.
 - **Gas model**: Each memory retrieval = one chain TX (serve or denial). Predictable per-event gas cost.
-- **Starter packs DEFERRED**: Org responsibility, not Echo platform.
+- **Starter packs DEFERRED**: Org responsibility, not WeVibe platform.
 
 ## Sprint 25 Highlights (CO-225)
 
@@ -138,24 +137,24 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 - **Per-memory org destination**: Sessions extraction page now supports submitting different memories to different orgs via per-memory org dropdown (D-12.2).
 - **Consumer profile pages**: `/profile` (own profile, client component) and `/u/:wallet` (public profile, server component) displaying on-chain reputation data (D-12.4).
 - **Hub profile endpoint**: `GET /v1/profile/{wallet}` public endpoint aggregating wallet/org memberships/chain stats (CO-247).
-- **Org context persistence**: Active org ID stored in `localStorage` under `echo_active_org_id`.
+- **Org context persistence**: Active org ID stored in `localStorage` under `wevibe_active_org_id`.
 
 ## Sprint 25 Highlights (CO-245)
 
 - **Workspace Makefile**: New `Makefile` at workspace root with targets: `start`, `stop`, `clean`, `health`, `dogfood`, `dogfood-health`, `dogfood-pipeline`. Primary dogfood command: `make dogfood`.
 - **Pipeline health dashboard page**: New `/health` page in wevibe-dashboard showing status of 7 services: PostgreSQL (via Hub), Qdrant, wevibe-chain, wevibe-hub, wevibe-mcp HTTP (port 4450), Ollama, and Dashboard self.
 - **Dogfood pipeline smoke test**: New `tests/e2e/dogfood-pipeline.test.ts` exercising the full memory lifecycle: submit → approve with keywords → batch chain submit → recall via wevibe-mcp HTTP `/v1/recall`.
-- **wevibe-mcp HTTP URL in test config**: `tests/lib/config.ts` added `echoMcpHttpUrl` pointing to `http://127.0.0.1:4450`.
+- **wevibe-mcp HTTP URL in test config**: `tests/lib/config.ts` added `wevibeMcpHttpUrl` pointing to `http://127.0.0.1:4450`.
 
 ## Sprint 25 Highlights (CO-246)
 
-- **Per-org Qdrant collections**: Multi-org isolation via per-org collection naming `org_{orgID}_memories`. The old shared `echo_memories` collection is dead. Collection is derived via `OrgCollectionName(orgID)` function.
+- **Per-org Qdrant collections**: Multi-org isolation via per-org collection naming `org_{orgID}_memories`. The old shared `wevibe_memories` collection is dead. Collection is derived via `OrgCollectionName(orgID)` function.
 - **Lazy collection creation**: Collections created on first upsert, not at startup. `EnsureCollection(ctx, client, orgID)` called with org ID before first memory stored.
 - **Authz middleware**: New `RequireOrgMembership` middleware in `internal/auth/middleware.go` enforces org membership on all org-scoped routes. Public routes: health, member orgs, create org, get org, epoch manifest, billing topup.
 - **Defense-in-depth**: org_id filter retained on Qdrant queries even though collection name provides org scoping.
 - **Context helpers**: `GetMemberPubkey(ctx)` and `GetMemberOrgID(ctx)` in `internal/auth/middleware.go` for handlers to read authenticated member info.
 
-**Chain broadcast rewrite (CO-258):** Hub now uses Comet RPC `broadcast_tx_sync` instead of Cosmos gRPC `BroadcastTx`. Fees: gas × 0.01 uecho with 2000 uecho floor. Transient error retry (8 attempts, 400ms backoff). See D-13.12.
+**Chain broadcast rewrite (CO-258):** Hub now uses Comet RPC `broadcast_tx_sync` instead of Cosmos gRPC `BroadcastTx`. Fees: gas × 0.01 uvibe with 2000 uvibe floor. Transient error retry (8 attempts, 400ms backoff). See D-13.12.
 
 ## Sprint 25 Highlights (CO-245c — Post-CO-245 Chain Hardening Surfaces)
 
@@ -239,9 +238,9 @@ This section documents the surface areas that CO-245 will implement, locked by C
 ## Sprint 21 Highlights (CO-214)
 
 - **Delegate key infrastructure:** Dashboard now generates secp256k1 delegate keys and authorizes them via Cosmos SDK `x/authz` MsgGrant from the user's Keplr/Leap wallet. The delegate key becomes the signing identity for all chain operations.
-- **15 Echo message TypeURLs** authorized for delegation: memory (SubmitCommitment, ApproveMemory, RejectMemory, ReportMemory), serve (SubmitServeBatch), org (RegisterOrg, AddMember, RemoveMember, SetOrgConfig, SetRepTiers, FundTreasury, WithdrawTreasury), reputation (IncrementContribution, IncrementServe, RecordBan). 90-day grant expiration.
+- **15 WeVibe message TypeURLs** authorized for delegation: memory (SubmitCommitment, ApproveMemory, RejectMemory, ReportMemory), serve (SubmitServeBatch), org (RegisterOrg, AddMember, RemoveMember, SetOrgConfig, SetRepTiers, FundTreasury, WithdrawTreasury), reputation (IncrementContribution, IncrementServe, RecordBan). 90-day grant expiration.
 - **Hub delegate key registration:** New `POST /v1/orgs/{orgID}/members/delegate-key` endpoint maps delegate key addresses to wallet addresses. `ResolveDelegateToWallet` enables auth resolution from delegate address to wallet (for CO-215 migration).
-- **wevibe-mcp delegate identity storage:** Delegate mnemonic storage added to file-backed keystore under `echo-delegate-{walletAddress}` service name.
+- **wevibe-mcp delegate identity storage:** Delegate mnemonic storage added to file-backed keystore under `wevibe-delegate-{walletAddress}` service name.
 
 ---
 
@@ -348,7 +347,7 @@ QdrantAddr            string    // env: QDRANT_ADDR, default: "localhost:6333"
 QdrantAPIKey         string    // env: QDRANT_API_KEY (required, min 32 chars)
 OllamaURL             string    // env: OLLAMA_URL, default: "http://localhost:11434"
 StripeSecretKey       string    // env: STRIPE_SECRET_KEY
-S3Bucket              string    // env: WEVIBE_S3_BUCKET, default: "echo-memories"
+S3Bucket              string    // env: WEVIBE_S3_BUCKET, default: "wevibe-memories"
 NodePrivkey           string    // env: HUB_NODE_PRIVKEY
 ChainGRPCURL          string    // env: WEVIBE_CHAIN_GRPC_URL
 ChainRPCURL           string    // env: WEVIBE_CHAIN_RPC_URL (optional in Phase 1; required for Sprint 23 WebSocket)
@@ -717,7 +716,7 @@ func Delete(ctx, pool, orgID, pubkey) error
 ```go
 type SignedTimestampAuth struct { Pubkey, Timestamp, Signature string }
 var ErrMissingHeader, ErrInvalidScheme, ErrMalformedAuth
-func ParseEchoSigned(r *http.Request) (*SignedTimestampAuth, error)
+func ParseWeVibeSigned(r *http.Request) (*SignedTimestampAuth, error)
 ```
 **Key detail:** Parses `WeVibe-Signed pubkey=...,timestamp=...,signature=...` header  
 **Known issues:** None
@@ -837,7 +836,7 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 #### `app/app.go`
 **Role:** Cosmos SDK BaseApp — registers all keepers, mounts KV stores, wires gRPC/RPC
 **Key behavior:**
-- 7 custom Echo modules + standard SDK modules (staking, auth, bank, gov, slashing, distribution, mint, epochs)
+- 7 custom WeVibe modules + standard SDK modules (staking, auth, bank, gov, slashing, distribution, mint, epochs)
 - Module ordering: InitGenesis, ExportGenesis, EndBlockers all explicitly set
 - maccPerms includes operator module with Burner permission
 
@@ -845,13 +844,13 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 
 | Module | Keeper Path | Proto Path | Tests | Purpose |
 |--------|------------|-----------|-------|---------|
-| x/attestation | x/attestation/keeper/ | proto/echo/attestation/v1/ | keeper + integration | Merkle root submission |
-| x/bandwidth | x/bandwidth/keeper/ | proto/echo/bandwidth/v1/ | keeper + integration | Bandwidth throttling |
-| x/emissions | x/emissions/keeper/ | proto/echo/emissions/v1/ | keeper | Daily pool, work scores |
-| x/memory | x/memory/keeper/ | proto/echo/memory/v1/ | keeper + integration | Memory commitments |
-| x/org | x/org/keeper/ | proto/echo/org/v1/ | keeper + integration | Org registration, membership |
-| x/reputation | x/reputation/keeper/ | proto/echo/reputation/v1/ | keeper | Contributor reputation |
-| x/serve | x/serve/keeper/ | proto/echo/serve/v1/ | keeper + integration | Serve attestations |
+| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Merkle root submission |
+| x/bandwidth | x/bandwidth/keeper/ | proto/wevibe/bandwidth/v1/ | keeper + integration | Bandwidth throttling |
+| x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Daily pool, work scores |
+| x/memory | x/memory/keeper/ | proto/wevibe/memory/v1/ | keeper + integration | Memory commitments |
+| x/org | x/org/keeper/ | proto/wevibe/org/v1/ | keeper + integration | Org registration, membership |
+| x/reputation | x/reputation/keeper/ | proto/wevibe/reputation/v1/ | keeper | Contributor reputation |
+| x/serve | x/serve/keeper/ | proto/wevibe/serve/v1/ | keeper + integration | Serve attestations |
 
 ### Module Structure Pattern (all 8 modules follow this)
 
@@ -883,15 +882,15 @@ x/{module}/
 
 | Test file | Tests | Requires |
 |---|---|---|
-| tests/integration/echo_txs_test.go | 9 tx pipeline tests | In-memory MemDB app |
-| tests/integration/echo_queries_test.go | 11 gRPC query tests | In-memory MemDB app |
+| tests/integration/wevibe_txs_test.go | 9 tx pipeline tests | In-memory MemDB app |
+| tests/integration/wevibe_queries_test.go | 11 gRPC query tests | In-memory MemDB app |
 | x/*/keeper/keeper_test.go | Per-module keeper tests | In-memory |
 
 ### Scripts
 
 | Script | Purpose |
 |---|---|
-| scripts/init-chain.sh | Idempotent genesis init with echo_epoch config |
+| scripts/init-chain.sh | Idempotent genesis init with wevibe_epoch config |
 | scripts/smoke-test.sh | RPC health + block production verification |
 
 ### Docker
@@ -952,8 +951,8 @@ components/
 lib/
 ├── types.ts          # TypeScript type definitions
 ├── hub-client.ts     # API client for wevibe-hub (includes getProfile since CO-247)
-├── echo-auth.ts      # Echo signed auth utilities
-├── echo-signing.ts   # Request signing utilities (includes registerDelegateKeyCanonical since CO-214)
+├── wevibe-auth.ts      # WeVibe signed auth utilities
+├── wevibe-signing.ts   # Request signing utilities (includes registerDelegateKeyCanonical since CO-214)
 ├── mcp-client.ts     # MCP client for wevibe-mcp
 ├── wallet-connect.ts # Wallet connection (includes getOfflineSigner since CO-214)
 ├── delegate-key.ts   # secp256k1 delegate key generation and encrypted storage (CO-214)
@@ -985,7 +984,7 @@ e2e/
 
 ---
 
-## Echo/wevibe-mcp — TypeScript MCP Client + HTTP API Server
+## WeVibe/wevibe-mcp — TypeScript MCP Client + HTTP API Server
 
 **Language:** TypeScript
 **Purpose:** MCP client for AI agents to interact with WeVibe Network. Also serves an HTTP API on `127.0.0.1:4450` for the OpenCode plugin (CO-244).
@@ -1027,10 +1026,10 @@ src/
 └── admin.ts             # Admin operations (invite requires PRE pubkey + epoch SK)
 ```
 
-### `echo_mcp/` — Python MCP implementation
+### `wevibe_mcp/` — Python MCP implementation
 
 ```
-echo_mcp/
+wevibe_mcp/
 ├── __init__.py
 ├── server.py            # Python MCP server
 ├── server_legacy.py     # Legacy server
@@ -1081,7 +1080,7 @@ tests/
 
 ---
 
-## Echo/wevibe-guard — Rust YARA-X Scanner
+## WeVibe/wevibe-guard — Rust YARA-X Scanner
 
 **Language:** Rust  
 **Purpose:** YARA-X prompt injection scanner
@@ -1115,7 +1114,7 @@ tests/
 
 ---
 
-## Echo/wevibe-sdk — Rust + Python Crypto SDK
+## WeVibe/wevibe-sdk — Rust + Python Crypto SDK
 
 **Languages:** Rust, Python  
 **Purpose:** Crypto primitives + WASM bindings
@@ -1138,10 +1137,10 @@ crates/wevibe-sdk-wasm/src/
 └── lib.rs           # WASM bindings
 ```
 
-### `echo_sdk/` — Python SDK
+### `wevibe_sdk/` — Python SDK
 
 ```
-echo_sdk/
+wevibe_sdk/
 ├── __init__.py
 ├── crypto.py
 ├── identity.py
@@ -1152,7 +1151,7 @@ echo_sdk/
 
 ---
 
-## Echo/protocol — Protocol Definitions
+## WeVibe/protocol — Protocol Definitions
 
 ```
 protocol/
@@ -1164,10 +1163,10 @@ protocol/
 
 ---
 
-## Echo/anchor — Solana Anchor Programs
+## WeVibe/anchor — Solana Anchor Programs
 
 ```
-anchor/echo-identity/
+anchor/wevibe-identity/
 ├── src/lib.rs
 ├── tests/
 └── Cargo.toml
@@ -1285,7 +1284,7 @@ backend/
 ## Consumer Path (post-CO-260)
 
 **Canonical consumer chain (auth layers):**
-1. `plugin` calls local `wevibe-mcp` HTTP API using `Authorization: Bearer <token>` loaded from `~/.echo/mcp-session-token` (D-12.5a, CO-260).
+1. `plugin` calls local `wevibe-mcp` HTTP API using `Authorization: Bearer <token>` loaded from `~/.wevibe/mcp-session-token` (D-12.5a, CO-260).
 2. `wevibe-mcp` validates the Bearer token, performs canonicalization, and signs outbound hub requests with delegate auth (Option beta / D-12.5).
 3. `wevibe-mcp` calls `wevibe-hub` with WeVibe-Signed delegate authentication.
 4. `wevibe-hub` fans out to Qdrant, `wevibe-chain`, and `wevibe-umbral`, then returns through `wevibe-mcp` back to `plugin`.
@@ -1297,13 +1296,13 @@ backend/
 - `/v1/reports`
 
 **Architecture properties:**
-- Plugin holds no long-lived secret; the token rotates on MCP restart; `~/.echo/mcp-session-token` must be file mode `0600`.
+- Plugin holds no long-lived secret; the token rotates on MCP restart; `~/.wevibe/mcp-session-token` must be file mode `0600`.
 - Plugin makes no direct `wevibe-hub` calls for consumer operations.
 - `wevibe-mcp` owns canonicalization + delegate signing (Option beta / D-12.5).
 - `wevibe-hub` API contract remains unchanged; only caller identity changed.
 
 **Cross-module references:**
-- `Echo/wevibe-mcp/docs/TOPOLOGY.md`
+- `WeVibe/wevibe-mcp/docs/TOPOLOGY.md`
 - `wevibe-server/wevibe-hub/docs/TOPOLOGY.md`
 - `DECISIONS.md` (`D-12.5`, `D-12.5a`)
 

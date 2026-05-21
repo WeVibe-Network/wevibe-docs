@@ -48,7 +48,7 @@ Define the emergency-only procedure for PRE recovery authorization and execution
 
 ## D-10.2 Caveat (Current Implementation State)
 
-D-10.2 requires the recovery path to run outside the hub binary through a separate `echo-recover` CLI and to remain operationally inconvenient. That dedicated `echo-recover` CLI is not implemented yet. Until it exists, treat this runbook as the required ceremony and controls baseline, and do not fold recovery execution into routine hub operations.
+D-10.2 requires the recovery path to run outside the hub binary through a separate `wevibe-recover` CLI and to remain operationally inconvenient. That dedicated `wevibe-recover` CLI is not implemented yet. Until it exists, treat this runbook as the required ceremony and controls baseline, and do not fold recovery execution into routine hub operations.
 
 ## Prohibited Uses
 

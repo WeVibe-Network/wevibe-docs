@@ -6,7 +6,7 @@ Perfect. Starting with `MASTER.md` — UX + Gap Log only.
 
 # WeVibe Network — Participant UX & Gap Log
 
-This document defines the **desired user experience for every participant in the Echo ecosystem**, mapped to the **top-level API surfaces** each experience requires, followed by the **open gap log** of what remains to be built.
+This document defines the **desired user experience for every participant in the WeVibe ecosystem**, mapped to the **top-level API surfaces** each experience requires, followed by the **open gap log** of what remains to be built.
 
 Every UX flow includes **what** the participant does and **why** that design exists. Implementation details (file paths, function names, schema specifics) live in code. Architectural rationale lives in `DECISIONS.md`.
 
@@ -30,7 +30,7 @@ A single person can hold multiple functional roles simultaneously. A `member` in
 ## 1. Validator
 
 ### What They Do
-Validators run the Echo chain binary (`wevibed`), participate in CometBFT consensus, and earn `validator_share` from the emissions module. They are the infrastructure layer that makes the chain deterministic and available.
+Validators run the WeVibe chain binary (`wevibed`), participate in CometBFT consensus, and earn `validator_share` from the emissions module. They are the infrastructure layer that makes the chain deterministic and available.
 
 ### UX Flow
 
@@ -55,9 +55,9 @@ Validators run the Echo chain binary (`wevibed`), participate in CometBFT consen
 | `x/staking` | Cosmos SDK | Validator registration, delegation, slashing |
 | `x/distribution` | Cosmos SDK | Reward withdrawal |
 | `x/gov` | Cosmos SDK | Governance voting |
-| `x/emissions` | Echo custom | `StoredEmissionPool.validator_share`, `MsgMintDailyEmission` |
-| `x/org` | Echo custom | Queried indirectly — emissions hook iterates orgs |
-| `x/serve` | Echo custom | Queried indirectly — emissions hook pulls serve attestations |
+| `x/emissions` | WeVibe custom | `StoredEmissionPool.validator_share`, `MsgMintDailyEmission` |
+| `x/org` | WeVibe custom | Queried indirectly — emissions hook iterates orgs |
+| `x/serve` | WeVibe custom | Queried indirectly — emissions hook pulls serve attestations |
 
 ### Why This Role Exists
 Validators secure the chain. Without validators, there is no consensus, no immutable record of approved memories, no emission payouts, and no on-chain treasury management. They are compensated via `validator_share` from daily emissions.
@@ -91,17 +91,17 @@ Leaders create organizations, manage membership, configure moderation policy, fu
    See DECISIONS.md D-12.8.
 ```
 
-**Why zero-friction join:** The joiner's profile IS the application. No form fields, no essay, no application ceremony. The leader/moderator sees who the person is via their on-chain reputation and Echo profile — that's sufficient signal to approve or deny.
+**Why zero-friction join:** The joiner's profile IS the application. No form fields, no essay, no application ceremony. The leader/moderator sees who the person is via their on-chain reputation and WeVibe profile — that's sufficient signal to approve or deny.
 
 ### UX Flow: Org Creation
 
 ```
 1. User has a Cosmos-compatible wallet (Keplr, Leap, etc.)
-2. Opens Echo dashboard → "Create Organization"
+2. Opens WeVibe dashboard → "Create Organization"
 3. Fills in: org name, domain expertise, description
 4. Dashboard generates local delegated keypair
 5. User signs MsgGrant from wallet → grants delegated key permission
-   for Echo-specific messages (one-time wallet popup)
+   for WeVibe-specific messages (one-time wallet popup)
 6. Dashboard uses delegated key to sign CreateOrg request
 7. Hub creates org → chain records via MsgRegisterOrg
 8. Leader shown: org ID, epoch keypair (epoch_sk, epoch_pk), setup instructions
@@ -383,7 +383,7 @@ Contributors extract technical insights from their coding sessions and submit th
 1. Developer finishes a coding session in OpenCode
    → session stored automatically in local SQLite
      (~/.local/share/opencode/opencode.db)
-2. Opens Echo dashboard → clicks "Sessions" (first nav item)
+2. Opens WeVibe dashboard → clicks "Sessions" (first nav item)
 3. Sees all OpenCode sessions from local SQLite:
    - Session title, model used, project directory
    - Date/time, message count
@@ -441,7 +441,7 @@ Contributors extract technical insights from their coding sessions and submit th
 | Hub | `GET /v1/orgs/{orgID}` | Current epoch (for submission) |
 | Hub | `POST /v1/orgs/{orgID}/submit` | Submit encrypted memory |
 | Local | `~/.local/share/opencode/opencode.db` | SQLite session source (readonly) |
-| Local | `~/.config/echo/dashboard.json` | Dashboard settings |
+| Local | `~/.config/wevibe/dashboard.json` | Dashboard settings |
 | Local | Ollama `localhost:11434` | LLM extraction (default) |
 | External | OpenRouter API | LLM extraction (fallback) |
 
@@ -485,15 +485,15 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
    d. Runs wevibe-guard security scan on plaintext
    e. Flagged memories → redacted, not injected
    f. Clean memories returned to plugin
-7. Plugin shows developer approval UI with current risk appetite setting visible (e.g., "Echo (risk: lowest) found 2 memories..."):
-   "Echo found 3 memories relevant to your current task:"
+7. Plugin shows developer approval UI with current risk appetite setting visible (e.g., "WeVibe (risk: lowest) found 2 memories..."):
+   "WeVibe found 3 memories relevant to your current task:"
    [Memory 1 preview] ☑
    [Memory 2 preview] ☑
    [Memory 3 preview] ☐
    [Inject Selected] [Dismiss]
 8. Developer reviews and approves/rejects each memory
 9. Approved memories injected into agent context
-10. Agent sees memories as context — never knows they came from Echo
+10. Agent sees memories as context — never knows they came from WeVibe
 11. Session continues; agent benefits from injected knowledge
 12. Plugin records serve event for each injected memory:
     POST /v1/orgs/{orgID}/serves (nullifier, memory hash, contributor ID)
@@ -501,7 +501,7 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 
 **Why hub never sees plaintext:** PRE re-encryption is a cryptographic operation on ciphertext. The hub applies re-encryption keys (kfrags) to produce ciphertext fragments (cfrags) — it never decrypts or sees any plaintext. The member's PRE secret key is the only key that can complete decapsulation.
 
-**Why the agent never knows:** If the agent knows memories come from an external source, it may decide they're irrelevant, argue with them, or hallucinate about Echo's capabilities. Memories appear as context — the same way a system prompt does. The agent uses the knowledge naturally.
+**Why the agent never knows:** If the agent knows memories come from an external source, it may decide they're irrelevant, argue with them, or hallucinate about WeVibe's capabilities. Memories appear as context — the same way a system prompt does. The agent uses the knowledge naturally.
 
 **Why human gating:** The developer always approves before injection. This prevents irrelevant, incorrect, or sensitive memories from polluting the agent's context. It also gives the developer awareness of what knowledge is being used.
 
@@ -516,7 +516,7 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 2. Plugin shows Accept / Deny / Report controls per memory
 3. Developer clicks "Deny":
    → Reason selection (incorrect, outdated, irrelevant)
-   → Memory added to local blacklist (~/.echo/blacklist.json)
+   → Memory added to local blacklist (~/.wevibe/blacklist.json)
      — never shown to THIS developer again
    → Plugin submits denial to hub POST /v1/orgs/{orgID}/denials
 4. Hub records denial event (serve_events table, event_type='denial')
@@ -568,7 +568,7 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 
 ```
 1. Developer asks agent: "How many memories have I contributed?"
-2. Agent MAY call echo_status MCP tool
+2. Agent MAY call wevibe_status MCP tool
 3. Tool returns read-only info from hub
 4. Agent relays information conversationally
 5. If agent doesn't call the tool — nothing breaks
@@ -607,7 +607,7 @@ When the plugin fails to start or loses connection, a fallback chain activates:
 | Surface | Endpoint / Module | Purpose |
 |---------|------------------|---------|
 | Plugin | Agent lifecycle hooks | Context gathering, approval UI, injection |
-| wevibe-mcp | HTTP API on wevibe-mcp at 127.0.0.1:4450. Loopback-only. Per-session Bearer token auth (D-12.5a, closed by CO-260). Endpoints: GET /v1/health, POST /v1/recall, POST /v1/serves, POST /v1/reports. Token at ~/.echo/mcp-session-token, mode 0600, rotates on wevibe-mcp restart. Plugin is sole client surface to hub. See DECISIONS.md D-12.5, D-12.5a. | Retrieval proxy, serve event proxy, report proxy |
+| wevibe-mcp | HTTP API on wevibe-mcp at 127.0.0.1:4450. Loopback-only. Per-session Bearer token auth (D-12.5a, closed by CO-260). Endpoints: GET /v1/health, POST /v1/recall, POST /v1/serves, POST /v1/reports. Token at ~/.wevibe/mcp-session-token, mode 0600, rotates on wevibe-mcp restart. Plugin is sole client surface to hub. See DECISIONS.md D-12.5, D-12.5a. | Retrieval proxy, serve event proxy, report proxy |
 | Hub | `POST /v1/orgs/{orgID}/query` | Memory retrieval (PRE, requires pre_pubkey, returns cfrag + capsule) |
 | Hub | `POST /v1/orgs/{orgID}/serves` | Record serve event |
 | Hub | `POST /v1/orgs/{orgID}/denials` | Record denial event |
@@ -616,8 +616,8 @@ When the plugin fails to start or loses connection, a fallback chain activates:
 | Hub | `POST /v1/orgs/{orgID}/reports/{reportID}/commit` | Leader chain commitment (wallet-signed) |
 | Chain | `MsgSubmitServeBatch`, `MsgSubmitDenialBatch`, `MsgReportMemory` | Batch attestations (via hub relay) |
 | wevibe-guard | Scan API | Recall-time security scanning |
-| wevibe-mcp | `echo_set_risk_appetite` tool | Read/write current risk appetite (`lowest` = negative_signal only, `neutral` = both) |
-| Local | `~/.echo/plugin-config.json` | Risk appetite persistence (shared by wevibe-mcp and plugin) |
+| wevibe-mcp | `wevibe_set_risk_appetite` tool | Read/write current risk appetite (`lowest` = negative_signal only, `neutral` = both) |
+| Local | `~/.wevibe/plugin-config.json` | Risk appetite persistence (shared by wevibe-mcp and plugin) |
 
 ### UX Flow: Risk Appetite Configuration
 
@@ -625,12 +625,12 @@ When the plugin fails to start or loses connection, a fallback chain activates:
 Two ways to change the consumer risk appetite setting:
 
 1. Direct file edit:
-   → ~/.echo/plugin-config.json → set { "risk_appetite": "lowest" | "neutral" }
+   → ~/.wevibe/plugin-config.json → set { "risk_appetite": "lowest" | "neutral" }
 
 2. Conversational (via agent):
    → User asks: "Set risk appetite to lowest"
-   → Agent calls echo_set_risk_appetite MCP tool
-   → Setting persisted to ~/.echo/plugin-config.json
+   → Agent calls wevibe_set_risk_appetite MCP tool
+   → Setting persisted to ~/.wevibe/plugin-config.json
 
 Default: "neutral" (both correct_implementation and negative_signal memories surfaced)
 When "lowest": only negative_signal memories are shown in approval UI
@@ -640,7 +640,7 @@ When "lowest": only negative_signal memories are shown in approval UI
 ## 7. Consumer Profile
 
 ### What It Is
-Two surfaces for viewing and editing a user's Echo profile:
+Two surfaces for viewing and editing a user's WeVibe profile:
 
 | Surface | URL | Access | Editable |
 |---------|-----|--------|----------|
@@ -672,7 +672,7 @@ Profile will support verified social links (GitHub, Twitter) for identity confir
 | Hub | `GET /v1/profile/:wallet` | Fetch profile data (public) |
 | Hub | `PATCH /v1/profile` | Update own profile (avatar, display name) |
 
-**Why profile exists:** Reputation is cross-org. The profile page surfaces a user's complete Echo identity — not just their role in one org, but their contribution history and standing across the network. See DECISIONS.md D-12.4.
+**Why profile exists:** Reputation is cross-org. The profile page surfaces a user's complete WeVibe identity — not just their role in one org, but their contribution history and standing across the network. See DECISIONS.md D-12.4.
 
 ---
 
@@ -683,7 +683,7 @@ Two surfaces for discovering organizations:
 
 | Surface | URL | Access | Features |
 |---------|-----|--------|----------|
-| Public web | `echo.network/orgs` | Anyone | Browse, search, filter |
+| Public web | `wevibe.network/orgs` | Anyone | Browse, search, filter |
 | In-dashboard | `/discover` | Post-wallet auth | Same as public + join CTA |
 
 ### Org Card Content
@@ -722,7 +722,7 @@ Org detail pages show activity counts but never show memory content. This protec
 
 ## Cross-Cutting: Multi-Org Architecture
 
-This section describes how Echo achieves logical and physical isolation between orgs. It supplements the "Component Roles & Authority" section above.
+This section describes how WeVibe achieves logical and physical isolation between orgs. It supplements the "Component Roles & Authority" section above.
 
 ### Isolation Layers
 
@@ -736,7 +736,7 @@ This section describes how Echo achieves logical and physical isolation between 
 
 Hub is open-source. Orgs can run their own hub instance for full physical isolation — their Qdrant collection is entirely separate, not even a namespace filter. This is the recommended deployment for high-security orgs.
 
-### Current echo-infra Arrangement
+### Current wevibe-infra Arrangement
 
 Shared hub deployment with per-org Qdrant collections. Shared hub means shared PostgreSQL (logical isolation via org_id). Per-org Qdrant collections mean physical separation at the vector storage layer. This is the Sprint 25 default.
 
@@ -799,7 +799,7 @@ Real-time aggregated activity stream across all orgs a user belongs to.
 | Layer | Lives In | Contains | Owner |
 |-------|----------|----------|-------|
 | Immutable provenance | wevibe-chain | Aggregates, indices, on-chain events keyed by wallet pubkey | Chain (cryptographic) |
-| Operational queue | wevibe-hub | Pending submissions, votes, batches, chain_commit_events, vote_records | Hub operator (Echo-hosted OR self-hosted) |
+| Operational queue | wevibe-hub | Pending submissions, votes, batches, chain_commit_events, vote_records | Hub operator (WeVibe-hosted OR self-hosted) |
 | Display layer | Social Graph Service (separate container/VPS) | Wallet → display name + avatar + bio + linked socials | Separate Docker container, separate VPS |
 
 ### Chain-Side Data
@@ -819,7 +819,7 @@ Real-time aggregated activity stream across all orgs a user belongs to.
 
 ### Social Graph Service (Future CO)
 
-The Social Graph Service (separate Docker container, separate VPS) provides wallet→name mapping. Mandatory display name registration before a user can be accepted as a moderator role. Both Echo-hosted hub and self-hosted hubs consume this service. See DECISIONS.md D-13.4.
+The Social Graph Service (separate Docker container, separate VPS) provides wallet→name mapping. Mandatory display name registration before a user can be accepted as a moderator role. Both WeVibe-hosted hub and self-hosted hubs consume this service. See DECISIONS.md D-13.4.
 
 **Why the three-layer split:** see DECISIONS.md D-13.4
 
@@ -841,7 +841,7 @@ The Social Graph Service (separate Docker container, separate VPS) provides wall
 
 ## Cross-Cutting: Component Roles & Authority
 
-Echo has four storage/compute components with distinct roles:
+WeVibe has four storage/compute components with distinct roles:
 
 | Component | Role | Authority | Stores | Notes |
 |-----------|------|-----------|--------|-------|
@@ -884,7 +884,7 @@ Hub ←(TX confirm)── Chain (authoritative keyword weights)
 **Local signing key:** Delegated keypair created at onboarding, stored locally
 
 **Delegation:** One-time `x/authz MsgGrant` from wallet → delegated key
-- Scoped to Echo-specific message types only
+- Scoped to WeVibe-specific message types only
 - Time-limited (renewable)
 - Revocable from wallet at any time
 
@@ -899,7 +899,7 @@ Hub ←(TX confirm)── Chain (authoritative keyword weights)
 ```
 Cosmos wallet key (secp256k1, BIP-32 path m/44'/118'/0'/0/0)
     ├── Transaction signing (delegated via MsgGrant)
-    └── BIP-32 derived child key ("echo-pre-identity/v1")
+    └── BIP-32 derived child key ("wevibe-pre-identity/v1")
             └── PRE encryption identity (Umbral SecretKey)
 ```
 
@@ -931,15 +931,15 @@ Note: Ollama is the only documented host exception. wevibe-mcp now runs in Docke
 
 ## Cross-Cutting: Container Topology (Locked at Sprint 25 Closeout)
 
-Echo runs as seven Docker services orchestrated by `wevibe-server/docker-compose.yml`, plus one host exception documented at D-13.10. This topology is locked — Sprint 26 work must not re-introduce host-process services without an explicit decision.
+WeVibe runs as seven Docker services orchestrated by `wevibe-server/docker-compose.yml`, plus one host exception documented at D-13.10. This topology is locked — Sprint 26 work must not re-introduce host-process services without an explicit decision.
 
 ### Docker Services
 
 | Service | Container Name | Image Source | Internal Address | Ports | Healthcheck |
 |---------|----------------|--------------|------------------|-------|-------------|
-| postgres | echo-postgres | postgres:16-alpine | postgres:5432 | 5432 | pg_isready (5s interval, 10 retries) |
-| qdrant | echo-qdrant | qdrant/qdrant:v1.9.0 | qdrant:6333 | 6333, 6334 | tcp connect localhost:6333 (5s interval, 10 retries) |
-| wevibed (chain) | echo-validator | built from wevibe-chain/Dockerfile | wevibed:26657 (RPC), 9090 (gRPC), 1317 (REST) | 26657, 9090, 1317 | curl localhost:26657/status (5s interval, 20 retries, start_period: 15s) |
+| postgres | wevibe-postgres | postgres:16-alpine | postgres:5432 | 5432 | pg_isready (5s interval, 10 retries) |
+| qdrant | wevibe-qdrant | qdrant/qdrant:v1.9.0 | qdrant:6333 | 6333, 6334 | tcp connect localhost:6333 (5s interval, 10 retries) |
+| wevibed (chain) | wevibe-validator | built from wevibe-chain/Dockerfile | wevibed:26657 (RPC), 9090 (gRPC), 1317 (REST) | 26657, 9090, 1317 | curl localhost:26657/status (5s interval, 20 retries, start_period: 15s) |
 | hub | wevibe-hub | built from Dockerfile.hub | hub:4440 | 4440 | wget localhost:4440/health (5s interval, 15 retries, start_period: 10s) |
 | dashboard | wevibe-dashboard | built from wevibe-dashboard/Dockerfile | dashboard:3000 | 3000 | wget localhost:3000 (5s interval, 15 retries, start_period: 10s) |
 | umbral-sidecar | wevibe-umbral | built from Dockerfile.umbral-sidecar | umbral-sidecar:4460 | 4460 | nc -z localhost 4460 (5s interval, 20 retries, start_period: 10s) |
@@ -975,7 +975,7 @@ hub depends on: postgres (service_healthy), qdrant (service_healthy), wevibed (s
 | Term | Definition | Trigger | Duration |
 |------|------------|---------|----------|
 | **Rotation epoch** | PRE crypto rotation unit | Member removal event | No fixed duration; event-driven; each rotation generates new epoch keypair and new kfrags |
-| **Chain epoch** | Time-based window for emissions, idle decay, and bootstrap grace | Time-based (configured in `x/epochs` module) | Fixed duration (configured at chain initialization; query via `wevibed query epochs epoch-info echo_epoch`) |
+| **Chain epoch** | Time-based window for emissions, idle decay, and bootstrap grace | Time-based (configured in `x/epochs` module) | Fixed duration (configured at chain initialization; query via `wevibed query epochs epoch-info wevibe_epoch`) |
 
 **Independence:** These are completely independent systems. An org may have 1 rotation epoch and 100 chain epochs (no members ever removed), or 5 rotation epochs and 5 chain epochs (frequent rotation during early period).
 
@@ -1066,7 +1066,7 @@ join.go implemented (347 lines, SubmitJoinRequest + ListJoinRequests + ApproveJo
 
 ### GAP-M9 (Qdrant Per-Org Collections) CLOSED in Sprint 25
 
-OrgCollectionName(orgID) returns org_<orgID>_memories, EnsureCollection creates per-org collections on first upsert, old shared echo_memories collection removed. See D-12.1.
+OrgCollectionName(orgID) returns org_<orgID>_memories, EnsureCollection creates per-org collections on first upsert, old shared wevibe_memories collection removed. See D-12.1.
 
 ## Severity Classifications
 
@@ -1105,7 +1105,7 @@ The host exception list now only includes Ollama (D-13.10). See CO-267 implement
 **Participant:** Consumer
 **Status:** CLOSED by CO-260 (Sprint 26)
 
-The OpenCode plugin now communicates with wevibe-mcp via HTTP API (127.0.0.1:4450) rather than subprocess. Plugin reads session token from `~/.echo/mcp-session-token` (mode 0600) and includes `Authorization: Bearer <token>` on all calls. Serve event recording and report submission route through wevibe-mcp. Subprocess interface removed. See DECISIONS.md D-12.5.
+The OpenCode plugin now communicates with wevibe-mcp via HTTP API (127.0.0.1:4450) rather than subprocess. Plugin reads session token from `~/.wevibe/mcp-session-token` (mode 0600) and includes `Authorization: Bearer <token>` on all calls. Serve event recording and report submission route through wevibe-mcp. Subprocess interface removed. See DECISIONS.md D-12.5.
 
 ### GAP-C2: wevibe-mcp HTTP API Not Exposed for Plugin Consumption
 
@@ -1164,7 +1164,7 @@ PRE revocation is precise: it provides **instant cryptographic revocation of un-
 | Already-decrypted memories in agent plaintext | NO |
 | Derivative artifacts (summaries, local vectors, prompt traces) | NO |
 
-**Resolution:** Revocation language revised in `Echo/docs/security-model.md` and `Echo/docs/WHITEPAPER.md`. Correct scope documented. wevibe-sdk session-end secure deletion deferred post-alpha. See CO-266 implementation report.
+**Resolution:** Revocation language revised in `wevibe-docs/SECURITY-MODEL.md` and `wevibe-docs/WHITEPAPER.md`. Correct scope documented. wevibe-sdk session-end secure deletion deferred post-alpha. See CO-266 implementation report.
 
 ### ARCH-G6: Qdrant Embedding Inversion — Long-Term Encrypted Vector Search Needed
 
@@ -1198,7 +1198,7 @@ Moderation page showed Approve/Deny buttons but no explicit Vote button. For org
 **Participant:** Leader
 **Status:** CLOSED by CO-266 (Sprint 28)
 
-Two separate systems existed: Hub `org_credits` (PostgreSQL integer credits, 1 deducted per query) and Chain `StoredTreasury` (uecho, debited by emissions for contributor payouts). Leader had no unified view of org finances.
+Two separate systems existed: Hub `org_credits` (PostgreSQL integer credits, 1 deducted per query) and Chain `StoredTreasury` (uvibe, debited by emissions for contributor payouts). Leader had no unified view of org finances.
 
 **Resolution:** Dashboard billing page now shows both credits balance and chain financial data via `GET /v1/orgs/{orgID}/finances`. See CO-266 implementation report.
 
@@ -1207,7 +1207,7 @@ Two separate systems existed: Hub `org_credits` (PostgreSQL integer credits, 1 d
 **Participant:** Leader
 **Status:** CLOSED by CO-266 (Sprint 28)
 
-Dashboard could not manage chain-level org config (`serve_attestation_required`, `contest_stake_uecho`) or reputation tiers.
+Dashboard could not manage chain-level org config (`serve_attestation_required`, `contest_stake_uvibe`) or reputation tiers.
 
 **Resolution:** Dashboard settings page now exposes chain configuration read/edit UI. New hub `GET /v1/orgs/{orgID}/chain-config` (leader-only) and `PATCH /v1/orgs/{orgID}/config` updated to accept chain fields. See CO-266 implementation report.
 
@@ -1247,11 +1247,11 @@ When a memory is injected into a cloud inference session (Claude API, GPT-4, etc
 
 **Resolution:**
 - `provider_policy` modes implemented: `unrestricted` (default), `local_only`, `allowlist`
-- Policy stored in `~/.echo/plugin-config.json`
-- `echo_set_provider_policy` MCP tool for configuration
+- Policy stored in `~/.wevibe/plugin-config.json`
+- `wevibe_set_provider_policy` MCP tool for configuration
 - `local_only` blocks non-local provider artifacts
 - `allowlist` checks against org-scoped allowed providers returned from hub membership
-- `echo_author_memory` restricted to leader role only; non-leaders receive explicit admin-path description
+- `wevibe_author_memory` restricted to leader role only; non-leaders receive explicit admin-path description
 
 See CO-266 implementation report.
 
@@ -1260,7 +1260,7 @@ See CO-266 implementation report.
 **Participant:** Leader
 **Status:** CLOSED by CO-266 (Sprint 28)
 
-Recovery path properties (2-of-3 Shamir, on-chain multi-sig auth, separate `echo-recover` CLI, on-chain logging) were designed but not implemented or documented.
+Recovery path properties (2-of-3 Shamir, on-chain multi-sig auth, separate `wevibe-recover` CLI, on-chain logging) were designed but not implemented or documented.
 
 **Resolution:** Created `workspace/docs/RUNBOOK-PRE-RECOVERY.md` documenting the recovery ceremony procedure and invocation steps. See CO-266 implementation report.
 
@@ -1367,21 +1367,21 @@ Sessions page submitted memories one at a time via individual POST requests.
 
 **Resolution:** Sessions page now supports batch submission via `POST /v1/orgs/{orgID}/moderation/batch-submit`. Unified progress indicator shows batch submission status. See CO-266 implementation report.
 
-### GAP-N10: `echo_author_memory` MCP Tool Fate Unclear
+### GAP-N10: `wevibe_author_memory` MCP Tool Fate Unclear
 
 **Participant:** Moderator/Leader
 **Status:** CLOSED by CO-266 (Sprint 28)
 
-`echo_author_memory` lets leaders/moderators submit + immediately approve a memory. This is a second contribution path alongside the sessions page.
+`wevibe_author_memory` lets leaders/moderators submit + immediately approve a memory. This is a second contribution path alongside the sessions page.
 
-**Resolution:** `echo_author_memory` is kept. Gated to leader role only — non-leaders receive explicit description indicating this is an admin-path tool. See CO-266 implementation report.
+**Resolution:** `wevibe_author_memory` is kept. Gated to leader role only — non-leaders receive explicit description indicating this is an admin-path tool. See CO-266 implementation report.
 
 ### GAP-N11: Pre-Existing TS1005 Syntax Error in wevibe-guard Plugin
 
 **Participant:** Worker / Developer (does not affect runtime)
 **Status:** CLOSED by CO-265 (Sprint 27)
 
-`Echo/.opencode/plugins/wevibe-guard.ts` contained a TypeScript syntax error: `TS1005: ';' expected`. The malformed type annotation and generic syntax around the inline type expression was fixed. See CO-265 implementation report.
+`wevibe-opencode-plugin/plugins/wevibe-plugin.ts` contained a TypeScript syntax error: `TS1005: ';' expected`. The malformed type annotation and generic syntax around the inline type expression was fixed. See CO-265 implementation report.
 
 ---
 
@@ -1391,7 +1391,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 
 | Item | D-Reference | Closes |
 |------|-------------|--------|
-| Plugin HTTP API with per-session token auth (Bearer token, ~/.echo/mcp-session-token mode 0600) | D-12.5, D-12.5a | GAP-C1, GAP-C2, D-12.5a | **CLOSED** |
+| Plugin HTTP API with per-session token auth (Bearer token, ~/.wevibe/mcp-session-token mode 0600) | D-12.5, D-12.5a | GAP-C1, GAP-C2, D-12.5a | **CLOSED** |
 | Serve event recording via wevibe-mcp value-add proxy | D-12.5 | GAP-M8 | **CLOSED** |
 | CO-260 finishing items (Makefile dogfood probe + cross-module doc updates) | CO-262 | — | **CLOSED** |
 
@@ -1416,7 +1416,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Consumer profile pages (/profile, /u/:wallet) | D-12.4 | — | — |
 | Per-memory org destination dropdown in contributor extraction UI | D-12.2 | — | — |
 | Moderator multi-org queue switcher | D-12.1 | — | — |
-| Org discovery (public echo.network/orgs + in-dashboard /discover) | D-12.7 | GAP-M4 | **CLOSED** |
+| Org discovery (public wevibe.network/orgs + in-dashboard /discover) | D-12.7 | GAP-M4 | **CLOSED** |
 | Zero-friction join request workflow (no form fields, profile is application) | D-12.8 | GAP-M5 | **CLOSED** |
 | Activity feed (WebSocket + bell + /activity page, all-orgs aggregated) | D-12.9 | GAP-M6 (partial) | — |
 | Solo dogfood end-to-end pipeline validation + make dogfood smoke-test command | D-12.10 | — | — |
@@ -1442,7 +1442,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 ### References
 
 - Full decision rationale: `DECISIONS.md` §12 (D-12.1 through D-12.10)
-- Qdrant isolation verified: single shared collection `echo_memories` with org_id filter (classification: B — Filtered isolation)
+- Qdrant isolation verified: single shared collection `wevibe_memories` with org_id filter (classification: B — Filtered isolation)
 
 ---
 

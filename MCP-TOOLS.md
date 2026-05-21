@@ -2,7 +2,7 @@
 
 WeVibe Network exposes five tools via the Model Context Protocol.
 
-## `echo_context`
+## `wevibe_context`
 
 Register the current task and surface relevant memories.
 
@@ -18,7 +18,7 @@ Register the current task and surface relevant memories.
 
 ---
 
-## `echo_recall`
+## `wevibe_recall`
 
 Explicit memory search.
 
@@ -33,7 +33,7 @@ Explicit memory search.
 
 ---
 
-## `echo_contribute`
+## `wevibe_contribute`
 
 Submit encrypted session notes for moderation.
 
@@ -49,7 +49,7 @@ and prompt injection patterns cause immediate rejection — nothing is sent to w
 
 ---
 
-## `echo_reject`
+## `wevibe_reject`
 
 Flag a returned memory as not useful.
 
@@ -63,7 +63,7 @@ Flag a returned memory as not useful.
 
 ---
 
-## `echo_orgs`
+## `wevibe_orgs`
 
 List current org memberships.
 
