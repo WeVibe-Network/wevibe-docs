@@ -1115,4 +1115,24 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
+### D-S29-VECTORS-CLOSED: Sprint 28 Deferred Test Vectors Regenerated [PROCESS]
+
+**Decision:** All 4 vectors deferred from Sprint 28 MO-006 per D-S28-MO006-VECTORS-SCOPE have been regenerated via the REGEN_VECTORS pattern. `wevibe-protocol/test_vectors/` now contains no stale vectors.
+
+**Vectors regenerated:**
+- fee_model_hash
+- mnemonic_roundtrip
+- seal_open_envelope
+- shamir_roundtrip
+
+**Provenance:** Each vector file carries a `regenerated_by: "WeVibe-CO-006"` top-level field per R-VECTORS-PROVENANCE.
+
+**Regen method:** `REGEN_VECTORS=1 cargo test test_<vector>_vectors` — SDK test scaffolding added/extended in `wevibe-sdk/crates/wevibe-sdk-core/tests/crypto_tests.rs`.
+
+**Note:** The 4 vectors happened to already be correct — regeneration produced byte-identical output. The stale designation in REGEN-PENDING.md was conservative; the vectors were not actually stale.
+
+**Closes:** D-S28-VECTORS-SPRINT29-TICKET.
+
+---
+
 *End of DECISIONS.md*
