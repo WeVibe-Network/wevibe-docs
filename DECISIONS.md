@@ -1135,4 +1135,64 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
+## 14. Sprint 29 Chain Foundation Decisions
+
+### D-S29-SDK-V053: Cosmos SDK v0.53.5 is the Canonical SDK Line [ALPHA - FOUNDATION]
+
+**Decision:** wevibe-chain pins `github.com/cosmos/cosmos-sdk v0.53.5`.
+
+**Why v0.53 over v0.54:**
+- v0.54.x is an experimental branch with internal store/v2 baseapp adoption that broke compatibility with `cosmossdk.io/x/upgrade` (all published versions). Verified via CO-005-evidence-A and CO-007a-evidence-C.
+- v0.53.x is the production-grade line used by live Cosmos chains. Supports the modular `cosmossdk.io/x/*` package ecosystem including x/upgrade v0.2.0.
+- Cosmos SDK main branch has reverted store/v2 in baseapp, suggesting v0.54.x is a dead intermediate branch not on the convergence path.
+- Echo originally selected v0.54.2 in May 2026 as "latest at time of adoption" without recognizing it as the experimental branch. CO-008 corrects this.
+
+**Closes:** D-S29-STORE-V2-REVERT-PLANNED (superseded by SDK-level downgrade).
+
+---
+
+### D-S29-COMETBFT-V038: CometBFT v0.38.20 [ALPHA - FOUNDATION]
+
+**Decision:** wevibe-chain pins `github.com/cometbft/cometbft v0.38.20`.
+
+**Why:**
+- Pinned by Cosmos SDK v0.53.5 (D-S29-SDK-V053).
+- Compatible with `cosmossdk.io/x/upgrade v0.2.0` (pinned v0.38.17, forward-compatible within the v0.38.x line).
+- CometBFT v0.39.x is paired with SDK v0.54.x; once we leave v0.54.x we leave v0.39.x.
+
+---
+
+### D-S29-LOG-V1: cosmossdk.io/log v1 is Canonical [ALPHA - FOUNDATION]
+
+**Decision:** wevibe-chain uses `cosmossdk.io/log v1.6.1`. `cosmossdk.io/log/v2` is forbidden in custom keeper code.
+
+**Why:**
+- SDK v0.53.5 baseapp uses log v1; log/v2 is paired with v0.54.x.
+- Echo originally imported log/v2 in custom keepers when on v0.54.2. CO-008 aligns to v1.
+
+---
+
+### D-S29-PREBLOCKER-COMPLIANCE: SetOrderPreBlockers Wired [ALPHA - FOUNDATION]
+
+**Decision:** `app/app.go` calls `app.ModuleManager.SetOrderPreBlockers(authtypes.ModuleName)` per Cosmos SDK v0.53.5 UPGRADING.md mandatory requirement.
+
+**Why:**
+- Sprint 28 chain wiring under v0.54.2 was missing this call. v0.53 makes this requirement explicit.
+- Future upgrades that need additional preblockers (e.g. x/upgrade module preblocker) add to this ordered list, not replace it.
+
+---
+
+### D-S29-CHAIN-LATEST-IS-RISKY: SDK Version Selection Policy [PERMANENT - PROCESS]
+
+**Decision:** wevibe-chain pins to actively maintained stable Cosmos SDK lines (v0.53.x for the foreseeable future), not "latest at time of decision."
+
+**Why:**
+- Echo's adoption of v0.54.2 in May 2026 inherited an experimental branch in disguise.
+- Cosmos SDK release tags do not clearly distinguish "stable production line" from "experimental refactor in progress" - version numbers alone are insufficient signal.
+- Future SDK bumps require an explicit CO with rationale: which release line, why it is the production-grade choice, what ecosystem support looks like, and what migration path exists for chains already on the previous line.
+
+**Reference:** CO-008 implementation report.
+
+---
+
 *End of DECISIONS.md*

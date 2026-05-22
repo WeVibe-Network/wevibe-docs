@@ -1439,6 +1439,27 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Auto-approve join requests based on reputation | D-12.8 | Per-org human decision for v1 |
 | Multi-team alpha onboarding | — | Post-Sprint 25 |
 
+---
+
+## Sprint 29 Scope
+
+### In Scope (Sprint 29)
+
+| Item | Reference | Status |
+|------|-----------|--------|
+| Deferred test vector regeneration + cleanup | CO-006 | **CLOSED** |
+| Cosmos SDK foundation realignment to v0.53.5 + CometBFT v0.38.20 | CO-008 | **CLOSED** |
+| x/upgrade compatibility verification and re-validation on new SDK foundation | CO-005-resume | **OPEN** |
+
+### GAP-CHAIN-3: x/upgrade Verification
+
+**Participant:** Validator, Leader
+**Status:** OPEN - to be closed by CO-005-resume
+
+`cosmossdk.io/x/upgrade` verification remains open as the final chain-foundation gate for this sprint.
+
+**Note:** Unblocked by CO-008 (SDK downgrade); CO-005 resumes against v0.53.5 foundation.
+
 ### References
 
 - Full decision rationale: `DECISIONS.md` §12 (D-12.1 through D-12.10)

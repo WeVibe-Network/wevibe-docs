@@ -5,6 +5,33 @@
 
 ---
 
+## Workspace Tooling — Proto Generation
+
+Protobuf-derived Go code is regenerated via `make proto-gen` from the
+`wevibe-meta` Makefile. The target wraps Docker-pinned tooling and
+covers every proto tree in the workspace.
+
+**Subtargets:**
+- `make proto-gen-chain` — regenerates `wevibe-chain` proto outputs via `ghcr.io/cosmos/proto-builder:0.18.1`
+- `make proto-gen-umbral` — regenerates `wevibe-server/wevibe-hub/internal/umbral/umbralpb` via `bufbuild/buf:1.34.0`
+
+**Proto trees covered:**
+| Repo | Proto path | Output path | Image |
+|------|-----------|-------------|-------|
+| wevibe-chain | `proto/wevibe/{org,memory,serve,reputation,emissions,bandwidth,attestation}/v1/*.proto` | `x/*/types/*.pb.go` | `ghcr.io/cosmos/proto-builder:0.18.1` |
+| wevibe-umbral | `proto/umbral/v1/sidecar.proto` | (consumed by wevibe-server) | — |
+| wevibe-server | `wevibe-hub/internal/umbral/umbralpb/sidecar.proto` | `wevibe-hub/internal/umbral/umbralpb/*.pb.go` | `bufbuild/buf:1.34.0` |
+
+**Adding a new proto tree:** add a new subtarget to `wevibe-meta/Makefile`,
+add it to the `proto-gen` umbrella target's dependency list, and pin
+any new Docker image in the image-pins block at the top of the Makefile.
+
+**Rule:** never invoke local `protoc`/`buf`/`protoc-gen-*` binaries. All
+proto generation runs inside Docker images pinned by exact tag. See
+DECISIONS.md D-14.21, R-PROTO-REGEN.
+
+---
+
 ## Deployment Topology (Sprint 26)
 
 ### Docker Services
@@ -839,6 +866,7 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 - 7 custom WeVibe modules + standard SDK modules (staking, auth, bank, gov, slashing, distribution, mint, epochs)
 - Module ordering: InitGenesis, ExportGenesis, EndBlockers all explicitly set
 - maccPerms includes operator module with Burner permission
+- Chain foundation pins `github.com/cosmos/cosmos-sdk v0.53.5` and `github.com/cometbft/cometbft v0.38.20` (see `DECISIONS.md` D-S29-SDK-V053)
 
 ### Custom Modules (7)
 
