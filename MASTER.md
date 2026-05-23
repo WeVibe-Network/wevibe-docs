@@ -1474,11 +1474,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 ### GAP-CHAIN-3: x/upgrade Verification
 
 **Participant:** Validator, Leader
-**Status:** OPEN - to be closed by CO-005-resume
-
-`cosmossdk.io/x/upgrade` verification remains open as the final chain-foundation gate for this sprint.
-
-**Note:** Unblocked by CO-008 (SDK downgrade); CO-005 resumes against v0.53.5 foundation.
+**Status:** CLOSED (CO-005e, Sprint 29). x/upgrade end-to-end verified: proposal → halt → swap → ApplyUpgrade with populated fromVM → block production resumes. Five iterations (CO-005 → 005e) discovered and fixed 5 alpha-blocking bugs.
 
 ### References
 

@@ -1207,4 +1207,46 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
+### D-S29-CHAIN-RESTART-FOUNDATION
+
+**Decision:** wevibe-chain's InitChainer writes a sentinel marker key (4-byte 0xFF prefix) to every mounted KV store after ModuleManager.InitGenesis. Without this, IAVL's empty-tree optimization skips persistence for stores backing modules that don't implement appmodule.HasGenesis, causing ErrVersionDoesNotExist on any restart. Discovered via CO-005c; fixed in CO-005d.
+
+---
+
+### D-S29-INITCHAINER-VERSION-MAP
+
+**Decision:** wevibe-chain's InitChainer calls UpgradeKeeper.SetModuleVersionMap(ctx, ModuleManager.GetVersionMap()) after ModuleManager.InitGenesis returns. This is required for any manually-wired (non-depinject) Cosmos SDK chain. Without it, x/upgrade's ApplyUpgrade reads an empty fromVM, RunMigrations treats every module as new, and re-runs InitGenesis on already-initialized state — panicking on distribution's balance invariant check. The canonical guidance is at cosmossdk.io/x/upgrade@v0.2.0/module.go:130-131. Discovered via CO-005c-resume; fixed in CO-005e.
+
+---
+
+### D-S29-HUB-SEQUENCE-RACE
+
+**Decision:** wevibe-hub's broadcast.go cross-checks queried account sequence against a local post-broadcast cache (max-of-two). Without this, successive broadcasts within one CometBFT block window race and the second is rejected with sequence mismatch. Known limitation: max-of-two doesn't handle rejected broadcasts; proper fix is in-flight counter pattern (documented in code). Discovered via CO-005d dogfood; fixed in CO-005d Stage 9.
+
+---
+
+### D-S29-UPGRADE-STORE-LOADER
+
+**Decision:** UpgradeStoreLoader wiring (ReadUpgradeInfoFromDisk + SetStoreLoader) is canonical and stays. For empty StoreUpgrades{} it falls through to DefaultStoreLoader and is functionally a no-op. Original claim that wiring it fixes the restart panic was wrong; the actual restart fix is D-S29-CHAIN-RESTART-FOUNDATION. Wired in CO-005c.
+
+---
+
+### D-S29-UPGRADE-VERIFIED
+
+**Decision:** wevibe-chain's x/upgrade flow verified end-to-end: governance proposal → halt at upgrade height → binary swap → state load across upgrade boundary → ApplyUpgrade fires → RunMigrations completes with populated fromVM → block production resumes. Verified via CO-005e Stage 3 on fresh wevibe-upgrade-v3-* fixtures. Closes GAP-CHAIN-3 / D-14.8.
+
+---
+
+### D-S29-AUDIT-BEFORE-FIX
+
+**Decision:** Process discipline: when iterative bug-discovery on the same gap exceeds 3 R-ABORT cycles, Manager must step back and dispatch a canonical-reference audit before the next fix attempt. Continuing piecemeal fixes beyond 3 iterations is a manager failure mode. Established after CO-005c-resume (the 5th iteration on GAP-CHAIN-3); CO-005e is the corrective audit-first approach.
+
+---
+
+### D-S29-DOGFOOD-IS-LOAD-BEARING
+
+**Decision:** Sprint 29 discovered 3 alpha-blocking bugs (chain restart, hub broadcast race, x/upgrade wiring incompleteness) that unit tests did not catch. R-DOGFOOD-FROZEN is non-negotiable. Reinforced; never relax.
+
+---
+
 *End of DECISIONS.md*

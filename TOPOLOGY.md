@@ -271,6 +271,49 @@ This section documents the surface areas that CO-245 will implement, locked by C
 
 ---
 
+## Chain Upgrade Procedure
+
+WeVibe chain upgrades follow the standard Cosmos SDK x/upgrade flow. The canonical wiring is in wevibe-chain/app/app.go.
+
+### InitChainer contract (manually-wired chain)
+
+wevibe-chain is manually wired (no depinject/app-wiring). The InitChainer must perform these steps in order:
+
+1. Unmarshal genesis JSON from req.AppStateBytes
+2. Call ModuleManager.InitGenesis(ctx, cdc, genesisState)
+3. Call UpgradeKeeper.SetModuleVersionMap(ctx, ModuleManager.GetVersionMap()) — persists the module version map so future ApplyUpgrade reads a populated fromVM (D-S29-INITCHAINER-VERSION-MAP)
+4. Write genesis init marker to every mounted KV store — prevents IAVL empty-tree restart panic (D-S29-CHAIN-RESTART-FOUNDATION)
+5. Return the ResponseInitChain from step 2
+
+Step 3 is not needed for depinject-wired chains (PopulateVersionMap handles it automatically). Step 4 is WeVibe-specific (modules without appmodule.HasGenesis would otherwise have empty IAVL trees).
+
+### Upgrade execution flow
+
+1. Submit governance proposal with upgrade plan (name, height)
+2. Pre-binary halts at upgrade height with "UPGRADE NEEDED" (no handler registered for that plan name)
+3. Swap binary: new binary has SetUpgradeHandler registered for the plan name
+4. Post-binary starts, x/upgrade PreBlocker detects upgrade-info.json
+5. ApplyUpgrade calls GetModuleVersionMap (populated from step 3 of InitChainer)
+6. RunMigrations runs per-module migrations using the version map as fromVM
+7. Block production resumes
+
+### Required wiring (app/app.go)
+
+- SetUpgradeHandler: registers the handler function for each upgrade name (CO-005b)
+- ReadUpgradeInfoFromDisk + SetStoreLoader(UpgradeStoreLoader(...)): makes LoadLatestVersion upgrade-aware (CO-005c, D-S29-UPGRADE-STORE-LOADER)
+- SetModuleVersionMap in InitChainer: persists version map at genesis (CO-005e, D-S29-INITCHAINER-VERSION-MAP)
+- Genesis init marker in InitChainer: prevents empty-tree restart panic (CO-005d, D-S29-CHAIN-RESTART-FOUNDATION)
+
+### Adding a new upgrade
+
+To add a v3 upgrade:
+1. Create app/upgrades/v3/upgrades.go with UpgradeName and CreateUpgradeHandler
+2. Register SetUpgradeHandler for v3 in NewWeVibeApp (alongside existing v2 handler)
+3. If v3 adds/removes module stores, populate StoreUpgrades in the UpgradeStoreLoader block
+4. Test with the standard fixture rig: build pre-binary (with v2 handler but no v3), build post-binary (with both), run upgrade at target height
+
+---
+
 ## wevibe-server/wevibe-hub — Go API Server
 
 **Module:** `github.com/wevibe-network/wevibe-hub`  
