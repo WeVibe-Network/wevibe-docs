@@ -1182,6 +1182,26 @@ Phase 1 mitigations are in place (Gaussian noise σ=0.1, Qdrant API key auth, in
 
 ---
 
+### GAP-CHAIN-20: IAVL State Query Failure on Fresh Chains
+
+**Participant:** Validator, Leader, all CLI users
+**Milestone:** ALPHA
+**Status:** OPEN
+
+All module state queries (`query auth`, `query gov`, `query upgrade`, `query bank`, `query staking`, etc.) fail with `"failed to load state at height N; version does not exist (latest height: N)"` on fresh wevibe-chain instances. The chain produces blocks and processes transactions normally — only the ABCI Query path through IAVL is broken.
+
+Discovered during CO-005b Docker-based upgrade verification. Reproduced across multiple chain re-initializations, with and without `--iavl-disable-fastnode`, at various block heights. TX-index queries (`query tx <hash>`) and HTTP RPC status work unaffected.
+
+**Impact:** CLI `query` commands are unusable. Validators cannot inspect chain state. The dashboard, hub, and any tooling that uses gRPC/ABCI queries for state will fail. CO-005b upgrade verification worked around this via TX submission + HTTP RPC + TX-index queries.
+
+**Resolution requires:**
+- Diagnose root cause in app multistore/IAVL initialization (likely store key registration, IAVL version tracking, or CommitMultiStore configuration)
+- Fix the IAVL query path so committed state is accessible at current and historical heights
+- Verify all standard module queries work on fresh and replayed chains
+- Regression test to prevent reintroduction
+
+---
+
 ## MODERATE
 
 ### GAP-O3: Dashboard Voting UI Missing for Approval Quorum
@@ -1471,11 +1491,11 @@ Sessions page submitted memories one at a time via individual POST requests.
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 0 |
-| MAJOR | 0 |
+| CRITICAL | 7 (GAP-CHAIN-1 through GAP-CHAIN-7) |
+| MAJOR | 7 (GAP-CHAIN-9 through GAP-CHAIN-14, GAP-CHAIN-20) |
 | MODERATE | 1 (ARCH-G9 — BIP-32 key hierarchy, real crypto work) |
-| MINOR | 2 (GAP-N1 Stripe, GAP-N5 chain features without surface) |
-| **Total OPEN** | **3** |
+| MINOR | 7 (GAP-N1 Stripe, GAP-N5 chain features, GAP-CHAIN-15 through GAP-CHAIN-19) |
+| **Total OPEN** | **23** |
 | Documented Finding (not actionable) | 1 (ARCH-G6 — no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---

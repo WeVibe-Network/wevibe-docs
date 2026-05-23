@@ -1195,4 +1195,16 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
+### D-S29-IAVL-QUERY-BUG-KNOWN: IAVL State Queries Broken — Workaround Documented [ALPHA — MUST FIX]
+
+**Decision:** All ABCI state queries fail on wevibe-chain with `"version does not exist"`. Root cause is in the app's multistore/IAVL configuration. The chain produces blocks and processes TXs normally. Workaround: use TX submission commands + HTTP RPC status + TX-index queries (`query tx <hash>`) instead of state queries.
+
+**Discovery:** CO-005b upgrade verification (2026-05-23). Reproduced across multiple fresh chain initializations in Docker.
+
+**Impact:** CLI `query` commands unusable. Blocks validator operations, dashboard state queries, hub gRPC queries. Does NOT block consensus, TX processing, or upgrade mechanism (proven by CO-005b).
+
+**Status:** Tracked as GAP-CHAIN-20. Requires dedicated diagnostic CO before alpha.
+
+---
+
 *End of DECISIONS.md*
