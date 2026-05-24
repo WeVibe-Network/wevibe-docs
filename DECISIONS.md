@@ -1195,15 +1195,17 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
-### D-S29-IAVL-QUERY-BUG-KNOWN: IAVL State Queries Broken — Workaround Documented [ALPHA — MUST FIX]
+### D-S29-IAVL-QUERY-BUG-KNOWN: IAVL State Queries Broken — Resolved by D-S29-CHAIN-RESTART-FOUNDATION
 
-**Decision:** All ABCI state queries fail on wevibe-chain with `"version does not exist"`. Root cause is in the app's multistore/IAVL configuration. The chain produces blocks and processes TXs normally. Workaround: use TX submission commands + HTTP RPC status + TX-index queries (`query tx <hash>`) instead of state queries.
+**Decision:** All ABCI state queries failed on wevibe-chain with `"version does not exist"`. Root cause was the empty-IAVL-tree problem: WeVibe modules implement AppModule but NOT appmodule.HasGenesis, so ModuleManager.InitGenesis skips their genesis handlers. Their KV stores received zero writes, causing ErrVersionDoesNotExist on LoadVersion for every state query.
 
-**Discovery:** CO-005b upgrade verification (2026-05-23). Reproduced across multiple fresh chain initializations in Docker.
+The fix (D-S29-CHAIN-RESTART-FOUNDATION, CO-005d) writes a sentinel marker to every mounted KV store in InitChainer. This ensures every IAVL tree has version history.
 
-**Impact:** CLI `query` commands unusable. Blocks validator operations, dashboard state queries, hub gRPC queries. Does NOT block consensus, TX processing, or upgrade mechanism (proven by CO-005b).
+**Resolution:** CO-005d wrote the marker-write. CO-010 verified all standard module state queries now work on fresh genesis chains (5/5 passed: bank balances, distribution params, upgrade plan, slashing params, staking validators). GAP-CHAIN-20 is CLOSED.
 
-**Status:** Tracked as GAP-CHAIN-20. Requires dedicated diagnostic CO before alpha.
+**Discovery:** CO-005b upgrade verification (2026-05-23).
+
+**Reference:** CO-010 implementation report.
 
 ---
 

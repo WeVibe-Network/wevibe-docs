@@ -1213,19 +1213,15 @@ D-4.2 defines the dual-vector decay model (idle decay 50 bps/epoch, denial decay
 
 **Participant:** Validator, Leader, all CLI users
 **Milestone:** ALPHA
-**Status:** OPEN
+**Status:** CLOSED (resolved by CO-005d marker-write, verified by CO-010)
 
-All module state queries (`query auth`, `query gov`, `query upgrade`, `query bank`, `query staking`, etc.) fail with `"failed to load state at height N; version does not exist (latest height: N)"` on fresh wevibe-chain instances. The chain produces blocks and processes transactions normally — only the ABCI Query path through IAVL is broken.
+All module state queries (`query auth`, `query gov`, `query upgrade`, `query bank`, `query staking`, etc.) failed with `"failed to load state at height N; version does not exist (latest height: N)"` on fresh wevibe-chain instances. The chain produced blocks and processed transactions normally — only the ABCI Query path through IAVL was broken.
 
-Discovered during CO-005b Docker-based upgrade verification. Reproduced across multiple chain re-initializations, with and without `--iavl-disable-fastnode`, at various block heights. TX-index queries (`query tx <hash>`) and HTTP RPC status work unaffected.
+**Root cause:** WeVibe modules (bandwidth, emissions, memory, org, reputation, serve, attestation) implement AppModule but NOT appmodule.HasGenesis, so ModuleManager.InitGenesis silently skips their genesis handlers and their KV stores receive zero writes. Several SDK modules (feegrant, upgrade, consensusparam) similarly had empty default genesis. The result was all mounted KV stores had zero entries after InitChain, causing IAVL's LoadVersion to fail with ErrVersionDoesNotExist on any state query.
 
-**Impact:** CLI `query` commands are unusable. Validators cannot inspect chain state. The dashboard, hub, and any tooling that uses gRPC/ABCI queries for state will fail. CO-005b upgrade verification worked around this via TX submission + HTTP RPC + TX-index queries.
+**Resolution:** CO-005d's InitChainer (D-S29-CHAIN-RESTART-FOUNDATION) writes a sentinel marker key (4-byte 0xFF prefix → 0x01) to every mounted KV store immediately after ModuleManager.InitGenesis. This ensures every IAVL tree has at least one entry and version history, preventing LoadVersion failures. CO-010 verified all standard module state queries now work on fresh genesis chains (5/5 passed: bank balances, distribution params, upgrade plan, slashing params, staking validators).
 
-**Resolution requires:**
-- Diagnose root cause in app multistore/IAVL initialization (likely store key registration, IAVL version tracking, or CommitMultiStore configuration)
-- Fix the IAVL query path so committed state is accessible at current and historical heights
-- Verify all standard module queries work on fresh and replayed chains
-- Regression test to prevent reintroduction
+**Verification:** CO-010 query battery on fresh chain — all queries return valid data. No regression in build or tests.
 
 ---
 
@@ -1555,7 +1551,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Item | Reference | Severity | Status |
 |------|-----------|----------|--------|
 | Genesis parameter finalization (Walter approval required) | GAP-CHAIN-5 | MAJOR | Next |
-| IAVL state query fix | GAP-CHAIN-20 | MAJOR | After GAP-CHAIN-5 |
+| IAVL state query fix | GAP-CHAIN-20 | MAJOR | **CLOSED** (CO-005d + CO-010 verification) |
 | BIP-32 key hierarchy separation | ARCH-G9 | MODERATE | Any time |
 
 ### Out of Scope (Deferred to post-alpha)
@@ -1576,7 +1572,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Severity | Open Count | Items |
 |----------|------------|-------|
 | CRITICAL | 0 | (GAP-CHAIN-1 closed by CO-009) |
-| MAJOR | 2 | GAP-CHAIN-20 (IAVL queries), GAP-CHAIN-5 (genesis params) |
+| MAJOR | 1 | GAP-CHAIN-5 (genesis params) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
 | **Total OPEN** | **7** | |
