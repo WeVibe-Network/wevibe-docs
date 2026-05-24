@@ -1182,6 +1182,33 @@ Phase 1 mitigations are in place (Gaussian noise σ=0.1, Qdrant API key auth, in
 
 ---
 
+### GAP-CHAIN-1: Keyword Weight Decay Not Implemented On-Chain
+
+**Participant:** Consumer, Contributor, Leader
+**Milestone:** ALPHA
+**Status:** OPEN
+
+D-4.2 defines the dual-vector decay model (idle decay 50 bps/epoch, denial decay 500 bps/denial, serve boost 100 bps/serve, bootstrap grace 14 chain epochs). The model is fully designed but not implemented in `x/memory` keeper logic. Without it:
+
+- Keyword weights never change after initial extraction
+- Outdated memories never archive (no path to all-keywords-at-zero)
+- Denials have no effect on retrieval ranking
+- Serves have no positive reinforcement signal
+- The core retrieval-quality feedback loop is dead
+
+**Impact:** The retrieval system returns stale memories indefinitely. The "living knowledge base" value proposition does not function. Consumers cannot trust that high-ranking memories are validated by usage.
+
+**Resolution requires:**
+- Implement per-keyword idle decay hook in `x/epochs` end-of-epoch processing
+- Implement per-keyword denial decay in `x/memory` denial handler (triggered by `MsgSubmitDenialBatch`)
+- Implement per-keyword serve boost in `x/memory` serve handler (triggered by `MsgSubmitServeBatch`)
+- Implement bootstrap grace period check (skip decay for memories within 14 chain epochs of commitment)
+- Implement `committed` → `archived` transition when all keyword weights reach zero
+- Hub-side `SyncKeywordWeightsFromChain` reconciliation on restart
+- Qdrant payload updates on every confirmed serve/denial TX
+
+---
+
 ### GAP-CHAIN-20: IAVL State Query Failure on Fresh Chains
 
 **Participant:** Validator, Leader, all CLI users
@@ -1199,6 +1226,29 @@ Discovered during CO-005b Docker-based upgrade verification. Reproduced across m
 - Fix the IAVL query path so committed state is accessible at current and historical heights
 - Verify all standard module queries work on fresh and replayed chains
 - Regression test to prevent reintroduction
+
+---
+
+### GAP-CHAIN-5: Genesis Parameter Finalization
+
+**Participant:** Validator, Leader, Contributor
+**Milestone:** ALPHA
+**Status:** OPEN
+
+Chain modules (`x/emissions`, `x/bandwidth`, `x/reputation`, `x/org`) have default genesis parameters that were never reviewed for solo-dogfood viability. Current defaults may produce:
+
+- Nonsensical emission pool sizes or payout rates
+- Bandwidth caps that are too restrictive or too permissive for testing
+- Reputation tier thresholds that no solo contributor can reach
+- Epoch duration that doesn't match dogfood testing cadence
+
+**Impact:** Economic loops produce meaningless outputs during dogfood. Leader cannot evaluate whether the payout/reputation/bandwidth system works because the parameters are placeholder values.
+
+**Resolution requires:**
+- Audit all genesis defaults across x/emissions, x/bandwidth, x/reputation, x/org
+- Set sane solo-dogfood values (1 validator, 1 org, 1 contributor)
+- Document parameter choices and rationale
+- Walter approval on economic parameters (payout rates, tier thresholds, emission schedule)
 
 ---
 
@@ -1369,6 +1419,32 @@ The following chain features have proto definitions and working keeper logic but
 | Asymmetric gating | `x/emissions` | Validator |
 | Bandwidth state visibility | `x/bandwidth` | Leader, all members |
 
+### GAP-CHAIN-7: Validator Operations Runbook
+
+**Participant:** Validator
+**Status:** OPEN
+
+No operational runbook exists for validator setup, monitoring, key management, upgrade procedure, or emergency response. TOPOLOGY.md has a "Chain Upgrade Procedure" section (added in CO-005e Phase 5) but no broader validator operations guide.
+
+**Resolution requires:**
+- Document validator setup from scratch (hardware reqs, binary build, genesis config, peer config)
+- Document monitoring (block height, peer count, sync status, missed blocks)
+- Document key backup and rotation procedures
+- Document upgrade procedure (references TOPOLOGY.md Chain Upgrade Procedure)
+- Document emergency procedures (chain halt, state export, rollback)
+
+### GAP-CHAIN-4: Block Scanner / Chain Explorer
+
+**Participant:** Validator, Leader
+**Status:** OPEN
+
+No way to browse chain state visually. Validators and leaders must use CLI queries (which are broken per GAP-CHAIN-20) or raw RPC calls. A minimal block scanner would provide transaction history, module state inspection, and validator status in a browser.
+
+**Resolution requires:**
+- Evaluate existing Cosmos block explorers (Ping.pub, Big Dipper, Mintscan) for compatibility with CometBFT v0.38.x
+- Deploy or build a minimal scanner for solo-dogfood use
+- Ensure compatibility with WeVibe custom modules (x/memory, x/org, x/emissions)
+
 ### GAP-N8: No Trial Period Logic in Hub
 
 **Participant:** New User
@@ -1463,36 +1539,48 @@ Sessions page submitted memories one at a time via individual POST requests.
 
 ## Sprint 29 Scope
 
-### In Scope (Sprint 29)
+### Completed (Sprint 29)
 
-| Item | Reference | Status |
-|------|-----------|--------|
+| Item | CO | Status |
+|------|-----|--------|
 | Deferred test vector regeneration + cleanup | CO-006 | **CLOSED** |
-| Cosmos SDK foundation realignment to v0.53.5 + CometBFT v0.38.20 | CO-008 | **CLOSED** |
-| x/upgrade compatibility verification and re-validation on new SDK foundation | CO-005-resume | **OPEN** |
+| Cosmos SDK v0.53.5 + CometBFT v0.38.20 foundation | CO-008 | **CLOSED** |
+| x/upgrade end-to-end verification (5 iterations, 5 bugs fixed) | CO-005 → CO-005e | **CLOSED** — GAP-CHAIN-3 |
+| Workspace `make proto-gen` tooling | CO-003 | **CLOSED** — GAP-CHAIN-8 |
+| R-REMOTE-PREFLIGHT template hardening | CO-004 | **CLOSED** |
 
-### GAP-CHAIN-3: x/upgrade Verification
+### In Scope (Sprint 29, remaining)
 
-**Participant:** Validator, Leader
-**Status:** CLOSED (CO-005e, Sprint 29). x/upgrade end-to-end verified: proposal → halt → swap → ApplyUpgrade with populated fromVM → block production resumes. Five iterations (CO-005 → 005e) discovered and fixed 5 alpha-blocking bugs.
+| Item | Reference | Severity | Status |
+|------|-----------|----------|--------|
+| Keyword weight decay implementation | GAP-CHAIN-1 | CRITICAL | Next |
+| Genesis parameter finalization (Walter approval required) | GAP-CHAIN-5 | MAJOR | After GAP-CHAIN-1 |
+| IAVL state query fix | GAP-CHAIN-20 | MAJOR | After GAP-CHAIN-5 |
+| BIP-32 key hierarchy separation | ARCH-G9 | MODERATE | Any time |
 
-### References
+### Out of Scope (Deferred to post-alpha)
 
-- Full decision rationale: `DECISIONS.md` §12 (D-12.1 through D-12.10)
-- Qdrant isolation verified: single shared collection `wevibe_memories` with org_id filter (classification: B — Filtered isolation)
+| Item | Reason |
+|------|--------|
+| Incremental Merkle commitments | Optimization; solo dogfood doesn't need epoch data availability proofs |
+| Worst-case validator benchmarks | Production sizing; not blocking pre-alpha |
+| State retention categorization | Architecture paperwork; doesn't unblock anything |
+| Batch settlement for serve/denial events | Throughput optimization; per-event model works at solo scale (see D-S29-THROUGHPUT-DEFERRED) |
+| Validator ops runbook (GAP-CHAIN-7) | Docs; Walter knows how to run the chain |
+| Block scanner (GAP-CHAIN-4) | Convenience; not blocking solo dogfood |
 
 ---
 
 ## Summary
 
-| Severity | Count |
-|----------|-------|
-| CRITICAL | 7 (GAP-CHAIN-1 through GAP-CHAIN-7) |
-| MAJOR | 7 (GAP-CHAIN-9 through GAP-CHAIN-14, GAP-CHAIN-20) |
-| MODERATE | 1 (ARCH-G9 — BIP-32 key hierarchy, real crypto work) |
-| MINOR | 7 (GAP-N1 Stripe, GAP-N5 chain features, GAP-CHAIN-15 through GAP-CHAIN-19) |
-| **Total OPEN** | **23** |
-| Documented Finding (not actionable) | 1 (ARCH-G6 — no viable encrypted vector search library; Phase 1 mitigations continue) |
+| Severity | Open Count | Items |
+|----------|------------|-------|
+| CRITICAL | 1 | GAP-CHAIN-1 (lazy decay) |
+| MAJOR | 2 | GAP-CHAIN-20 (IAVL queries), GAP-CHAIN-5 (genesis params) |
+| MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
+| MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
+| **Total OPEN** | **8** | |
+| Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---
 

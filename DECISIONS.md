@@ -1249,4 +1249,26 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
+### D-S29-THROUGHPUT-DEFERRED
+
+**Decision:** The per-event chain TX model for serves and denials (D-4.3, D-4.5) is retained for pre-alpha. A post-alpha architectural review will evaluate batch settlement when multi-user load arrives.
+
+**Why retained now:**
+- Solo-dogfood scale (~10 serves/day, ~1 denial/day) generates negligible chain load
+- Per-event TX gives immediate source-of-truth consistency between hub and chain (no batching window)
+- The model is simple, debugged, and already exercised by CO-005e's end-to-end upgrade test
+- Redesigning the settlement model during chain foundation hardening would introduce scope creep into a sprint focused on getting basics working
+
+**Why review is needed post-alpha:**
+- At multi-org production scale (100+ orgs, 1000+ daily serves), per-event TX volume will dominate block space
+- Hub-side batch aggregation with periodic cryptographic settlement would reduce chain load by 10-100x
+- This is the same pattern used by production L2s and rollup-style systems
+- The hub already has the trust model (D-3.1) to perform aggregation — it's not a new trust assumption
+
+**Review trigger:** When daily serve+denial TX count exceeds 50% of single-validator block capacity, or when the second external org onboards — whichever comes first.
+
+**What does NOT change:** D-4.3 and D-4.5 remain locked. The per-event model is the current implementation. The post-alpha review may propose amendments to those decisions via a formal CO with Walter approval.
+
+---
+
 *End of DECISIONS.md*
