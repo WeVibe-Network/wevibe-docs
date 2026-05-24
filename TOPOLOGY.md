@@ -128,6 +128,49 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 - **Batch submit path (GAP-N9):** Sessions page supports batch submission of memories via `POST /v1/orgs/{orgID}/moderation/batch-submit`. Unified progress indicator shows batch submission status.
 - **Test triage (Task A):** Stale e2e/integration harnesses converted to `describe.skip(...)`. Moderation and server-tools tests updated for changed tool counts and `memory_type_override` drift.
 
+## Sprint 29 Keyword Weight Decay End-to-End (CO-009)
+
+Closes GAP-CHAIN-1. The decay logic existed in `wevibe-chain/x/memory/keeper/lifecycle.go` since CO-240 but was only partially wired: idle decay ran via the epoch hook, while serve boost and denial decay were unreachable from the TX handlers. Qdrant stored keywords as a flat array with no per-keyword weights, so retrieval ranking could not reflect decay/boost signals. CO-009 completes the wiring end-to-end.
+
+### Chain wiring (wevibe-chain/x/serve)
+
+- **`MemoryKeeper` interface** (`x/serve/types/expected_keepers.go`) now exposes `ApplyServeBoost(ctx, orgID, contentHash) error` and `ApplyDenialDecay(ctx, orgID, contentHash) error`. The concrete `*memory.Keeper` already implemented these in `x/memory/keeper/lifecycle.go`.
+- **Serve TX wiring** (`x/serve/keeper/keeper.go` `ProcessServeBatch`): after each accepted serve entry is persisted, the keeper calls `memoryKeeper.ApplyServeBoost`. Errors are logged via `k.logger.Warn` and are non-fatal — the serve attestation is the primary record; the boost is a secondary side effect that may legitimately fail if the memory was concurrently archived. Matches the emissions pattern where payout failures don't roll back the epoch.
+- **Denial TX wiring** (`x/serve/keeper/msg_server.go` `SubmitDenialBatch`): after each accepted denial entry is persisted, the keeper calls `memoryKeeper.ApplyDenialDecay` with the same warn-on-error semantics.
+
+### Decay flows (post-CO-009)
+
+| Trigger | Chain function | Effect on `KeywordWeight.weight` | Side effects |
+|---|---|---|---|
+| Accepted serve TX | `ApplyServeBoost` | `+ServeBoostBps/10000` (= +0.01), capped at 1.0 | `serve_count++`, `LastActiveEpoch = currentEpoch`; no-op during bootstrap grace; no-op once 5 serves applied this epoch |
+| Accepted denial TX | `ApplyDenialDecay` | `−DenialDecayBps/10000` (= −0.05), floored at 0.0 | `denial_count++`, `LastActiveEpoch = currentEpoch`; transitions memory to `MEMORY_STATE_ARCHIVED` if all weights reach zero |
+| Epoch end (no activity) | `ApplyIdleDecay` (existing AfterEpochEnd hook) | `−IdleDecayBps/10000` (= −0.005) | Transitions to `ARCHIVED` if all weights zero; skipped during bootstrap grace |
+
+### Hub-side mirror (wevibe-server/wevibe-hub)
+
+- **Qdrant payload** (`internal/retrieval/retrieval.go` `UpsertPoint`): `keywords` (flat `[]string`) and `confidence_bps` (killed by D-4.1) have been removed from the payload. The new shape is `keyword_weights: map[string]float64` keyed by lowercased keyword. `KeywordWithWeight` entries on `IndexEntry` are the canonical source on insert.
+- **Retrieval ranking** (`QueryPoints`): formula is now `score = vector_similarity + Σ(query_weight × memory_weight) × 0.1` (per D-9.3). The previous confidence scaling factor `(0.7 + 0.3 × confidence_bps/10000)` is removed entirely. The previously dead `computeKeywordScore` helper now drives the keyword overlap calculation, reading `keyword_weights` from the Qdrant payload via `getRESTStringFloatMap`.
+- **New helper `(*QdrantClient).UpdateKeywordWeights(ctx, orgID, memoryCID, weights)`**: pushes a fresh per-keyword weight map onto an existing Qdrant point via the set-payload API, scoped by `org_id` + `cid`. Used by the post-TX mirror in serves.go and by the startup reconciliation in sync.go.
+- **New helper `GetKeywordWeights(ctx, db, orgID, memoryCID)`**: reads `memory_keywords` from PostgreSQL and returns the current `map[string]float64`. Used to feed `UpdateKeywordWeights` after a local DB mutation.
+- **Post-TX local mirror** (`internal/api/handlers/serves.go`): after `SubmitServeBatch` / `RecordDenialEvent` confirms a chain TX, the handler iterates the affected CIDs and runs `retrieval.ApplyServeBoostLocal` / `ApplyDenialDecayLocal` (already existing; D-2.5) which mutate `memory_keywords` in PostgreSQL with the same `±bps/10000` formula. Then `GetKeywordWeights` + `qdrantClient.UpdateKeywordWeights` push the updated weights into Qdrant. Qdrant push failures are non-fatal — PostgreSQL is the local source of truth and Qdrant will reconcile on the next sync.
+- **Startup reconciliation** (`internal/chain/sync.go` `SyncKeywordWeightsFromChain`, wired in `cmd/wevibe-hub/main.go`): on hub startup, after `SyncEpochData`, the hub scrolls Qdrant for each approved org, batches the CIDs through `chainClient.GetMemoriesBatch`, parses each `KeywordWeight` (chain stores `weight` as a decimal string, parsed via `strconv.ParseFloat`), and pushes the chain-canonical weights into Qdrant. Resolves any drift caused by a hub crash between TX confirmation and the local mirror update.
+
+### Formula parity (R-ONE-PATH)
+
+| | Chain (`lifecycle.go`) | Hub (`retrieval.go`) |
+|---|---|---|
+| Boost | `min(1.0, weight + ServeBoostBps/10000)` | `LEAST(1.0, weight + 0.01)` |
+| Decay | `max(0.0, weight − DenialDecayBps/10000)` | `GREATEST(0.0, weight − 0.05)` |
+| Constants | `ServeBoostBps=100`, `DenialDecayBps=500` | `ServeBoostBPS=100`, `DenialDecayBPS=500` |
+
+The hub formulas are bit-for-bit equivalent to the chain formulas. Any future change to one must be matched in the other.
+
+### Scope and limitations
+
+- `SyncKeywordWeightsFromChain` is a full scan per startup. For solo dogfood scale (<100 memories) this completes in seconds. Production scale will require incremental/paged sync — deferred to post-alpha.
+- `confidence_bps` is no longer in the Qdrant payload or in the retrieval ranking. The field still exists on `protocol.IndexEntry` (HTTP API surface) and in the PostgreSQL schema; cleanup there is out of scope for CO-009.
+- The dead `UpdateMemoryConfidenceAndState` helper (which only wrote `confidence_bps` to Qdrant) was removed per R-OVERHAUL.
+
 ## Sprint 24 Content Sanitization + Preference Flagging (CO-239)
 
 - **Unicode threat scanner**: New `internal/sanitize/` package in wevibe-hub with `scanner.go` (Unicode category scanner) and `homoglyphs.go` (Cyrillic/Greek look-alike detection). Detects: bidirectional overrides, format characters, control characters, invisible spaces, zero-width joiners, homoglyphs, zalgo combining marks.

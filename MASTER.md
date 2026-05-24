@@ -1186,7 +1186,7 @@ Phase 1 mitigations are in place (Gaussian noise σ=0.1, Qdrant API key auth, in
 
 **Participant:** Consumer, Contributor, Leader
 **Milestone:** ALPHA
-**Status:** OPEN
+**Status:** CLOSED (CO-009, Sprint 29). Keyword weight decay wired end-to-end: serve boost + denial decay in chain TX handlers, per-keyword weights in Qdrant payload, hub local updates after TX confirmation, startup sync from chain.
 
 D-4.2 defines the dual-vector decay model (idle decay 50 bps/epoch, denial decay 500 bps/denial, serve boost 100 bps/serve, bootstrap grace 14 chain epochs). The model is fully designed but not implemented in `x/memory` keeper logic. Without it:
 
@@ -1548,13 +1548,13 @@ Sessions page submitted memories one at a time via individual POST requests.
 | x/upgrade end-to-end verification (5 iterations, 5 bugs fixed) | CO-005 → CO-005e | **CLOSED** — GAP-CHAIN-3 |
 | Workspace `make proto-gen` tooling | CO-003 | **CLOSED** — GAP-CHAIN-8 |
 | R-REMOTE-PREFLIGHT template hardening | CO-004 | **CLOSED** |
+| Keyword weight decay end-to-end wiring | CO-009 | **CLOSED** — GAP-CHAIN-1 |
 
 ### In Scope (Sprint 29, remaining)
 
 | Item | Reference | Severity | Status |
 |------|-----------|----------|--------|
-| Keyword weight decay implementation | GAP-CHAIN-1 | CRITICAL | Next |
-| Genesis parameter finalization (Walter approval required) | GAP-CHAIN-5 | MAJOR | After GAP-CHAIN-1 |
+| Genesis parameter finalization (Walter approval required) | GAP-CHAIN-5 | MAJOR | Next |
 | IAVL state query fix | GAP-CHAIN-20 | MAJOR | After GAP-CHAIN-5 |
 | BIP-32 key hierarchy separation | ARCH-G9 | MODERATE | Any time |
 
@@ -1575,11 +1575,11 @@ Sessions page submitted memories one at a time via individual POST requests.
 
 | Severity | Open Count | Items |
 |----------|------------|-------|
-| CRITICAL | 1 | GAP-CHAIN-1 (lazy decay) |
+| CRITICAL | 0 | (GAP-CHAIN-1 closed by CO-009) |
 | MAJOR | 2 | GAP-CHAIN-20 (IAVL queries), GAP-CHAIN-5 (genesis params) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **8** | |
+| **Total OPEN** | **7** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---
