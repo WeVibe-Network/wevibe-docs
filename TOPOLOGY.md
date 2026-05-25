@@ -219,7 +219,7 @@ The hub formulas are bit-for-bit equivalent to the chain formulas. Any future ch
 - **Dual-vector decay model** (deprecated by CO-240): wevibe-chain `x/memory` previously applied idle decay (50 bps) and negative-signal decay (500 bps) at epoch close based on memory-level `confidence_bps`. CO-240 replaces this with per-keyword weight decay.
 - **Pay-per-memory**: `x/emissions` `ProcessOrgPayouts` counts approved memories per contributor (not serves). `payout_per_memory` replaces `payout_per_serve`. Qualification via `min_contributions_per_epoch` org config; tier cap via `MaxContributionsPerEpoch`.
 - **`MsgSubmitDenialBatch`**: `x/serve` accepts batched denial attestations from org leaders; stores `StoredDenialAttestation` keyed by org/epoch/memory-hash.
-- **Hub denial wiring (rewritten by CO-011a.4; retrieval loop finalized by CO-013):** wevibe-hub `POST /v1/orgs/{orgID}/denials` records denials in `serve_events` with `event_type='denial'` and `status='pending'`. Query ranking (`POST .../query`) applies the optimistic formula `optimistic_weight = chain_weight − (pending_denial_count × DenialDecayBps/10000)` where `pending_denial_count` is computed from `serve_events` grouped by `memory_content_hash` for current candidates. Leader side: dashboard reads `GET .../denials/pending-count` and `GET .../denials/pending` (newest-first, capped at 200 rows, includes `total_count`) to build `MsgSubmitDenialBatch` for wallet-signed direct chain broadcast (Category A). On confirmation, `ChainWatcher.processDenialBatchBookkeeping` marks matched rows `status='submitted'`, so pending counts naturally drop from query-time scoring. The legacy `POST /v1/orgs/{orgID}/denials/batch-submit` hub endpoint remains deleted.
+- **Hub denial wiring (rewritten by CO-011a.4; retrieval loop finalized by CO-013):** wevibe-hub `POST /v1/orgs/{orgID}/denials` records denials in `serve_events` with `event_type='denial'` and `status='pending'`. wevibe-mcp queues denials locally at `~/.wevibe/pending-denials.json` (CO-014) and flushes them to this endpoint via `flushDenials()` on recall, on denial POST, and every 60 seconds. Query ranking (`POST .../query`) applies the optimistic formula `optimistic_weight = chain_weight − (pending_denial_count × DenialDecayBps/10000)` where `pending_denial_count` is computed from `serve_events` grouped by `memory_content_hash` for current candidates. Leader side: dashboard reads `GET .../denials/pending-count` and `GET .../denials/pending` (newest-first, capped at 200 rows, includes `total_count`) to build `MsgSubmitDenialBatch` for wallet-signed direct chain broadcast (Category A). On confirmation, `ChainWatcher.processDenialBatchBookkeeping` marks matched rows `status='submitted'`, so pending counts naturally drop from query-time scoring. The legacy `POST /v1/orgs/{orgID}/denials/batch-submit` hub endpoint remains deleted.
 
 ## Sprint 25 Highlights (CO-247)
 
@@ -1572,11 +1572,12 @@ wevibe-chain x/serve MsgSubmitDenialBatch handler
        │
        │ Per accepted denial entry:
        │   StoredDenialAttestation persisted (keyed org_id / epoch_id / memory_hash)
-       │   Calls memoryKeeper.ApplyDenialDecay → −500 bps on all keywords
-       │     of that memory, floored at 0.0; transitions to MEMORY_STATE_ARCHIVED
-       │     if all weights reach zero.
-       │ Chain emits `denial_batch_submitted` event {org_id, batch_size,
-       │   block_height, committing_leader} (RPC-queryable).
+│   Calls memoryKeeper.ApplyDenialDecay → −500 bps on all keywords
+        │     of that memory, floored at 0.0; transitions to MEMORY_STATE_ARCHIVED
+        │     if all weights reach zero.
+        │ Chain emits `denial_batch_submitted` event {org_id, submitter, epoch,
+        │   accepted_count, rejected_count, block_height} — queryable via CometBFT
+        │   `tx_search` as `denial_batch_submitted.org_id='<org_id>'` (CO-016).
        ▼
 ChainWatcher (hub) observes the block
        │
