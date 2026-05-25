@@ -54,7 +54,7 @@ DECISIONS.md D-14.21, R-PROTO-REGEN.
 
 ### Chain Broadcast (CO-258)
 
-Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uvibe)`. Retry on transient state-load errors.
+Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uvibe)`. Retry on transient state-load errors. As of CO-011a.4 the hub broadcasts ONLY relay-forwarded delegate-signed transactions on behalf of the user (Category B); it no longer broadcasts using its own wallet for memory/serve/denial/report/register-org operations.
 
 ### Schema Bootstrap
 
@@ -103,7 +103,7 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
   - `DELETE /v1/orgs/{orgID}/submissions/{submissionHash}` — remove submission from pipeline
   - `GET /v1/orgs/{orgID}/submissions/keywords/pending` — list submissions awaiting keyword verification
   - `GET /v1/orgs/{orgID}/submissions/keywords/pending-chain` — list submissions ready for chain submission
-- **Batch chain submission**: Leaders review `pending_chain` submissions in dashboard and trigger `POST /v1/orgs/{orgID}/submissions/batch-chain-submit`. Multi-message Cosmos TX (atomic: all-or-nothing). Embeddings computed on-the-fly via Ollama at submit time. Post-commit: Qdrant upsert, `memory_keywords` population, status → `committed`.
+- **Batch chain submission (CO-238; rewritten by CO-011a.4)**: Leaders review `pending_chain` submissions in dashboard. Chain commitment is now built BY THE DASHBOARD (`MsgApproveMemory` per memory, batched in one authz `MsgExec`) and broadcast via the hub's relay endpoint `POST /v1/relay/broadcast` (Category B / Decision 2026-05-24-B). The legacy hub endpoint `POST /v1/orgs/{orgID}/submissions/batch-chain-submit` was deleted. Embeddings + Qdrant upsert + `memory_keywords` population + status flip to `committed` are now driven by the ChainWatcher on tx confirmation, not by the hub handler.
 - **Leader activity tracking**: `leader_activity` table tracks `last_batch_extraction_at` and `last_chain_submission_at` per leader.
 - **GAP-O8 resolved**: `/api/extract` endpoint (dashboard) now proxies through MCP `wevibe_extract_memories` tool — no direct Ollama/OpenRouter calls.
 - **wevibe-mcp changes**: `src/extraction.ts` weight normalization (weights sum to 1.0). `approveSubmissionMessageSimple` replaces complex multi-step approval message. `wevibe_extract_keywords_batch` and `wevibe_extract_memories` MCP tools added.
@@ -114,7 +114,7 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 - **Contributor denial visibility**: New hub endpoint `GET /v1/orgs/{orgID}/my-submissions` is consumed by dashboard to display submission status and `denial_reason` back to contributors.
 - **Submit-time sanitization feedback**: Hub submit response now includes additive `sanitization_findings`; dashboard sessions page displays an amber success+warning banner when findings exist.
 - **Quorum voting UX**: Dashboard moderation supports vote-based approval for `required_approvals > 1` (vote count, threshold, voter list), with direct approve retained for `required_approvals == 1`.
-- **Hub chain-sync on org creation**: Hub now broadcasts `MsgRegisterOrg` to wevibe-chain during org creation and persists `orgs.chain_registered` state without rolling back hub org creation on chain failure.
+- **Hub chain-sync on org creation (rewritten by CO-011a.4)**: Dashboard now does this in two steps — first `POST /v1/orgs` for envelope storage (hub-side, Decision 2026-05-24-O), then a relay broadcast wrapping `MsgRegisterOrg` (Category B). ChainWatcher flips `orgs.chain_registered` on tx confirmation. The hub no longer broadcasts `MsgRegisterOrg` itself.
 - **Smoke-test RPC topology clarity**: `wevibe-chain/scripts/smoke-test.sh` now documents `RPC_URL` override and the Docker default `localhost:26657` mapping.
 
 ## Sprint 28 Highlights (CO-266)
@@ -123,10 +123,30 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 - **Provider policy enforcement (GAP-O11, N10):** wevibe-mcp `provider_policy` setting (`unrestricted|local_only|allowlist`) evaluated at recall time. `local_only` blocks non-local providers; `allowlist` checks against org-scoped allowed providers from hub membership. Block returns `reason_code: "provider_not_allowed"`. New MCP tool `wevibe_set_provider_policy` for configuration.
 - **Leader-only author memory (GAP-ARCH-G7):** `wevibe_author_memory` MCP tool restricted to leader role. Non-leaders receive explicit admin-path description in tool response.
 - **Unified finances UI (GAP-O6):** Dashboard billing page shows credits balance + chain financial data. New hub `GET /v1/orgs/{orgID}/finances` endpoint.
-- **Chain config relay (GAP-O7):** New hub `GET /v1/orgs/{orgID}/chain-config` endpoint (leader-only). Dashboard settings page exposes chain config read/edit UI.
+- **Chain config split (GAP-O7; rewritten by CO-011a.4 per Decision 2026-05-24-C):** Hub keeps `GET /v1/orgs/{orgID}/chain-config` (read-only, leader-only). The write path `PUT /chain-config` was DELETED — the dashboard now builds `MsgSetOrgConfig` / `MsgSetRepTiers` and broadcasts via the relay (Category B fields). Category A fields (`required_approvals`, `report_vote_threshold`) go via direct Keplr broadcast plus a separate hub PATCH `/v1/orgs/{orgID}/config` to update the off-chain mirror in the `orgs` table.
 - **Moderation edit-before-approval fallback (GAP-N2):** Dashboard deny dialog offers "Save & Edit" option for encrypted content that cannot be previewed inline. Denial records original+edited content in reason field.
 - **Batch submit path (GAP-N9):** Sessions page supports batch submission of memories via `POST /v1/orgs/{orgID}/moderation/batch-submit`. Unified progress indicator shows batch submission status.
 - **Test triage (Task A):** Stale e2e/integration harnesses converted to `describe.skip(...)`. Moderation and server-tools tests updated for changed tool counts and `memory_type_override` drift.
+
+## Sprint 29 — CO-011a.4: Hub-as-Relay Migration (closes GAP-IDENTITY-1)
+
+Locked β-1 architecture. The hub stops broadcasting from its own wallet; the dashboard owns chain-tx construction and signing for every category of operation. The hub becomes a content-agnostic relay.
+
+**Three flow categories (Decision 2026-05-24-B):**
+
+- **Category A — master-wallet-direct.** Dashboard builds the inner `Msg`, signs with Keplr (`MsgGrant`, `MsgRevoke`, Category A portion of `MsgSetOrgConfig`), broadcasts directly to chain RPC. No hub involvement. Implemented via `wevibe-dashboard/lib/chain-client.ts:directBroadcast()`.
+- **Category B — delegate-via-relay.** Dashboard builds the inner `Msg`, wraps in `cosmos.authz.v1beta1.MsgExec` (Decision 2026-05-24-A), signs the tx with the delegate HD wallet from IndexedDB, builds the canonical body per Decision 2026-05-24-F, signs the canonical body with the delegate, POSTs to `hub/v1/relay/broadcast` with `Authorization: Delegate <base64-sig>` (Decision 2026-05-24-E). Implemented via `wevibe-dashboard/lib/relay-client.ts:relayBroadcast()` + `wevibe-dashboard/lib/canonical-body.ts`. Hub relay validates the delegate signature against `delegate_keys`, checks the inner granter matches the wallet_address claimed in the body, validates every inner Msg type URL against `GranterFieldByMsgType` (Decision 2026-05-24-I — hand-maintained allowlist of 12 entries), and broadcasts via `broadcast_tx_sync`.
+- **Category C — hub-self-signed.** None currently. Reserved for future operations the hub itself performs on behalf of the network.
+
+**Bookkeeping unified at the watcher (Decision 2026-05-24-K).** Every confirmed Category B tx is observed by `ChainWatcher` (activated in `main.go` after the notification dispatcher, before the router — Decision 2026-05-24-M). The watcher's five bookkeeping handlers (`processApproveMemoryBookkeeping`, `processServeBatchBookkeeping`, `processDenialBatchBookkeeping`, `processReportBookkeeping`, `processRegisterOrgBookkeeping`) are now the sole owner of post-confirmation DB writes and Qdrant updates. R-WATCHER-NOT-STARTED is permanently lifted.
+
+**Hub handlers deleted:** `BatchChainSubmit` (was `POST /batch-chain-submit`), `BatchSubmitServes` (was `POST /serves/batch-submit`), `BatchSubmitDenials` (was `POST /denials/batch-submit`), the chain-broadcast portion of `CreateOrg` (envelope storage retained per Decision 2026-05-24-O), the chain-broadcast portion of report commit (`POST /reports/{id}/commit` deleted per Decision 2026-05-24-N; off-chain vote tallying retained), `UpdateOrgChainConfig` (`PUT /chain-config` deleted; `GET /chain-config` retained).
+
+**Schema overhaul (Decision 2026-05-24-H):** `delegate_keys` is now a global per-wallet table (PK `wallet_address`, UNIQUE `delegate_address`); `org_id` column and FK to `orgs` were dropped. The members table continues to own the per-org membership relationship.
+
+**Test vectors (Decision 2026-05-24-G):** `wevibe-protocol/test_vectors/relay_envelope_v1.json` is the canonical reference for the relay canonical-body format. Three vectors (empty, ASCII typical, Unicode org label) with SHA-256 hashes. Both the hub validator and the dashboard builder must produce byte-equal canonical bodies for every vector.
+
+**Merkle parity (Decision 2026-05-24-F-adjacent):** `wevibe-dashboard/lib/merkle.ts` is byte-for-byte equivalent to `wevibe-hub/internal/chain/merkle.go ComputeMerkleRoot`. Three fixture vectors at `lib/merkle.test.ts` verify parity; `npx tsx lib/merkle.test.ts` confirms.
 
 ## Sprint 29 Keyword Weight Decay End-to-End (CO-009)
 
@@ -199,7 +219,7 @@ The hub formulas are bit-for-bit equivalent to the chain formulas. Any future ch
 - **Dual-vector decay model** (deprecated by CO-240): wevibe-chain `x/memory` previously applied idle decay (50 bps) and negative-signal decay (500 bps) at epoch close based on memory-level `confidence_bps`. CO-240 replaces this with per-keyword weight decay.
 - **Pay-per-memory**: `x/emissions` `ProcessOrgPayouts` counts approved memories per contributor (not serves). `payout_per_memory` replaces `payout_per_serve`. Qualification via `min_contributions_per_epoch` org config; tier cap via `MaxContributionsPerEpoch`.
 - **`MsgSubmitDenialBatch`**: `x/serve` accepts batched denial attestations from org leaders; stores `StoredDenialAttestation` keyed by org/epoch/memory-hash.
-- **Hub denial wiring**: wevibe-hub `POST /v1/orgs/{orgID}/denials` records denials; `POST /v1/orgs/{orgID}/denials/batch-submit` relays to chain. `serve_events` table uses `event_type IN ('serve', 'denial')` and `reason` column. `SubmitDenialBatch` added to chain client.
+- **Hub denial wiring (rewritten by CO-011a.4; retrieval loop finalized by CO-013):** wevibe-hub `POST /v1/orgs/{orgID}/denials` records denials in `serve_events` with `event_type='denial'` and `status='pending'`. Query ranking (`POST .../query`) applies the optimistic formula `optimistic_weight = chain_weight − (pending_denial_count × DenialDecayBps/10000)` where `pending_denial_count` is computed from `serve_events` grouped by `memory_content_hash` for current candidates. Leader side: dashboard reads `GET .../denials/pending-count` and `GET .../denials/pending` (newest-first, capped at 200 rows, includes `total_count`) to build `MsgSubmitDenialBatch` for wallet-signed direct chain broadcast (Category A). On confirmation, `ChainWatcher.processDenialBatchBookkeeping` marks matched rows `status='submitted'`, so pending counts naturally drop from query-time scoring. The legacy `POST /v1/orgs/{orgID}/denials/batch-submit` hub endpoint remains deleted.
 
 ## Sprint 25 Highlights (CO-247)
 
@@ -403,11 +423,18 @@ GET    /v1/orgs/{orgID}/moderation/queue
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/vote
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/approve
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/deny
-POST   /v1/orgs/{orgID}/moderation/batch-submit
+POST   /v1/orgs/{orgID}/moderation/batch-submit                          # Hub-internal queue; NOT chain
 POST   /v1/orgs/{orgID}/serves
-POST   /v1/orgs/{orgID}/serves/batch-submit
-POST   /v1/orgs/{orgID}/denials              # Record denial event (CO-225)
-POST   /v1/orgs/{orgID}/denials/batch-submit  # Batch submit denials to chain (CO-225)
+POST   /v1/orgs/{orgID}/denials              # Record denial event (CO-225); increments
+                                             # optimistic pending_denial_count per
+                                             # D-2026-05-25-A (load-bearing for query
+                                             # ranking)
+GET    /v1/orgs/{orgID}/denials/pending-count  # D-2026-05-25-A: leader denial-batch panel
+GET    /v1/orgs/{orgID}/denials/pending        # D-2026-05-25-A: leader-only list,
+                                               # newest-first, capped at 200 rows,
+                                               # includes total_count for batch UI
+# POST /v1/orgs/{orgID}/serves/batch-submit  — DELETED CO-011a.4: dashboard relays MsgSubmitServeBatch
+# POST /v1/orgs/{orgID}/denials/batch-submit — DELETED CO-011a.4: dashboard relays MsgSubmitDenialBatch directly to chain (Category A per D-2026-05-25-A; supersedes the earlier Category B framing)
 POST   /v1/orgs/{orgID}/query
 GET    /v1/orgs/{orgID}/memories
 GET    /v1/orgs/{orgID}/memories/{cid}
@@ -421,13 +448,18 @@ POST   /v1/orgs/{orgID}/submissions/{submissionHash}/keywords          # Submit 
 POST   /v1/orgs/{orgID}/submissions/{submissionHash}/keywords/rerun     # Rerun extraction via Ollama (CO-238)
 PUT    /v1/orgs/{orgID}/submissions/{submissionHash}/keywords           # Update keyword set (CO-238)
 DELETE /v1/orgs/{orgID}/submissions/{submissionHash}                     # Remove submission from pipeline (CO-238)
+POST   /v1/relay/broadcast                                               # Delegate-signed relay endpoint (CO-011a.4; top-level, Category B chain ops)
 GET    /v1/orgs/{orgID}/my-submissions                                   # Contributor-only submission status view (CO-265)
 GET    /v1/orgs/{orgID}/submissions/keywords/pending                     # List pending keyword verification (CO-238)
 GET    /v1/orgs/{orgID}/submissions/keywords/pending-chain               # List ready for chain submit (CO-238)
-POST   /v1/orgs/{orgID}/submissions/batch-chain-submit                  # Batch chain submission (CO-238)
+# POST /v1/orgs/{orgID}/submissions/batch-chain-submit — DELETED CO-011a.4: dashboard relays MsgApproveMemory directly
+# POST /v1/orgs/{orgID}/serves/batch-submit            — DELETED CO-011a.4: dashboard relays MsgSubmitServeBatch
+# POST /v1/orgs/{orgID}/denials/batch-submit           — DELETED CO-011a.4: dashboard relays MsgSubmitDenialBatch directly to chain (Category A per D-2026-05-25-A; supersedes earlier Category B framing)
+GET    /v1/orgs/{orgID}/denials/pending-count                            # Leader denial-batch panel count (D-2026-05-25-A)
+GET    /v1/orgs/{orgID}/denials/pending                                  # Leader-only pending list (newest-first, capped at 200, includes total_count)
 GET    /v1/orgs/{orgID}/health
 GET    /v1/orgs/{orgID}/finances                                         # Credits + chain financial data (CO-266, GAP-O6)
-GET    /v1/orgs/{orgID}/chain-config                                     # Chain config read (CO-266, GAP-O7, leader-only)
+GET    /v1/orgs/{orgID}/chain-config                                     # Chain config read (CO-266, GAP-O7, leader-only; CO-011a.4 deleted the PUT counterpart)
 POST   /v1/billing/topup
 GET    /v1/orgs/{orgID}/credits
 POST   /v1/orgs/{orgID}/reports
@@ -680,10 +712,10 @@ func ListMembers(ctx, pool, orgID) ([]MemberRecord, error)
 func VerifyMemberAccess(ctx, pool, orgID, pubkey, requestedEpoch) (bool, error)
 func IsLeader(ctx, pool, orgID, pubkey) (bool, error)
 func ListOrgsForMember(ctx, pool, pubkey) ([]MemberOrgEntry, error)
-func RegisterDelegateKey(ctx, pool, orgID, req) error         // CO-214
-func GetDelegateKey(ctx, pool, orgID, delegateAddress) (*protocol.DelegateKeyRecord, error) // CO-214
-func ResolveDelegateToWallet(ctx, pool, delegateAddress) (walletAddress, orgID string, err error) // CO-214
-func RevokeDelegateKey(ctx, pool, orgID, walletAddress) error  // CO-214
+func RegisterDelegateKey(ctx, pool, req) error                                  // CO-214 (CO-011a.4: orgID parameter removed)
+func GetDelegateKey(ctx, pool, delegateAddress) (*protocol.DelegateKeyRecord, error) // CO-214 (CO-011a.4: orgID removed; DelegateKeyRecord no longer carries OrgID)
+func ResolveDelegateToWallet(ctx, pool, delegateAddress) (walletAddress string, err error) // CO-214 (CO-011a.4: orgID dropped from return)
+func RevokeDelegateKey(ctx, pool, walletAddress) error                          // CO-214 (CO-011a.4: orgID parameter removed)
 ```
 **Known issues:** None
 
@@ -881,8 +913,8 @@ RecoveryShareEntry       — share_index, holder_pubkey, sealed_share
 RecoveryShareResponse    — org_id, share_index, sealed_share
 RegisterDashboardKeyRequest — pubkey, label, signed_by, signature
 DashboardKeyRecord       — org_id, pubkey, label, registered_by, active, created_at
-RegisterDelegateKeyRequest — wallet_address, delegate_address, delegate_pubkey, grant_tx_hash, grant_expiration, signed_by, signature (CO-214)
-DelegateKeyRecord        — wallet_address, delegate_address, org_id, delegate_pubkey, grant_tx_hash, grant_expiration, active, created_at (CO-214)
+RegisterDelegateKeyRequest — wallet_address, delegate_address, delegate_pubkey, grant_tx_hash, grant_expiration, signed_by, signature (CO-214; wire payload unchanged by CO-011a.4)
+DelegateKeyRecord        — wallet_address, delegate_address, delegate_pubkey, grant_tx_hash, grant_expiration, active, created_at (CO-214; `OrgID` field removed by CO-011a.4 per Decision 2026-05-24-H)
 ```
 
 ---
@@ -904,11 +936,11 @@ credit_transactions   — PK: txn_id (BIGSERIAL). FK: orgs.
 key_envelopes         — PK: (org_id, pubkey). Stores enc/search/mod envelopes per member.
 recovery_shares       — PK: (org_id, share_index). Stores sealed Shamir shares.
 dashboard_keys        — PK: (org_id, pubkey). Authorized dashboard identities per org.
-delegate_keys         — PK: (org_id, delegate_address). UNIQUE: (org_id, wallet_address). Maps wallet to delegate key (CO-214)
+delegate_keys         — PK: wallet_address. UNIQUE: delegate_address. Global per-wallet mapping (CO-214; schema overhauled by CO-011a.4 per Decision 2026-05-24-H — org_id column and FK to orgs removed)
 org_keywords          — PK: id. UNIQUE: (org_id, keyword). Created via RunMigrations.
 memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERENCES org_keywords.
 ```
-**Indexes:** `idx_orgs_leader`, `idx_orgs_status`, `idx_members_active`, `idx_members_pubkey`, `idx_members_pubkey_active`, `idx_pending_org_status`, `idx_pending_contributor`, `idx_receipts_org_epoch`, `idx_audit_org_epoch`, `idx_credit_txn_org`, `idx_envelopes_org`, `idx_recovery_shares_holder`, `idx_dashboard_keys_pubkey`, `idx_delegate_keys_address`, `idx_delegate_keys_wallet`, `idx_org_keywords_org` (WHERE NOT deprecated), `idx_memory_keywords_keyword`
+**Indexes:** `idx_orgs_leader`, `idx_orgs_status`, `idx_members_active`, `idx_members_pubkey`, `idx_members_pubkey_active`, `idx_pending_org_status`, `idx_pending_contributor`, `idx_receipts_org_epoch`, `idx_audit_org_epoch`, `idx_credit_txn_org`, `idx_envelopes_org`, `idx_recovery_shares_holder`, `idx_dashboard_keys_pubkey`, `idx_delegate_keys_delegate_address`, `idx_org_keywords_org` (WHERE NOT deprecated), `idx_memory_keywords_keyword`
 
 ---
 
@@ -1484,37 +1516,79 @@ KFrag store updated (kfrags deleted for removed member)
 - `POST /v1/internal/epoch-keypair` — calls `umbralService.GenerateEpochKeyPair`
 - `POST /v1/internal/orgs/{orgID}/kfrags` — calls `umbralService.RegisterMember`
 
-**Denial Attestation Flow (CO-225):**
+**Denial Attestation Flow (CO-225; consumer loop finalized 2026-05-25 per D-2026-05-25-A):**
 ```
-Consumer/MCP Client
+Consumer plugin (wevibe-plugin.ts)
        │
-       │ POST /v1/orgs/{orgID}/denials
-       │ { memory_cid, reason, agent_sig }
+       │ User clicks Deny on a memory in the recall approval UI.
+       │ Plugin does TWO actions, both fire-and-forget:
+       │   (a) appends memory_hash to ~/.wevibe/blacklist.json (local suppression)
+       │   (b) POST /v1/denials to wevibe-mcp with {memory_hash, org_id, reason?}
        ▼
-wevibe-hub ────────────────────────────────────────────
-       │                                             │
-       │ 1. Verifies sig + membership                │
-       │ 2. Writes to serve_events table             │
-       │    (event_type='denial', reason, org_id,    │
-       │     epoch_id, memory_cid)                   │
-       │ 3. Optionally calls POST /v1/orgs/{orgID}/  │
-       │    denials/batch-submit                     │
-       ▼                                             │
-wevibe-chain ◄── MsgSubmitDenialBatch ─────────────────┘
+wevibe-mcp HTTP API (loopback 127.0.0.1:4450, Bearer token per D-12.5a)
        │
-       │ x/serve msg_server
+       │ 1. Append {memory_hash, org_id, reason?, consumer_pubkey, ts}
+       │    to ~/.wevibe/pending-denials.json (atomic write).
+       │ 2. Return 202 Accepted to the plugin immediately.
+       │ 3. Flush queue to hub opportunistically:
+       │      — on next /v1/recall call (piggyback),
+       │      — on periodic timer,
+       │      — survives plugin/wevibe-mcp restarts.
+       │ 4. On hub 200 OK, remove the entry from the queue.
        ▼
-StoredDenialAttestation stored
-(keyed by org_id / epoch_id / memory_hash)
+wevibe-hub POST /v1/orgs/{orgID}/denials (D-2026-05-25-A)
        │
-       │ EndBlocker hook triggers x/memory decay
+       │ 1. Verify consumer signature + org membership.
+       │ 2. Insert into serve_events (event_type='denial', status='pending',
+       │    org_id, epoch_id, memory_content_hash, nullifier, reason).
+       │ 3. Pending counts are derived from serve_events at query time;
+       │    no separate counter table is required.
+       │ 4. Return 200 OK.
+       │
+       ├─► QUERY PATH (load-bearing invariant — D-2026-05-25-A):
+       │   Hub query handler ranks results using
+       │     optimistic_weight = chain_weight
+       │                         − (pending_denial_count × DenialDecayBps/10000)
+       │   applied equally to all keywords on the memory (mirrors chain logic).
+       │   A denial received at T is reflected in any query at T+ε. No batching,
+       │   no caching delay.
+       │
+       │ Pending denials accumulate at the hub. Leader chooses when to settle.
        ▼
-x/memory epoch close:
-  - idle decay (50 bps): all memories
-  - negative-signal decay (500 bps): memories with denials
-  - confidence_bps == 0 → ARCHIVED state
+Dashboard denial-batch panel (on /chain-submit)
        │
-       │ x/emissions ProcessOrgPayouts reads denials
+       │ Shows: "N denials awaiting on-chain submittal."
+       │ No per-denial review. No automatic trigger. Leader's choice.
+       │ If N > 200: "200 of N are shown; submit additional batches as needed."
+       │
+       │ Leader clicks Submit:
+       │   GET /v1/orgs/{orgID}/denials/pending  (newest-first, max 200)
+       │   Dashboard builds MsgSubmitDenialBatch.
+       │   Leader signs with WALLET (Category A per D-1.3 — same pattern as
+       │     MsgApproveMemory).
+       │   Dashboard broadcasts directly to chain RPC (NOT via hub relay).
+       ▼
+wevibe-chain x/serve MsgSubmitDenialBatch handler
+       │
+       │ Per accepted denial entry:
+       │   StoredDenialAttestation persisted (keyed org_id / epoch_id / memory_hash)
+       │   Calls memoryKeeper.ApplyDenialDecay → −500 bps on all keywords
+       │     of that memory, floored at 0.0; transitions to MEMORY_STATE_ARCHIVED
+       │     if all weights reach zero.
+       │ Chain emits `denial_batch_submitted` event {org_id, batch_size,
+       │   block_height, committing_leader} (RPC-queryable).
+       ▼
+ChainWatcher (hub) observes the block
+       │
+       │ processDenialBatchBookkeeping:
+       │   - Marks matching serve_events rows status='submitted'
+       │   - Pending denial counts then drop automatically from query-time
+       │     scoring because only status='pending' rows are counted
+       │   - Applies the new chain weight as the baseline for future optimistic
+       │     calculations
+       │   - Inserts chain_commit_events row (action_type='denial_batch_submitted')
+       │
+       │ x/emissions ProcessOrgPayouts reads serves and denials at epoch close.
        ▼
 payout_per_memory counted (not payout_per_serve)
 ```
