@@ -54,7 +54,7 @@ DECISIONS.md D-14.21, R-PROTO-REGEN.
 
 ### Chain Broadcast (CO-258)
 
-Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uvibe)`. Retry on transient state-load errors. As of CO-011a.4 the hub broadcasts ONLY relay-forwarded delegate-signed transactions on behalf of the user (Category B); it no longer broadcasts using its own wallet for memory/serve/denial/report/register-org operations.
+Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uvibe)`. Retry on transient state-load errors. The primary path is relay-forwarded delegate-signed Category B traffic; CO-023 also wires synchronous `RegisterOrgOnChain` from `CreateOrg`, so org creation performs a hub-originated chain registration call in the same request lifecycle.
 
 ### Schema Bootstrap
 
@@ -94,7 +94,7 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 
 ## Sprint 26 Highlights (CO-238)
 
-- **Multi-stage memory lifecycle**: Memory submissions now flow through four distinct states: `pending` → `pending_keyword` → `pending_chain` → `committed`. Moderator approval at `pending` only transitions to `pending_keyword` — keyword extraction, Qdrant indexing, and chain submission are decoupled and handled by separate pipeline stages.
+- **Multi-stage memory lifecycle (CO-020)**: Memory submissions flow through five distinct states: `pending` → `pending_keyword` → `pending_chain` → `committed` (terminal retrievable); `denied` is a terminal reject state. Moderator approval at `pending` only transitions to `pending_keyword` — keyword extraction, Qdrant indexing, and chain submission are decoupled and handled by separate pipeline stages.
 - **Batch keyword extraction**: Dashboard orchestrates keyword extraction via `wevibe_extract_memories` MCP tool. Results submitted to hub for verification (`POST /v1/orgs/{orgID}/submissions/{hash}/keywords`). Hub verifies keywords against vocabulary and transitions status to `pending_chain`.
 - **Hub keyword verification endpoints** (new in `internal/api/handlers/keyword_extraction.go`):
   - `POST /v1/orgs/{orgID}/submissions/{submissionHash}/keywords` — submit verified/extracted keywords
@@ -114,7 +114,7 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 - **Contributor denial visibility**: New hub endpoint `GET /v1/orgs/{orgID}/my-submissions` is consumed by dashboard to display submission status and `denial_reason` back to contributors.
 - **Submit-time sanitization feedback**: Hub submit response now includes additive `sanitization_findings`; dashboard sessions page displays an amber success+warning banner when findings exist.
 - **Quorum voting UX**: Dashboard moderation supports vote-based approval for `required_approvals > 1` (vote count, threshold, voter list), with direct approve retained for `required_approvals == 1`.
-- **Hub chain-sync on org creation (rewritten by CO-011a.4)**: Dashboard now does this in two steps — first `POST /v1/orgs` for envelope storage (hub-side, Decision 2026-05-24-O), then a relay broadcast wrapping `MsgRegisterOrg` (Category B). ChainWatcher flips `orgs.chain_registered` on tx confirmation. The hub no longer broadcasts `MsgRegisterOrg` itself.
+- **Hub chain-sync on org creation (updated by CO-023):** `POST /v1/orgs` now persists the org and then calls `RegisterOrgOnChain` synchronously with chain defaults (`storageQuota=1073741824`, `retrievalBudget=10000`). If chain registration fails, the request fails (no fallback). `ChainWatcher.processRegisterOrgBookkeeping` remains the canonical path that flips `orgs.chain_registered=true` on confirmed `MsgRegisterOrg`.
 - **Smoke-test RPC topology clarity**: `wevibe-chain/scripts/smoke-test.sh` now documents `RPC_URL` override and the Docker default `localhost:26657` mapping.
 
 ## Sprint 28 Highlights (CO-266)
@@ -130,7 +130,7 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 
 ## Sprint 29 — CO-011a.4: Hub-as-Relay Migration (closes GAP-IDENTITY-1)
 
-Locked β-1 architecture. The hub stops broadcasting from its own wallet; the dashboard owns chain-tx construction and signing for every category of operation. The hub becomes a content-agnostic relay.
+Locked β-1 architecture. The dashboard owns chain-tx construction and signing for Category A/B user flows and the hub acts as relay/validator for Category B. CO-023 also introduces a synchronous hub-side `RegisterOrgOnChain` call inside `CreateOrg`, so org creation currently includes one hub-originated chain broadcast.
 
 **Three flow categories (Decision 2026-05-24-B):**
 
@@ -140,7 +140,14 @@ Locked β-1 architecture. The hub stops broadcasting from its own wallet; the da
 
 **Bookkeeping unified at the watcher (Decision 2026-05-24-K).** Every confirmed Category B tx is observed by `ChainWatcher` (activated in `main.go` after the notification dispatcher, before the router — Decision 2026-05-24-M). The watcher's five bookkeeping handlers (`processApproveMemoryBookkeeping`, `processServeBatchBookkeeping`, `processDenialBatchBookkeeping`, `processReportBookkeeping`, `processRegisterOrgBookkeeping`) are now the sole owner of post-confirmation DB writes and Qdrant updates. R-WATCHER-NOT-STARTED is permanently lifted.
 
-**Hub handlers deleted:** `BatchChainSubmit` (was `POST /batch-chain-submit`), `BatchSubmitServes` (was `POST /serves/batch-submit`), `BatchSubmitDenials` (was `POST /denials/batch-submit`), the chain-broadcast portion of `CreateOrg` (envelope storage retained per Decision 2026-05-24-O), the chain-broadcast portion of report commit (`POST /reports/{id}/commit` deleted per Decision 2026-05-24-N; off-chain vote tallying retained), `UpdateOrgChainConfig` (`PUT /chain-config` deleted; `GET /chain-config` retained).
+**Hub handlers deleted:** `BatchChainSubmit` (was `POST /batch-chain-submit`), `BatchSubmitServes` (was `POST /serves/batch-submit`), `BatchSubmitDenials` (was `POST /denials/batch-submit`), the chain-broadcast portion of report commit (`POST /reports/{id}/commit` deleted per Decision 2026-05-24-N; off-chain vote tallying retained), `UpdateOrgChainConfig` (`PUT /chain-config` deleted; `GET /chain-config` retained). (`CreateOrg` chain registration was reintroduced in CO-023 as a synchronous call path.)
+
+## Sprint 30 Highlights (CO-023)
+
+- **Watcher tx decoding is wired from GrpcClient codec:** `BuildTxDecoder(chainClient.GetCodec())` now constructs a Cosmos tx decoder and injects it into `NewChainWatcher`; `processTx` has a fail-fast nil guard.
+- **Real watcher pipeline is the only path in denial-loop e2e:** test-mode force-commit bypass endpoint (`POST /v1/test/orgs/{orgID}/force-commit`) was removed from hub route registration and test coverage.
+- **CreateOrg is synchronous across Postgres + chain registration:** the handler now calls `RegisterOrgOnChain` immediately after DB org creation and fails the request if chain registration fails.
+- **Canonical submission lifecycle remains:** `pending -> pending_keyword -> pending_chain -> committed` where the `pending_chain -> committed` transition is watcher-owned (`processApproveMemoryBookkeeping`) after tx confirmation.
 
 **Schema overhaul (Decision 2026-05-24-H):** `delegate_keys` is now a global per-wallet table (PK `wallet_address`, UNIQUE `delegate_address`); `org_id` column and FK to `orgs` were dropped. The members table continues to own the per-org membership relationship.
 
@@ -532,7 +539,7 @@ func SetUmbralService(s *umbral.Service) // CO-218
 **Exports:**
 ```go
 func notImplemented(w, name)     // utility — still used by SessionLookup, GetReceipts
-func CreateOrg(w, r)            // POST /v1/orgs — sig verified, leader-only; persists epoch umbral_pk and relays MsgRegisterOrg to chain
+func CreateOrg(w, r)            // POST /v1/orgs — sig verified, leader-only; persists epoch umbral_pk and synchronously calls RegisterOrgOnChain
 func GetOrg(w, r)               // GET /v1/orgs/{orgID}
 func RotateEpoch(w, r)          // POST — sig verified, leader-only; persists epoch umbral_pk
 func GetEpochManifest(w, r)     // GET — supports epochID="current" via -1; includes umbral_pk
