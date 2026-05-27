@@ -906,34 +906,28 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 
 ### D-13.2: Upheld Report Plaintext + Ciphertext + Capsule Triplet
 
-**Status:** Verification anchor mechanism is PENDING RE-ARCHITECTURE as of 2026-05-27 (post-CO-026 revert).
+**Status:** Verification anchor mechanism LOCKED as of 2026-05-27 via DMO-028. See D-VE-1 through D-VE-9 for the locked design. Implementation gated on AEAD-in-SP1 feasibility spike (next CO).
 
 **Decision (locked):** When a report is upheld and committed on-chain via `MsgReportMemory`, the chain stores:
 - `plaintext` (raw memory content, max 4096 bytes)
 - `ciphertext` (AEAD-encrypted blob, max 8192 bytes)
 - `capsule` (wrapped DEK sealed to moderator pubkey)
+- `plaintext_hash` (sha256(salt || plaintext), 32 bytes)
+- `salt` (32-byte random per submission)
 - `plaintext_oversized` flag
 
-For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the plaintext/ciphertext/capsule fields are empty. The full plaintext is published off-chain (hub stores it permanently) and verified against an on-chain verification anchor whose design is pending.
+The `plaintext_hash + salt` pair is the verification anchor. It was bound to the actual ciphertext content via a ZK proof generated at the memory's original submission time and verified by the chain at the memory's `MsgApproveMemory` commit. See D-VE-1 through D-VE-9 for the binding mechanism.
 
-**Decision (pending):** The on-chain verification anchor that binds revealed plaintext to the actual content inside the on-chain ciphertext is undecided. CO-026's contributor-signed `sha256(plaintext)` was reverted because:
-1. It used no salt (rainbow-table vulnerability for low-entropy plaintexts)
-2. The verification chain assumed Umbral PRE on the submission path, but production uses AEAD + sealed-box
-3. Without binding the hash to the actual ciphertext, contributor+leader collusion can submit a hash that does not match the ciphertext's content, neutralizing future report verification
+For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the plaintext/ciphertext/capsule fields are empty. The full plaintext is published off-chain (hub stores it permanently) and verified against the on-chain `plaintext_hash` + `salt` via standard sha256 check.
 
-The replacement design must:
-- Bind the verification anchor to the actual AEAD ciphertext and wrapped DEK on the submission path
-- Be feasible to verify on consumer hardware (Pattern B Tier 2 reporter does not need to generate cryptographic proofs)
-- Survive a contributor+leader collusion attack (the leader cannot poison the anchor at commit time)
-- Use a per-submission salt to prevent rainbow-table attacks on the hash
+**Why the full set is stored on-chain:**
 
-A new gRPC query `VerifyUpheldReport(memory_hash) → {plaintext, ciphertext, capsule, verification_anchor_TBD, plaintext_oversized}` will enable anyone to challenge a leader's upheld-report TX. The exact verification_anchor field shape will be defined when the re-architecture is locked.
-
-**Why the triplet is stored regardless of anchor design:**
-- **Cryptographic verifiability against rogue leader.** Without ciphertext + capsule on-chain, a malicious leader could "uphold" a fabricated report by publishing fake plaintext to discredit a contributor. Storing the triplet means anyone can demand the leader prove decryption matches.
-- **Plaintext alone is insufficient.** It's just a string the leader claims is what was decrypted. The ciphertext + capsule are the cryptographic evidence that the published plaintext is what the contributor originally submitted and the moderators approved.
+- **Cryptographic verifiability against a rogue leader.** Without ciphertext + capsule on-chain, a malicious leader could "uphold" a fabricated report by publishing fake plaintext to discredit a contributor. Storing the full set means anyone can demand the leader prove decryption matches.
+- **ZK anchor closes the contributor+leader collusion gap.** The plaintext_hash alone (without ZK binding) could be poisoned at submit time by a captured contributor signing a decoy hash. The ZK proof at commit time mathematically binds the hash to the ciphertext's actual content, so the decoy attack is no longer viable.
 - **4KB cap is economically considered.** Upheld reports are rare and consequential — paying 10-40× normal approval gas is acceptable. 4KB covers ~95% of memories based on typical extraction outputs.
-- **Oversized fallback preserves the property.** For large memories, the on-chain hash (once redesigned) is evidence of deletion. Anyone with the off-chain plaintext can verify against it.
+- **Oversized fallback preserves the property.** For large memories, the on-chain hash is evidence of deletion. Anyone with the off-chain plaintext can verify against it via standard sha256.
+
+**`VerifyUpheldReport` is a query, not a write.** No gas cost for verification — anyone can audit any leader at any time, including re-running the SP1 verifier against the original commit's proof for cryptographically rigorous verification.
 
 ---
 
@@ -1185,7 +1179,7 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 - Dashboard and MCP computation of `plaintext_hash` at submission
 - All e2e test assertions involving `plaintext_hash`
 
-**What replaces it:** A re-architected verification anchor design will be drafted as a follow-on CO once the AEAD + sealed-box feasibility spike completes. See D-13.2 (status: pending re-architecture) and the Sprint 30 gap log entry for Pattern B Tier 2.
+**What replaces it:** A re-architected verification anchor design is now locked via DMO-028 (see D-VE-1 through D-VE-9). Implementation CO follows positive AEAD-in-SP1 feasibility spike outcome and Walter sign-off. See D-13.2 (status: LOCKED) and GAP-VE-1 in MASTER.md.
 
 **Reference:** DMO-027 (this doc revert), CO-026R (companion code revert), CO-027 questions report (2026-05-27, original abort discovery).
 
@@ -1211,7 +1205,246 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
-## 14. Sprint 29 Chain Foundation Decisions
+## 14. Verifiable Encryption (Pattern B Tier 2 Verification Anchor)
+
+The decisions in this section define the cryptographic verification anchor for Pattern B Tier 2 public report escalation. They were locked in the 2026-05-27 design session following CO-026/CO-027 revert.
+
+**Implementation status:** Design LOCKED. Feasibility spike (AEAD + sealed-box in SP1) pending. Implementation CO follows positive spike outcome and Walter's explicit sign-off.
+
+---
+
+### D-VE-1: ZK Proof Is the Verification Anchor for Tier 2 Reports
+
+**Decision:** Pattern B Tier 2 public report escalation uses a zero-knowledge proof generated at memory submission time as the verification anchor. The proof binds the on-chain `plaintext_hash` to the actual content inside the on-chain `EncryptedBlob`. Without the proof being verified at chain commit time, the chain MUST reject the memory.
+
+**Why ZK over simpler alternatives:**
+
+Three simpler alternatives were evaluated and rejected:
+
+1. **Contributor-signed hash without ZK.** Vulnerable to contributor+leader collusion: a captured contributor signs a decoy hash for innocuous content while the leader commits ciphertext encrypting malicious content. Future reports against the served content fail verification. Walter's standard ("if it can be sabotaged, the system is broken") rules this out for v1.
+
+2. **Moderator-side hash verification at moderation time.** The moderator computes sha256(plaintext) during review and compares against the contributor's claimed hash. Catches honest-moderator + rogue-contributor cases. Does NOT catch captured-moderator cases. Sufficient for honest orgs; insufficient for the threat model Pattern B is designed against.
+
+3. **Hash-only with explicit residual-risk documentation.** Ship without ZK, acknowledge the collusion attack as a known limit. Walter rejected this path because Pattern B's entire value is accountability against captured orgs — accepting a residual gap defeats the design.
+
+ZK is the only mechanism evaluated that closes the contributor+leader collusion gap without introducing trusted parties or breaking the existing crypto pipeline.
+
+**Reference:** CO-026 revert (DMO-027), CO-027 abort report (2026-05-27 questions report), 2026-05-27 design session transcript.
+
+---
+
+### D-VE-2: SP1 zkVM Is the Production Proving System
+
+**Decision:** SP1 (Succinct Labs' zkVM) is the production proving system for verifiable encryption. SP1 v6 (Hypercube) or later. Groth16 wrap on BN254 for on-chain verification (~256 byte proofs, ~1ms verifier cost).
+
+**Why SP1 over alternatives:**
+
+1. **zkVM vs custom circuit tradeoff.** A custom Groth16/Halo2 circuit over ChaCha20-Poly1305 + SHA-256 would prove faster (estimated 5-10s vs SP1's 10-30s) but requires 6-10 weeks of specialist cryptographic engineering plus 6-12 month audit. SP1 lets us drop in well-audited Rust crypto crates (chacha20poly1305, sha2) directly into the guest program, reducing engineering cost to ~2-3 weeks and audit to ~3 months.
+
+2. **SP1 vs Risc Zero.** Both are production-grade zkVMs with similar developer ergonomics. SP1's STARK protocol is faster, its precompile set more aggressive for crypto workloads, and its Groth16-wrap proof size is competitive. SP1 also has a stronger production track record as of 2026.
+
+3. **Native AEAD primitives compile to RISC-V.** Verified via 2026-05-27 spike planning: `chacha20poly1305` Rust crate is pure Rust with no FFI, compiles cleanly to `riscv32im-succinct-zkvm-elf`. No custom circuit required.
+
+**Locked version policy:** Pin to specific SP1 SDK versions (TBD at implementation CO). Do not float to "latest." Re-evaluate SP1 version annually or after any security incident in the SP1 ecosystem.
+
+**Reference:** CO-026.5 feasibility report (recommendation: SP1 secondary path), 2026-05-27 design session.
+
+---
+
+### D-VE-3: Local Prover Service Required, No In-Browser Proving
+
+**Decision:** Proof generation runs in a local prover service (`wevibe-prover`) co-located with wevibe-mcp on the contributor's machine. Browser-based proving is explicitly out of scope for v1.
+
+**Why local-only:**
+
+1. **Memory footprint.** SP1 guest program proving requires several GB of working memory. Browsers have hard memory caps that make this infeasible.
+2. **Proving time.** 10-30 seconds of CPU-bound work is incompatible with browser tab responsiveness.
+3. **Architectural simplicity.** wevibe-mcp already runs locally for moderation and recall. Adding wevibe-prover next to it follows the existing pattern.
+
+**Contributor hardware floor:** Modern laptop, 16 GB RAM, multi-core CPU. Contributors on lower-spec hardware may see proving times exceed 60 seconds. This is an accepted tradeoff — the alternative (org-side prover services, third-party prover networks) introduces trust dependencies that the design explicitly rejects in v1. Walter's framing: "if any reasonable computer can contribute, that's the bar; if it can't, we're not shipping yet."
+
+**Reference:** 2026-05-27 design session — extended discussion of contributor hardware tradeoffs.
+
+---
+
+### D-VE-4: Existing AEAD + Sealed-Box Pipeline Unchanged
+
+**Decision:** The ZK proof is a **parallel artifact**. The existing encryption (AEAD with random DEK), key wrapping (sealed-box to moderator pubkey), moderator decryption, leader batch commit, consumer recall (via PRE re-encryption), and consumer decryption (AEAD with re-encrypted DEK) all remain unchanged.
+
+**Why parallel artifact, not encryption replacement:**
+
+1. **Smallest blast radius.** Touching the production crypto pipeline risks breaking moderation, recall, and consumer decryption. Adding a parallel artifact at submit time isolates the change.
+2. **Performance.** Recall is the high-frequency path. Adding ZK verification to recall would add latency to every served memory. By only verifying the proof once at chain commit, recall stays fast.
+3. **Backward compatibility.** Memories committed before the ZK proof shipped will need a migration policy (probably: grandfathered, no Tier 2 escalation available). Parallel artifact design makes this migration trivial — old memories simply lack the proof field. New memories have it.
+
+**What changes per subsystem:**
+
+| Subsystem | Change |
+|---|---|
+| Contributor submission | NEW: proof generation step, +10-30s wait, prover service dependency |
+| Hub `pending_submissions` | NEW: `zk_proof`, `plaintext_hash`, `salt` columns |
+| Hub canonical message (v3) | NEW: signs over zk_proof, plaintext_hash, salt |
+| Moderation review | Unchanged |
+| Leader batch commit | NEW: chain-side proof verification at `MsgApproveMemory` |
+| Chain proto `MsgApproveMemory` | NEW: `ve_proof`, `plaintext_hash`, `salt` fields |
+| Chain proto `StoredMemoryCommitment` | NEW: `ve_proof`, `plaintext_hash`, `salt` fields |
+| Chain proto `StoredMemoryReport` | NEW: `salt` field (already had `plaintext_hash`) |
+| Recall path | Unchanged |
+| Tier 1 reports | Unchanged |
+| Tier 2 reports | NEW: chain verifies `sha256(salt \|\| revealed_plaintext) == on-chain plaintext_hash` |
+| `VerifyUpheldReport` query | NEW: returns plaintext_hash + salt in response |
+
+**Reference:** D-VE-1 (why ZK), 2026-05-27 design session — explicit framing as "one encryption, one decryption, plus parallel ZK proof."
+
+---
+
+### D-VE-5: ZK Statement Bound to AEAD, Not to Sealed-Box
+
+**Decision:** The ZK proof binds plaintext to the AEAD ciphertext (`EncryptedBlob`). It does NOT bind plaintext to the sealed-box wrapped DEK (`WrappedDekEnc`).
+
+**Statement proven:**
+I know plaintext P, salt S, DEK K, nonce N such that:
+sha256(S || P) == plaintext_hash [hash binding]
+EncryptedBlob == ChaCha20-Poly1305(K, N, P, aad) [ciphertext binding]
+
+Where:
+- `plaintext_hash`, `salt`, `EncryptedBlob` are public inputs (visible on-chain)
+- `P` (plaintext), `S` (salt — also public), `K` (DEK), `N` (nonce) are private witness
+
+**Why sealed-box binding is out of scope:**
+
+The threat model defended against (contributor+leader collusion) is closed by binding plaintext to AEAD ciphertext alone. Sealed-box binding would prove "the wrapped DEK is correctly sealed to the moderator's pubkey," which is verified at moderation time anyway (the moderator's ability to decrypt is the runtime check). Adding sealed-box to the circuit would:
+
+1. Roughly double the proof generation time (sealed-box involves additional EC operations)
+2. Require implementing libsodium sealed-box semantics inside the SP1 guest (no off-the-shelf crate equivalent to chacha20poly1305 for the sealed-box construction)
+3. Not close any additional threat — the attack vector "leader wraps DEK to wrong moderator pubkey" is detected at moderation time when the moderator can't decrypt
+
+**What stays out of the proof and is verified elsewhere:**
+
+- Sealed-box DEK wrapping → verified at moderation when the moderator successfully decrypts
+- Contributor identity → verified by the contributor signature on the canonical submission message
+- Submission freshness → verified by the submission_hash and epoch_id in the canonical message
+
+**Reference:** 2026-05-27 design session — Q&A on minimal sufficient binding.
+
+---
+
+### D-VE-6: Random Per-Submission Salt, 32 Bytes
+
+**Decision:** Every submission generates a fresh random 32-byte salt. The salt is:
+- Generated by the contributor's machine via cryptographically secure RNG
+- Included in the canonical submission message (covered by contributor signature)
+- Included as a public input to the ZK proof
+- Stored on-chain alongside `plaintext_hash`
+- Revealed by the reporter at Tier 2 escalation time
+
+**Why salt is required:**
+
+Without salt, `sha256(plaintext)` is vulnerable to rainbow-table attacks for low-entropy plaintexts. An attacker with read access to on-chain hashes could brute-force common memory content ("always use HTTPS", "validate input on the server", etc.) and confirm what specific orgs are submitting without decrypting.
+
+With 32-byte random salt, rainbow tables become infeasible (2^256 possible salts per plaintext).
+
+**Why 32 bytes:**
+
+- Matches existing WeVibe random-key sizing (DEKs are 32 bytes, sealed-box ephemeral keys are 32 bytes)
+- Provides 256 bits of entropy — far beyond any feasible brute-force horizon
+- Consistent storage cost across the codebase
+
+**Reference:** CO-026 revert rationale (no salt was rainbow-table-vulnerable), 2026-05-27 design session.
+
+---
+
+### D-VE-7: Chain-Side Proof Verification at `MsgApproveMemory` Commit
+
+**Decision:** The chain verifies the ZK proof at `MsgApproveMemory` handler. Verification follows the umbral-sidecar pattern (D-2.2, D-13.10):
+
+1. A new `wevibe-veproof-verifier-service` Docker service exposes an HTTP endpoint (port 3600, internal-only).
+2. The chain's `MsgApproveMemory` keeper handler calls the sidecar with `(proof, plaintext_hash, salt, ciphertext)` as public inputs.
+3. The sidecar runs SP1's Groth16 verifier against the public inputs.
+4. If verification fails, the chain returns an error code (`ErrInvalidVEProof`) and the memory is NOT committed. The entire batch transaction does NOT fail — only the specific memory is rejected. Other memories in the batch with valid proofs commit normally. The leader sees per-memory verification errors in the batch response and can re-submit failed memories.
+
+**Why sidecar pattern:**
+
+1. **Consistent with umbral-sidecar.** WeVibe already uses an HTTP-sidecar pattern for cryptographic operations the chain shouldn't link directly. The SP1 verifier is Rust code; linking it via CGO would create a hard dependency and complicate the build.
+2. **License isolation.** SP1 is Apache-2.0-licensed but pulls in MIT/Apache/BSD-2 dependencies. Keeping it in a sidecar isolates dependency trees.
+3. **Restart and upgrade independence.** The verifier sidecar can be upgraded without restarting the chain validator.
+
+**Why partial batch success on proof failure:**
+
+Forcing a whole batch to fail if any single proof is invalid would give a malicious contributor a way to grief: submit one bad-proof memory in a batch and the leader's entire batch fails. Allowing partial success isolates the failure to the malicious submission.
+
+**Reference:** D-2.2 (Umbral sidecar pattern), D-13.10 (container topology).
+
+---
+
+### D-VE-8: Recall Path Does NOT Re-Verify the Proof
+
+**Decision:** The recall path does not re-verify the ZK proof. Once verified at chain commit, the proof's binding is permanent and trusted.
+
+**Why:**
+
+1. **Recall is high-frequency.** A consumer may recall dozens of memories per coding session. Adding ZK verification to recall would add ~1ms per memory in the best case, multiplied by the entire active membership.
+2. **The chain is the authority.** The chain verified the proof once and committed the memory. The hub trusts the chain. The consumer trusts the hub. Re-verification is redundant.
+3. **Pragmatism.** Any party who is suspicious of a specific memory's proof can re-verify via the `VerifyUpheldReport` query path. This is a rare, deliberate audit operation — not a hot-path requirement.
+
+**Implication:** If SP1 or the chain-side verifier had a soundness bug that allowed a false proof to commit, the entire system would silently trust the false binding until a manual audit caught it. This is a recognized residual risk and the reason audit is non-negotiable.
+
+**Reference:** 2026-05-27 design session — verifier cost discussion.
+
+---
+
+### D-VE-9: Implementation Gated on AEAD-in-SP1 Feasibility Spike
+
+**Decision:** Implementation CO (drafting and dispatch) is GATED on a feasibility spike that validates:
+
+1. The `chacha20poly1305` Rust crate (or equivalent) compiles cleanly to `riscv32im-succinct-zkvm-elf` (the SP1 guest target).
+2. End-to-end proof generation and verification works for a representative memory size (256B, 1KB, 2KB, 4KB).
+3. Proving time on consumer hardware (M3 base laptop, 16 GB RAM) is within acceptable bounds (target: <30s for 4KB, hard ceiling: 60s).
+4. Proof size after Groth16 wrap is within acceptable bounds (target: <512 bytes, hard ceiling: 10KB).
+5. Verifier cost on the chain side is within acceptable bounds (target: <10ms, hard ceiling: 100ms).
+
+**Why the gate exists:**
+
+The previous spike (CO-026.5) was run against the wrong cryptographic primitives (Umbral PRE in the guest, not AEAD). Its numbers do not transfer. The new spike must measure against the actual production primitives.
+
+If the spike returns numbers outside the acceptable range:
+
+- **Slightly over targets, under ceilings:** proceed with implementation, document the UX cost (longer proving time, larger proofs).
+- **Over ceilings:** revisit the design. Options include switching proving systems (custom circuit, different zkVM), reducing the proof's statement, or revisiting the threat model and accepting Option 3 from the design session (hash + salt without ZK binding, explicit residual risk documentation).
+
+**Spike artifacts will live at:** `/Users/jerrysmith/Desktop/wevibe-workspace/spike-aead-ve/` (parallel to the now-defunct `spike-ve/` from CO-026.5).
+
+**Reference:** 2026-05-27 design session — feasibility-first sequencing.
+
+---
+
+### D-VE-10: Audit Required Before Production Mainnet
+
+**Decision:** A third-party cryptographic audit of the `wevibe-veproof` guest program, host bindings, verifier sidecar, and chain-side verification handler is REQUIRED before any production mainnet deployment. Estimated 3-month audit cycle.
+
+**Audit scope:**
+
+1. **Guest program correctness.** Does the SP1 guest program correctly implement the statement claimed in D-VE-5?
+2. **Public input handling.** Does the chain correctly derive public inputs from on-chain state when calling the verifier?
+3. **Verifier sidecar.** Is the sidecar's HTTP API safe against malformed inputs, timing attacks, and denial of service?
+4. **Soundness of the SP1 version used.** Does the pinned SP1 version have any known soundness issues?
+5. **Composition with the rest of the system.** Does the proof's verification at commit time correctly compose with the contributor signature, moderator approval, and leader signature?
+
+**Why pre-production audit is non-negotiable:**
+
+The ZK proof is the foundation of Pattern B Tier 2's threat model. If the proof's binding is broken, the entire accountability mechanism silently fails. There is no runtime signal that an attack has succeeded — every false proof that verifies looks indistinguishable from a true proof. Detecting an attack requires retrospective audit, by which point the damage is done.
+
+**Audit cycle and dependencies:**
+
+- Audit runs in parallel with feature development of dependent COs (Pattern B Tier 1 UX, Tier 2 dashboard surfaces, etc.).
+- Audit completion is required before testnet → mainnet promotion.
+- Audit findings that require code changes regenerate the audit. Budget for at least one finding-and-revision cycle.
+
+**Reference:** 2026-05-27 design session — audit discussion, including Walter's "audit budget is part of the design decision" framing.
+
+---
+
+## 15. Sprint 29 Chain Foundation Decisions
 
 ### D-S29-SDK-V053: Cosmos SDK v0.53.5 is the Canonical SDK Line [ALPHA - FOUNDATION]
 
@@ -1349,7 +1582,7 @@ The fix (D-S29-CHAIN-RESTART-FOUNDATION, CO-005d) writes a sentinel marker to ev
 
 ---
 
-## 15. Sprint 30 Deferred Decisions
+## 16. Sprint 30 Deferred Decisions
 
 ### D-2026-05-25-B: Leader Activity Aggregation — Deferred
 

@@ -461,6 +461,48 @@ Contributors extract technical insights from their coding sessions and submit th
 
 **Why contributors don't handle keywords:** Keywords are assigned during moderation by moderators selecting from the org's vocabulary. Contributors submit raw insights only. This prevents keyword drift and keeps vocabulary curated.
 
+### UX Flow: Verifiable Encryption at Submit Time (Pattern B Tier 2 Anchor)
+
+When a contributor submits a memory, the existing AEAD + sealed-box encryption flow runs unchanged. In parallel, a **zero-knowledge proof** is generated that binds the encrypted memory's content to a public hash. This proof becomes the verification anchor for Pattern B Tier 2 public report escalation.
+
+```
+Contributor reviews and selects memories to submit (see UX Flow: Memory Contribution above)
+For each selected memory, the contributor's local prover service runs:
+a. Generate random 32-byte salt
+b. Compute plaintext_hash = sha256(salt || plaintext)
+c. Existing flow: encrypt plaintext with AEAD (ChaCha20-Poly1305) under a random DEK → ciphertext
+d. Existing flow: sealed-box wrap DEK to moderator pubkey → wrapped_dek
+e. NEW: generate ZK proof that proves:
+   "I know plaintext P, salt S, DEK K, nonce N such that:
+    sha256(S || P) == plaintext_hash AND
+    ciphertext == ChaCha20-Poly1305(K, N, P, aad)"
+   where (plaintext_hash, salt, ciphertext) are public inputs and (P, S, K, N) are private witness
+Contributor's machine submits to hub: ciphertext + wrapped_dek + plaintext_hash + salt + zk_proof + contributor_signature
+Hub validates submission shape (signature valid, hash/salt formats correct) and queues into moderation
+Moderation, leader batch extraction, leader review proceed unchanged
+At leader chain commit time: chain verifies the zk_proof against (plaintext_hash, salt, ciphertext) before accepting the memory.
+  If proof verification fails, the memory is rejected from the batch and the leader sees an error.
+After successful chain commit: the proof is permanent on-chain. The recall path does not re-verify it.
+  Only Tier 2 report escalation uses the established anchor.
+```
+
+**UX implications for the contributor:**
+
+- **Proving time.** Proof generation takes an estimated 10-30 seconds per memory on consumer hardware. Batch submissions of multiple memories show a progress indicator. The contributor cannot bypass this step — proof generation is mandatory for the memory to be commit-eligible on chain.
+- **Prover service dependency.** Proof generation runs in a local prover service (`wevibe-prover`) co-located with wevibe-mcp on the contributor's machine. If the prover service is unavailable, submission fails with a clear error: "WeVibe Prover is not running. Start it with: wevibe-prover". Per D-12.6's plugin failure pattern, the dashboard attempts to auto-start the prover before surfacing the error.
+- **Hardware tolerance.** The prover runs in an SP1 zkVM guest program. Minimum recommended hardware: 16 GB RAM, modern CPU. Contributors on lower-spec hardware may see proving times exceed 60 seconds. See DECISIONS.md D-VE-3 (locked: local proving only; helper service architecture out of scope for v1).
+- **Failure UX.** If proof generation fails (out of memory, prover crash, malformed plaintext), the dashboard surfaces the error and the memory does NOT submit. The contributor can retry or cancel.
+
+**What the contributor never has to do:**
+
+- The contributor does NOT need to understand zero-knowledge proofs. The dashboard displays "Generating cryptographic proof — this protects you and the network from manipulation" with a progress bar. No cryptography jargon in user-facing copy.
+- The contributor does NOT need to manage proof storage. The proof is opaque bytes that travel with the submission.
+- The contributor does NOT need to re-prove on recall, moderation, or any other path. Once the memory is committed, the contributor's involvement with the proof ends.
+
+**Why this exists:**
+
+The ZK proof closes a specific attack: a captured org leader colluding with a captured contributor could otherwise commit a memory with a "decoy" plaintext hash that doesn't match what's actually in the ciphertext. Future Tier 2 reports against the actually-served content would fail verification, making the reporter look fraudulent. The ZK proof eliminates this attack by mathematically binding the on-chain hash to the on-chain ciphertext's content at commit time. See DECISIONS.md D-VE-1 through D-VE-9.
+
 ### API Surfaces Required
 
 | Surface | Endpoint / Module | Purpose |
@@ -582,7 +624,7 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
      → On confirmation: hub deletes memory from Qdrant
      → On-chain commitment records: memory hash, contributor wallet, reason, reporting org
      → Memory becomes public record on contributor's social graph
-     **Why the triplet is stored on-chain:** The `plaintext + ciphertext + capsule` triplet proves the memory existed and was retrievable at commit time. Verification anchor design is pending re-architecture (see DECISIONS.md Pattern B section). See DECISIONS.md D-13.2 (will be revised).
+     **Why the triplet is stored on-chain:** The `plaintext + ciphertext + capsule` triplet proves the memory existed and was retrievable at commit time. Verification anchor: the chain verifies sha256(on-chain salt || revealed plaintext) == on-chain plaintext_hash. The on-chain hash was bound to the actual ciphertext content via a ZK proof verified at memory commit time (see UX Flow: Verifiable Encryption at Submit Time in §4 Contributor, and DECISIONS.md D-VE-1 through D-VE-9). Reporters do not generate or verify ZK proofs themselves; they reveal plaintext + salt, and the chain's hash-equality check is sufficient because the underlying ZK binding was established at commit time.
 8. If DISMISSED:
    → Reporter's dismissed_reports_count incremented
    → Memory unchanged, continues serving
@@ -609,10 +651,18 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 
 ```
 Anyone with memory_hash can query `VerifyUpheldReport(memory_hash)` via gRPC.
-Response: {plaintext, ciphertext, capsule, plaintext_oversized}
-Verification anchor mechanism is pending re-architecture (see DECISIONS.md Pattern B section).
-Verifier with PRE access independently decrypts ciphertext to confirm it produces same plaintext.
-Mismatch indicates leader fabricated the upheld report.
+Response: {plaintext, ciphertext, capsule, plaintext_hash, salt, plaintext_oversized}
+
+Verification steps for any external party:
+
+1. Compute sha256(salt || plaintext) — confirm it equals plaintext_hash. This binds the revealed plaintext to the on-chain hash.
+
+2. (Optional, for cryptographically rigorous verification) Re-verify the ZK proof attached to the memory's original chain commit. The proof was verified once at commit time, but a skeptical verifier can re-run the SP1 Groth16 verifier against the on-chain (plaintext_hash, salt, ciphertext) to confirm the binding was mathematically valid. This is a ~1ms operation against the published verifier circuit.
+
+3. (Optional, requires PRE access) Independently decrypt ciphertext using the org's epoch PRE key material. Confirm decryption produces the same plaintext.
+
+Any mismatch in steps 1, 2, or 3 indicates either a leader fabricating the upheld report (step 1 fails) or a deeper cryptographic incident requiring investigation (step 2 or 3 fails). Step 1 alone is sufficient evidence for public judgment; steps 2 and 3 are available for rigorous post-incident audit.
+```
 
 ### UX Flow: Plugin Failure UX
 
@@ -1277,6 +1327,34 @@ Chain modules (`x/emissions`, `x/bandwidth`, `x/reputation`, `x/org`) have defau
 
 ---
 
+### GAP-VE-1: AEAD-in-SP1 Feasibility Spike Required Before Implementation
+
+**Participant:** All (blocks Pattern B Tier 2 implementation)
+**Milestone:** Sprint 30 (or next sprint, depending on spike timeline)
+**Severity:** MAJOR (blocks Pattern B Tier 2 implementation)
+**Status:** OPEN
+
+**Decision context:** D-VE-9 (DMO-028) gates implementation on a feasibility spike measuring AEAD (ChaCha20-Poly1305) + SHA-256 inside an SP1 zkVM guest program. The previous spike (CO-026.5) measured Umbral PRE + SHA-256, which does not match production primitives.
+
+**Spike scope:**
+
+1. Build a working SP1 guest program proving the statement in D-VE-5
+2. Generate proofs for 256B, 1KB, 2KB, 4KB plaintext sizes (5 runs each, median + min + max)
+3. Measure proving time, proof size, verifier cost, peak memory
+4. Produce a feasibility report with go/no-go recommendation
+
+**Resolution requires:**
+
+- Spike CO drafted and dispatched
+- Spike report delivered with concrete numbers
+- Walter sign-off on the numbers
+- If go: implementation CO drafted referencing locked design (D-VE-1 through D-VE-10)
+- If no-go: design session revisit per D-VE-9 escape clause
+
+**References:** D-VE-9 (gate), DMO-028 (design lock), CO-026.5 (defunct spike against wrong primitives).
+
+---
+
 ### GAP-PIPELINE-STATUS: Pending Submission Status Constraint Mismatch
 
 **Participant:** Leader, Moderator, Contributor
@@ -1632,10 +1710,10 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Severity | Open Count | Items |
 |----------|------------|-------|
 | CRITICAL | 0 | (GAP-CHAIN-1 closed by CO-009) |
-| MAJOR | 2 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch) |
+| MAJOR | 3 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-VE-1 (AEAD-in-SP1 feasibility spike) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **8** | |
+| **Total OPEN** | **9** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---
