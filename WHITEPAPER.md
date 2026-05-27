@@ -3,8 +3,44 @@
 **Plugin-Gated Shared Memory for AI Coding Agents**
 *On-Chain Encrypted Knowledge Infrastructure with Human-Approved Memory Injection*
 
-Draft v2.0 · May 2026 · Architecture Document
+Draft v2.1 · May 2026 · Architecture Document
 Classification: Confidential — Not for public distribution
+
+---
+
+## Revision notes (v2.1 → v2.2)
+
+**Verification anchor redesign: signed canonical body, no zero-knowledge cryptography.**
+
+v2.2 replaces the Pattern B Tier 2 verification anchor that v2.1 introduced as a contributor-signed plaintext hash (and that the DMO-028 lock subsequently elaborated as an SP1 zero-knowledge proof). The redesign is grounded in two findings from Sprint 31:
+
+1. **GO-001 (2026-05-27)** established that the existing contributor signature at submit time covers only org_id, epoch_id, memory_type, contributor_pubkey, and submission_hash — it does not cover plaintext_hash (which did not exist) or salt (which did not exist), and binds ciphertext only transitively through submission_hash. The signature, in its current form, cannot serve as a Tier 2 verification anchor.
+
+2. **CO-028 (2026-05-27)** validated that the SP1 zero-knowledge pathway specified by DMO-028 is technically achievable but operationally unshippable — 16.6 GB peak RSS, 45 s wall on high-end consumer hardware, with no alternative prover location that preserves the system's deployment model.
+
+The replacement design adds three fields to the contributor's signed canonical body at submit time: plaintext_hash, salt, ciphertext_hash. The signature now binds the contributor to the exact plaintext (via salted hash), the exact ciphertext (via direct hash), and the relationship between them. At Tier 2 escalation, the reporter reveals (plaintext, salt) and the chain verifies sha256(salt || plaintext) equals the on-chain plaintext_hash. The contributor's signature, also on-chain, binds the contributor to having authored that specific (plaintext, ciphertext) tuple. The leader is removed from the verification chain — they cannot poison the anchor because they do not sign it.
+
+The cryptographic coverage of v2.2 equals the coverage of v2.1's ZK design for every attack the system is designed to defeat. The differences are operational: v2.2 ships on any hardware, has no DDoS surface, has no consensus-timing concerns, requires no audit of a zkVM toolchain, and ships in a single Sprint 31 implementation CO rather than a 10-12 task production rollout.
+
+Three production bugs that were independent of the verification design but blocking proper Tier 2 verification are also addressed by the v2.2 implementation: WrappedDekEnc is now forwarded to chain (was nil), rotation_buffer signature persistence now requires prior verification (was unverified), and the dashboard's submit path no longer sends plaintext to the hub in cleartext (was an asymmetry with the MCP client).
+
+The chain is wiped. The hub state is wiped. The canonical message tag remains wevibe.submit_memory.v1 — its field set is overhauled in place, not versioned. Pre-MVP, no users, no migration.
+
+---
+
+## Revision notes (v2.0 → v2.1)
+
+**Accountability model: silent denial, two-tier reports, public on-chain escalation.**
+
+v2.1 formalizes the accountability primitives that sit alongside the moderation pipeline. The architectural commitments and economic primitives of v2.0 are unchanged. The additions:
+
+1. **Silent denial as cheap negative signal.** The plugin's Deny control is a frictionless, no-reason-required signal. Denials feed an optimistic local-ledger model: retrieval ranking reflects denial pressure immediately, while the chain remains the eventual source of truth, settled by the leader on a cadence of their choosing.
+2. **Two-tier report model.** Reports now have a private tier (existing flow) and a public on-chain escalation tier (new). Most reports never escalate. The public tier exists specifically to make org capture economically unsustainable.
+3. **Contributor-signed plaintext hash as verification anchor.** Every memory now carries a contributor-signed hash of its plaintext through the moderation pipeline and onto the chain commit. This removes the leader from the verification chain for any future public report — a captured leader cannot poison the verification anchor.
+4. **Leader sole signature on chain commits.** Co-attestation of moderator pubkeys on leader-signed chain transactions is removed. Leaders bear sole responsibility for what they commit. Internal moderator accountability remains an org-local concern.
+5. **Unfakeable org-health signals on public discovery.** Discovery surfaces "leader last active" (aggregated chain activity) and "voluntary departure rate" (members who chose to leave). Report counts and other gameable aggregates are not surfaced inside WeVibe — the chain is the public record, the block explorer is the viewer.
+
+The chain remains the only place where consequential accountability claims live. WeVibe's own surfaces never become a tribunal.
 
 ---
 
@@ -579,6 +615,95 @@ All contributed memories are submitted to the chain as pending (encrypted, only 
 
 Reviewers see pending content in plaintext on their local machine. The system is only as secure as reviewer judgment, honesty, and endpoint security. Mitigations: epoch-scoped mod keys, steganography detection, contributor reputation signals visible during review.
 
+The leader is the final authority on what enters the chain. Chain commits — batch memory approvals, denial settlements, report acknowledgments, dispute publications — are signed by the leader's wallet and the leader's wallet alone. The leader bears full responsibility for the on-chain record they produce. Internal moderator votes and approval histories are an org-local accountability primitive maintained outside the chain.
+
+### 5.4 Contributor-Signed Canonical Body as Verification Anchor
+
+Every memory's submit-time canonical body includes three fields that, together with the contributor's signature over the body, form the Tier 2 verification anchor:
+
+- **plaintext_hash** — `sha256(salt || plaintext)`, computed by the contributor before encryption
+- **salt** — a fresh 32-byte random value generated per submission
+- **ciphertext_hash** — `sha256(ciphertext)`, where ciphertext is the AEAD output
+
+The contributor signs the canonical body with their own key. The canonical body, the signature, and the ciphertext all travel through moderation and land on the chain together. The leader's batch chain commit includes the contributor's signature; the leader cannot modify the signed fields without invalidating the contributor's signature.
+
+This is what makes the public report tier (§5.6) trustworthy without trusting the leader: any future reveal of plaintext + salt can be verified against the on-chain plaintext_hash via direct sha256 check, and the on-chain ciphertext can be verified against the on-chain ciphertext_hash. The leader is removed from the verification chain entirely. A captured leader cannot poison the anchor because they do not sign it.
+
+The contributor cannot substitute ciphertext between submit and chain commit because their signature binds the specific ciphertext_hash. The contributor cannot later claim a different plaintext at Tier 2 because the plaintext_hash binds them to the specific salted hash, and SHA-256 collision resistance prevents producing a different (plaintext, salt) pair that hashes to the same value.
+
+**Why the signature now covers all three fields and not just plaintext_hash.** An earlier design (CO-026, reverted via DMO-027) signed only `plaintext_hash` without salt and without ciphertext binding. That shape was vulnerable to contributor + leader collusion: the contributor could sign one hash while the leader committed ciphertext encrypting different content, and the asymmetry was undetectable. The current shape closes the gap by binding all three fields jointly in a single signature. The leader has no signing role; the contributor has no opportunity to substitute ciphertext after signing.
+
+**Residual risk: contributor with stolen signing key.** If the contributor's signing key is stolen, an attacker can produce signatures binding any (plaintext, salt, ciphertext) tuple. This is a key-management problem, not a cryptographic-anchor problem — no design at the cryptographic layer can defeat it. Mitigation lives at the wallet/identity layer (D-1.1, D-1.3, ARCH-G9 for the future BIP-32 PRE-identity separation). The on-chain ciphertext + sealed-box wrapped DEK remain as a final backstop: any future epoch key disclosure allows independent decryption and exposes the actual content after the fact.
+
+**Salt design rationale.** Without a salt, `sha256(plaintext)` is vulnerable to rainbow-table attacks for low-entropy plaintexts (short memories, common error messages, well-known technical advice). A 32-byte random salt makes rainbow tables infeasible (2^256 salt space per plaintext). The salt is included in the canonical body the contributor signs, stored on-chain alongside the commitment, and revealed by the reporter at Tier 2 escalation time. Salt is not secret — it is context-hiding.
+
+### 5.5 The Two-Tier Report Model
+
+Reports against a served memory have two tiers. Most reports never escalate. The escalation tier exists precisely for the cases where the first tier is captured.
+
+**Tier 1 — Private report.** The consumer reports through the plugin. The report enters the org's moderation queue. Reviewers vote; if upheld, the leader commits a chain message that removes the memory and writes the deletion to the chain record. This is the normal, efficient path for honest orgs and represents the overwhelming majority of report volume. Tier 1 is paid-member-only.
+
+**Tier 2 — Public on-chain escalation.** When a Tier 1 report is dismissed (including dismissed-as-malicious) or stalls past a configurable timeout, the original reporter may escalate to a public on-chain report. The reporter signs the escalation message from their own wallet and pays the gas. The on-chain transaction publishes:
+
+- The memory hash and a reference to its on-chain ciphertext + capsule
+- The reporter's reveal of the plaintext (the memory becomes publicly readable)
+- A reference to the contributor-signed plaintext hash (§5.4) for cryptographic verification
+- The contributor's pubkey, the leader's pubkey, the org ID, and the original commit block height
+- The reporter's signed reason text
+- A reference to the dismissed Tier 1 report
+
+The memory is now publicly archived on the chain with full provenance. Anyone can verify every cryptographic claim independently using the contributor-signed hash; only the judgment — "this is malicious because…" — requires human evaluation. The block explorer renders the published transaction including the revealed plaintext, the reporter's reason, and all provenance fields.
+
+**Eligibility and one-shot rule.** Only the original Tier 1 reporter may escalate to Tier 2 for that specific memory. One escalation per Tier 1 report. There is no re-publishing after dismissal, no infinite escalation loops. The escalation route is strictly a one-shot recourse mechanism, not a new attack surface.
+
+### 5.6 Org Response and the One-Reply Rule
+
+When a Tier 2 report lands, the org's leader has a fixed response window (network-governed; the default at this writing is 30 days) to respond on-chain with exactly one of two actions, each signed by the leader's wallet:
+
+- **Acknowledge.** No reason required — acknowledgment is the action. The memory is removed from local retrieval and transitions to a deleted terminal state. Functionally equivalent to a Tier 1 upheld outcome.
+- **Dispute.** A leader-signed counter-statement is published on-chain, explaining why the report is unfounded. The memory returns to the served state. The dispute is permanent and public, visible at the same block-explorer URL as the original report.
+
+The leader gets exactly one response. No revisions. The single-reply rule forces a deliberate, final answer.
+
+**Silent acquiescence.** If neither action is taken within the response window, the chain marks the report unaddressed. The memory is removed from local retrieval and the "unaddressed" flag is permanent. This mirrors the principle that governs contract law: silence in the face of a public claim is tacit agreement. A leader who does not respond within the window has implicitly accepted the claim's validity. The memory does not return to serving.
+
+**The memory keeps serving during the response window.** A Tier 2 report does NOT immediately remove the memory from local retrieval. Removal happens only at finalization (leader acknowledgment, or timeout). Removing memories on every published report would create a denial-of-service vector: a coordinated wave of frivolous escalations could disrupt an honest org's knowledge base while the org spends gas to defend each one. The cost of escalation falls on the reporter; the cost of acknowledgment or dispute falls on the leader; the memory keeps serving until one of those costs is paid.
+
+### 5.7 No Internal Courtroom
+
+WeVibe's dashboard is not the courtroom. The chain is.
+
+WeVibe's own surfaces — the dashboard, discovery pages, reputation profiles — never display report counts, report aggregates, per-org report statistics, or per-actor report metrics. The reasoning is structural:
+
+- Any in-app aggregation of reports is gameable via sybil reporters. A coordinated set of attackers could inflate report counts on an honest org, weaponizing the platform against legitimate operators.
+- Any in-app aggregation is also censorable. Whoever controls the dashboard surface controls which reports get amplified and which get suppressed.
+- Any in-app aggregation creates the perception that WeVibe-the-protocol or WeVibe-the-team is the tribunal. There is no tribunal. There is no judging body. There is only publication of unforgeable evidence on an immutable chain that neither the org nor WeVibe controls.
+
+The chain is the publication mechanism. The block explorer is the viewer. WeVibe provides the reporter a permanent on-chain transaction; the reporter shares the block-explorer URL wherever they choose — a social network, a competitor's community, a blog post, a Discord channel. The court of public opinion happens outside the system. WeVibe gets out of the way.
+
+The reporter's own dashboard view is the one exception: each reporter sees a private list of their own published reports with copy-link buttons. That is ammunition for the reporter to share, nothing more. The leader receives a notification when a report is filed against a memory they committed, plus a response interface clearly labeled with the one-reply rule and the response-window timeout — again, only to the leader.
+
+### 5.8 Silent Denial as Cheap Negative Signal
+
+The plugin's three-button approval UI (Accept / Deny / Report) gives the consumer two complementary negative paths. Reports — Tier 1 or Tier 2 — are the high-friction, high-stakes accountability primitive described above. Denials are the low-friction, low-stakes signal that feeds retrieval ranking.
+
+Clicking Deny is silent: no confirmation modal, no required reason, no new UI surface. The reason field is optional. There is no gating — any consumer, trial or paid, may deny any memory. There are no caps, no rate limits, no reputation weighting. Every denial counts as exactly one denial event.
+
+A denial does two things:
+
+1. **Local suppression.** The memory is never re-served to this developer.
+2. **A negative attestation to the retrieval layer.** The denial flows to the org's local retrieval/storage component, which mirrors the chain's decay arithmetic locally. Retrieval ranking degrades immediately — a memory denied N times since the last on-chain settlement ranks lower than its chain-recorded weight would imply.
+
+**The optimistic ledger.** The chain remains the eventual source of truth for keyword weights and the decay state of every memory. Between leader-driven on-chain settlements, the local retrieval layer maintains an optimistic mirror: for each memory, the locally-applied decay equals the chain's recorded weight minus the pending denial count multiplied by the chain's per-denial decay rate, applied uniformly across all of the memory's keywords. The arithmetic mirrors the chain's exactly, so optimistic and authoritative ranking states are indistinguishable at retrieval time. When the leader settles pending denials on-chain, the local mirror reconciles to the new authoritative weights and resumes from the new baseline.
+
+**Why silent and frictionless.** A denial is the cheap, low-stakes negative signal. UI friction (required reason, confirmation modal, rate caps) suppresses the signal and starves the decay model that depends on it. Reports remain the high-friction path with reporter accountability for cases where a single signal needs disproportionate weight. The two paths are complementary, not duplicative.
+
+**Why no caps or reputation weighting on denials.** A single consumer cannot drive a memory to archived via denials alone. Archive requires every keyword weight to reach zero, which requires sustained denial pressure across multiple memories and multiple sessions — organic volume that one actor cannot fake. Caps would protect against an abuse that has no payoff: a malicious consumer who spams denials can at worst suppress memories from their own recall queue (which they could do anyway through local blacklist). Reputation weighting would create a class system where senior consumers have heavier "votes" than new joiners, require online reputation lookups on the recall hot path, and reproduce the reporter-accountability infrastructure for a signal whose semantics are explicitly lighter.
+
+**Leader-driven settlement cadence.** The leader settles accumulated denials on-chain at a cadence of their choosing. No automatic submission, no threshold prompt, no time-based pressure. The optimistic ledger means retrieval ranking already reflects every denial in real time; chain submission is purely a settlement act — making the decay permanent across local-storage restarts and contributing to the leader's on-chain activity record. The leader optimizes for gas cost versus settlement frequency on their own.
+
+The leader does not review individual denials. Denials are quantitative consumer signals, not editorial content. The leader's role is to settle accumulated decay, not to adjudicate individual user preferences.
+
 ---
 
 ## 6. Developer Reputation and Social Graph
@@ -675,17 +800,32 @@ Where `serve_nullifier = H("wevibe-serve-v1" || org_id || epoch_id || memory_cid
 
 ### 7.1 Public Discovery Interface (opt-in)
 
-**Visible to non-members (if public):** Organization name, specialization, description, memory count, member count, age, leader identity, total serves.
+**Visible to non-members (if public):** Organization name, specialization, description, memory count, member count, age, leader identity, total serves, plus two unfakeable org-health signals introduced below.
 
 **Not visible to non-members:** Memory content (encrypted on-chain), member identities (privacy-preserving), review history, payout rules.
 
+**Unfakeable org-health signals.** Discovery surfaces two behavioral metrics that capture-resistant by construction:
+
+- **Leader last active.** Aggregated timestamp of the most recent on-chain action signed by the org leader's wallet — batch memory commits, denial settlements, member changes, report responses, epoch rotations. The signal requires a real wallet signature on a real transaction paying real gas. A dormant or captured org cannot fake it.
+- **Voluntary departure rate.** Members who left of their own accord in the trailing 90 days, expressed as a fraction of total membership. Departures are first-class on-chain events; sybils can be invited and can file reports, but they cannot fake people walking away. A cohort exiting a captured org is the strongest negative signal the public can read.
+
+**What is deliberately NOT surfaced.** Discovery does not display per-org report counts, report aggregates, dispute counts, dismissed-report counts, or any other report-derived statistic. The rationale is structural and is the same as in §5.7: every in-app aggregation of reports is gameable, weaponizable, and censorable. The chain is the public record; the block explorer is the viewer. Prospective joiners who want to investigate report history can do so on-chain; WeVibe's own discovery surface does not turn that history into a leaderboard.
+
 ### 7.2 Leader Interface
 
-wevibe-client local dashboard: pending review queue, memory browser, historical decisions, member management, org configuration, keyword taxonomy management, recovery status, direct memory authoring, rep-tier payout configuration, bandwidth usage monitoring.
+wevibe-client local dashboard: pending review queue, memory browser, historical decisions, member management, org configuration, keyword taxonomy management, recovery status, direct memory authoring, rep-tier payout configuration, bandwidth usage monitoring, denial-settlement panel, and Tier 2 report response interface.
+
+The denial-settlement panel shows the pending-denial count and a single settle button. There is no per-denial review — denials are quantitative signals that the leader settles on-chain at a cadence of their choice (§5.8).
+
+The Tier 2 report response interface appears only when a Tier 2 report has been published against a memory the leader committed. It exposes the one-reply rule (acknowledge or dispute) clearly, the remaining time in the response window, and a copy-link to the on-chain transaction once the response is published.
 
 ### 7.3 Member Interface
 
 Members see: role, contribution count, serve count, pending submission status, reputation score, payout earnings.
+
+### 7.4 Reporter's Private View
+
+Each reporter has a private list of their own Tier 2 published reports. Each entry shows a memory excerpt, the org name, the submission date, the leader's response status (pending / acknowledged / disputed / unaddressed), and a copy-link to the on-chain transaction. This view is visible only to the reporter — it is the reporter's own record of escalations, and the place from which they share block-explorer URLs to whatever public forum they choose. No other user sees it.
 
 ---
 
@@ -752,6 +892,26 @@ Protocol-enforced per-org bandwidth caps. Orgs receive submission and storage ba
 **Suitable:** Coding patterns/anti-patterns, architecture lessons, debugging notes, dependency guidance, tool usage, process workflows, version-specific gotchas, negative knowledge.
 
 **Unsuitable:** Credentials/secrets, customer PII, regulated data, legal/HR records, high-sensitivity security incident details.
+
+### 9.7 Org Capture and Public Escalation
+
+A single actor wearing multiple hats — leader, every moderator, every contributor — can fully capture an org's internal governance. Inside the org, every approval, every report dismissal, and every chain commit can be coordinated. Internal accountability primitives (moderator votes, dispute counts, internal review queues) provide no protection against this case: the captured operator simply approves their own malicious memories and dismisses every report filed against them.
+
+The system's security model is therefore not "prevent capture through internal governance." The system's security model is:
+
+> Make capture economically unsustainable through transparent on-chain accountability, frictionless exit for members, and a public escalation primitive that cannot be suppressed by the captured org.
+
+The three load-bearing properties:
+
+1. **The chain is the unforgeable audit log.** Every consequential action — memory commit, denial settlement, report acknowledgment, dispute publication, member departure — is a signed on-chain transaction. Neither the captured org nor WeVibe-the-protocol nor any platform operator can edit or suppress it after the fact.
+2. **Consumers have an escalation path the org cannot close.** A dismissed Tier 1 report can be republished as a Tier 2 on-chain transaction signed by the reporter, paying gas, revealing plaintext, anchored to a contributor-signed hash that the leader could not poison (§5.4). The captured org cannot prevent it, cannot delete it, and cannot suppress it from anyone who navigates to the block explorer URL.
+3. **Exit is unfakeable.** Members leaving voluntarily is a first-class on-chain event. Sybils can be invited and can file frivolous reports, but they cannot fake people walking away. The voluntary-departure-rate signal on public discovery (§7.1) lets prospective joiners read the most honest possible signal about whether existing members trust the org.
+
+**The leader bears sole signature.** Co-attestation of moderator pubkeys on leader-signed chain transactions is explicitly removed (§5.3). A leader's chain commit binds the leader's wallet only. This concentrates responsibility on the actor who actually signs and prevents implicating moderators in chain-level decisions they did not directly authorize. The trade-off — moderator accountability for individual approvals becomes an org-local rather than chain-public concern — is acceptable because internal moderator vote history cannot defend against a capture scenario anyway, and because making leaders sole signatories sharpens the public attribution of every consequential action.
+
+**Why no platform tribunal.** WeVibe deliberately does not become a tribunal that adjudicates published reports. Any in-app judging body is a capture vector — whoever controls the tribunal controls the verdict. The chain publishes the evidence; the block explorer renders it; the reporter shares the URL wherever they choose; the public judges on its own merits in whatever forums it chooses. WeVibe-the-protocol has no editorial role in that judgment. (§5.7)
+
+**Residual: contributor-leader collusion.** If the contributor who submitted a memory and the leader who committed it are both adversaries, the contributor can sign a false plaintext hash, the leader can commit it, and a Tier 2 report's plaintext reveal will not match the on-chain hash — making the report look invalid even when the underlying claim is true. The on-chain ciphertext + capsule remain as a final backstop: any future key disclosure (epoch rotation, org closure, legal discovery) lets independent parties decrypt and verify after the fact (§5.4). This residual cannot be eliminated at submit time — when content creator and content approver are the same adversary, there is no honest party in the verification chain to sign over.
 
 ---
 
@@ -919,8 +1079,6 @@ Federation operates at the skill level. Orgs publish skill packages. Receiving o
 [10] Google DeepMind. (2026). AI Agent Traps.
 [11] MLS Architecture (RFC 9420).
 [12] Lambda Class. CommitLLM: Cryptographic commit-and-audit for LLM inference. *github.com/lambdaclass/CommitLLM.*
-[13] Qu, Z. et al. (2025). zkGPT. *USENIX Security 2025.*
-[14] Wang, X. (2026). NANOZK: Layerwise ZK proof decomposition for LLMs. *arXiv:2603.18046.*
 
 ---
 

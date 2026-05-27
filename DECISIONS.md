@@ -27,6 +27,9 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 11. [Architecture Tradeoffs (Documented Acceptance)](#11-architecture-tradeoffs-documented-acceptance)
 12. [Sprint 25 Architecture: Multi-Org, Discovery, Profiles, Activity](#12-sprint-25-architecture-multi-org-discovery-profiles-activity)
 13. [Sprint 25 Architecture: Chain Hardening — Accountability + Social Graph Foundation](#13-sprint-25-architecture-chain-hardening--accountability-social-graph-foundation)
+14. [Verifiable Encryption (SUPERSEDED — see Section 16)](#14-verifiable-encryption-pattern-b-tier-2-verification-anchor)
+15. [Sprint 29 Chain Foundation Decisions](#15-sprint-29-chain-foundation-decisions)
+16. [Pattern B Tier 2 Verification Anchor (Current Design)](#16-pattern-b-tier-2-verification-anchor-current-design)
 
 **New decisions in this update:** D-13.1 (Moderator Pubkey Persistence on Memory), D-13.2 (Upheld Report Plaintext + Ciphertext + Capsule Triplet), D-13.3 (Hub-Side Manipulation Alarm via chain_commit_events), D-13.4 (Social Graph Data On-Chain, Display Layer Separate), D-13.5 (Reputation Active at Genesis, Additive-Only), D-13.6 (Memory State Cleanup — 7-State Lifecycle Locked at Code Level), D-13.7 (Cross-Module Event Wiring), D-13.8 (Reputation as Tiering Signal — total_approved_memories), D-13.9 (Chain Wipe Acceptable Pre-MVP), D-13.12 (Chain Broadcast via Comet RPC), D-13.13 (Chain Pruning + IAVL Dev Settings); updates to D-2.2 (Umbral container) and D-13.10 (only host exception is Ollama).
 
@@ -906,7 +909,7 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 
 ### D-13.2: Upheld Report Plaintext + Ciphertext + Capsule Triplet
 
-**Status:** Verification anchor mechanism LOCKED as of 2026-05-27 via DMO-028. See D-VE-1 through D-VE-9 for the locked design. Implementation gated on AEAD-in-SP1 feasibility spike (next CO).
+**Status:** Verification anchor mechanism LOCKED as of 2026-05-27 via DMO-029. The mechanism is the contributor-signed canonical body containing plaintext_hash, salt, and ciphertext_hash — see Section 16 (D-VR-1 through D-VR-8). Implementation ships in the Sprint 31 implementation CO with chain wipe per Walter directive. The prior ZK pathway locked by DMO-028 (D-VE-1 through D-VE-10) is superseded; see Section 14 (superseded).
 
 **Decision (locked):** When a report is upheld and committed on-chain via `MsgReportMemory`, the chain stores:
 - `plaintext` (raw memory content, max 4096 bytes)
@@ -916,7 +919,7 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 - `salt` (32-byte random per submission)
 - `plaintext_oversized` flag
 
-The `plaintext_hash + salt` pair is the verification anchor. It was bound to the actual ciphertext content via a ZK proof generated at the memory's original submission time and verified by the chain at the memory's `MsgApproveMemory` commit. See D-VE-1 through D-VE-9 for the binding mechanism.
+The `plaintext_hash + salt` pair is the verification anchor. It is bound to the actual ciphertext content via the contributor's signature over the canonical body, which includes `plaintext_hash`, `salt`, `ciphertext_hash`, and `wrapped_dek_hash` jointly. The signature is verified at the chain's `MsgApproveMemory` commit and stored on-chain alongside the commitment. See Section 16 (D-VR-1 through D-VR-8) for the binding mechanism.
 
 For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the plaintext/ciphertext/capsule fields are empty. The full plaintext is published off-chain (hub stores it permanently) and verified against the on-chain `plaintext_hash` + `salt` via standard sha256 check.
 
@@ -1179,7 +1182,7 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 - Dashboard and MCP computation of `plaintext_hash` at submission
 - All e2e test assertions involving `plaintext_hash`
 
-**What replaces it:** A re-architected verification anchor design is now locked via DMO-028 (see D-VE-1 through D-VE-9). Implementation CO follows positive AEAD-in-SP1 feasibility spike outcome and Walter sign-off. See D-13.2 (status: LOCKED) and GAP-VE-1 in MASTER.md.
+**What replaces it:** A re-architected verification anchor design is now locked via DMO-029 (see Section 16, D-VR-1 through D-VR-8). The replacement uses a contributor-signed canonical body containing plaintext_hash, salt, and ciphertext_hash jointly — no zero-knowledge cryptography. DMO-028's ZK pathway lock (D-VE-1 through D-VE-10) was superseded after CO-028 demonstrated that the ZK approach cannot ship on consumer hardware. See D-13.2 for status, Section 14 for the superseded ZK design preserved as historical record, and the implementation CO that follows this DMO for Sprint 31 ship plan.
 
 **Reference:** DMO-027 (this doc revert), CO-026R (companion code revert), CO-027 questions report (2026-05-27, original abort discovery).
 
@@ -1207,9 +1210,19 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ## 14. Verifiable Encryption (Pattern B Tier 2 Verification Anchor)
 
+> **STATUS: SUPERSEDED (2026-05-27 via DMO-029).**
+>
+> The decisions in this section (D-VE-1 through D-VE-10) defined a zero-knowledge proof pathway for the Pattern B Tier 2 verification anchor. **They are no longer in effect.** The pathway was validated as cryptographically sound and operationally unshippable (CO-028 feasibility spike, 2026-05-27: 16.6 GB peak RSS, 45 s wall on M3 Ultra, with no viable prover location preserving the deployment model). GO-001 (2026-05-27) subsequently established that a signed canonical body covering plaintext_hash, salt, and ciphertext_hash jointly provides equivalent cryptographic coverage against every attack the ZK pathway was designed to defeat, at zero operational cost.
+>
+> The replacement design is locked in Section 16 (D-VR-1 through D-VR-7). The new design ships via the Sprint 31 implementation CO with a chain wipe and canonical-body overhaul in place (no version bump per Walter directive, pre-MVP).
+>
+> Section 14 is preserved below as historical record. **Do not reference D-VE-1 through D-VE-10 as authoritative.** Do not implement against them. Their cross-references in MASTER.md UX flows and WHITEPAPER.md have been removed.
+
 The decisions in this section define the cryptographic verification anchor for Pattern B Tier 2 public report escalation. They were locked in the 2026-05-27 design session following CO-026/CO-027 revert.
 
-**Implementation status:** Design LOCKED. Feasibility spike (AEAD + sealed-box in SP1) pending. Implementation CO follows positive spike outcome and Walter's explicit sign-off.
+> **This section is historical record only.** See Section 16 for the current design.
+
+**Implementation status:** SUPERSEDED (see status notice above). Replaced by Section 16 (D-VR-1 through D-VR-7).
 
 ---
 
@@ -1444,6 +1457,10 @@ The ZK proof is the foundation of Pattern B Tier 2's threat model. If the proof'
 
 ---
 
+**End of superseded Section 14.** See Section 16 for the current verification-anchor design.
+
+---
+
 ## 15. Sprint 29 Chain Foundation Decisions
 
 ### D-S29-SDK-V053: Cosmos SDK v0.53.5 is the Canonical SDK Line [ALPHA - FOUNDATION]
@@ -1582,7 +1599,178 @@ The fix (D-S29-CHAIN-RESTART-FOUNDATION, CO-005d) writes a sentinel marker to ev
 
 ---
 
-## 16. Sprint 30 Deferred Decisions
+## 16. Pattern B Tier 2 Verification Anchor (Current Design)
+
+This section replaces Section 14 (D-VE-1 through D-VE-10, superseded). The decisions here define the verification anchor for Pattern B Tier 2 public report escalation using contributor signatures over a redesigned canonical body. No zero-knowledge cryptography.
+
+**Implementation status:** Design LOCKED. Implementation CO follows immediately; chain wipe is part of the implementation.
+
+---
+
+### D-VR-1: Signed Canonical Body Is the Verification Anchor
+
+**Decision:** Pattern B Tier 2 uses a contributor-signed canonical body whose signed fields include `plaintext_hash`, `salt`, and `ciphertext_hash`. At Tier 2 escalation, the chain verifies (a) that the reporter's revealed (plaintext, salt) produces the on-chain plaintext_hash via sha256, and (b) that the contributor's on-chain signature is valid over the canonical body containing those fields. Together these two checks bind the contributor to the specific plaintext and ciphertext that was committed.
+
+**Why signatures rather than ZK:**
+
+The ZK pathway (Section 14, superseded) proved a relationship between plaintext_hash, salt, and ciphertext at memory commit time. A signed canonical body that includes plaintext_hash, salt, and ciphertext_hash as signed fields proves the same relationship — the contributor cryptographically attests to all three values jointly. The attacks defeated are identical:
+
+- Leader substitutes ciphertext between submit and chain commit → defeated, signature binds ciphertext_hash
+- Contributor claims different plaintext at Tier 2 → defeated, signature binds plaintext_hash and the hash is salted
+- Contributor + leader collusion to commit poisoned content with mismatched hash → defeated, contributor signs all three fields jointly so any mismatch invalidates the signature
+
+The single attack the ZK pathway claimed advantage on — "what if the contributor lies about the relationship between plaintext and ciphertext while still producing a valid signature" — was a phantom. A signature over `(plaintext_hash, salt, ciphertext_hash)` is itself the proof of the relationship. There is no additional relationship a ZK proof would establish that a joint signature does not.
+
+The operational delta is enormous: zero ZK proving time (vs 45 s on consumer hardware), zero proving memory (vs 16.6 GB), zero prover-service dependency, zero zkVM audit, zero new container.
+
+**Reference:** GO-001 gather report (2026-05-27), CO-028 feasibility spike (2026-05-27), 2026-05-27 design session.
+
+---
+
+### D-VR-2: The Contributor Is the Sole Signer of the Verification Anchor
+
+**Decision:** Only the contributor signs the canonical body that produces the verification anchor. Neither the moderator nor the leader signs over plaintext_hash, salt, or ciphertext_hash. The leader's wallet signs the chain TX (per D-1.3), but the leader's signature is on the transaction envelope, not on the inner canonical body. The contributor's signature on the canonical body travels through the hub and lands on chain inside the `MsgApproveMemory` payload.
+
+**Why the leader does not sign the anchor:**
+
+If the leader signed the anchor, then a captured leader could refuse to sign honest memories or sign fabricated memories. The point of the anchor is to defeat captured-leader scenarios — the leader must be cryptographically removed from the verification chain. The leader's only role is operational: they decide which memories to batch and they pay gas to commit. The cryptographic binding is purely contributor-to-content.
+
+**Why moderators do not sign the anchor:**
+
+Moderators are already accountable through D-6.4 (their pubkey is recorded on every approved memory). Adding moderator signatures over the verification anchor would conflate two distinct accountability flows (quality review vs content provenance). Moderators can be captured the same way leaders can; the anchor must be robust against that.
+
+**Reference:** GO-001 Task C findings (signature persistence path), Walter directive 2026-05-27.
+
+---
+
+### D-VR-3: Canonical Body Field Set Overhauled In Place
+
+**Decision:** The canonical body tagged `wevibe.submit_memory.v1` is overhauled in place to include the new fields. No `v2` tag, no parallel-tag dual handling, no migration path. Pre-MVP per Walter directive.
+
+**Current canonical body fields (six fields):**
+
+```
+wevibe.submit_memory.v1
+contributor_pubkey:<hex>
+epoch_id:<int>
+memory_type:<correct_implementation|negative_signal>
+org_id:<string>
+submission_hash:<hex>
+```
+
+**Replacement canonical body fields (nine fields, alphabetically sorted after domain tag):**
+
+```
+wevibe.submit_memory.v1
+ciphertext_hash:<hex>
+contributor_pubkey:<hex>
+epoch_id:<int>
+memory_type:<correct_implementation|negative_signal>
+org_id:<string>
+plaintext_hash:<hex>
+salt:<hex>
+submission_hash:<hex>
+wrapped_dek_hash:<hex>
+```
+
+Where:
+- `plaintext_hash = sha256(salt || plaintext)` — 32 bytes hex-encoded
+- `salt = random_32_bytes` — 32 bytes hex-encoded
+- `ciphertext_hash = sha256(ciphertext)` — 32 bytes hex-encoded
+- `wrapped_dek_hash = sha256(wrapped_dek_mod)` — 32 bytes hex-encoded
+- `submission_hash` retained as `sha256(ciphertext || wrapped_dek_mod)` for backward semantic compatibility with current retrieval-path code paths that already reference it
+
+**Why all three new fields and not just plaintext_hash:**
+
+The minimum sufficient field for the verification anchor is `plaintext_hash` (with salt). But binding `ciphertext_hash` separately defends against ciphertext substitution attacks that `submission_hash` alone is weaker against (because `submission_hash` is the combined hash of ciphertext concatenated with wrapped_dek_mod — splitting them into separate hashes makes each independently verifiable). `wrapped_dek_hash` is added for symmetry and to support the WrappedDekEnc on-chain forwarding (D-VR-5) — the chain can independently verify the wrapped DEK against this hash.
+
+**Why no version bump:**
+
+Walter directive: pre-MVP, no users, no migration path required. The implementation CO wipes the chain, wipes hub PostgreSQL via existing migration discipline (D-13.10 → D-13.11), and replaces the canonical body in place across MCP, Dashboard, and Hub. No backwards compatibility, no v1/v2 dual handling, no graceful degradation. R-ONE-PATH, R-OVERHAUL.
+
+**Reference:** GO-001 Task B/C/D findings (three independent canonical-body implementations exist), Walter directive 2026-05-27.
+
+---
+
+### D-VR-4: Contributor Signature Persisted On-Chain Alongside Commitment
+
+**Decision:** `MsgApproveMemory` carries a new `contributor_sig` field (bytes). `StoredMemoryCommitment` carries a new `contributor_sig` field (bytes). The contributor's signature over the canonical body is forwarded to chain by the leader's batch commit and stored permanently alongside the commitment.
+
+**Why on-chain rather than hub-only:**
+
+The current production code stores `contributor_sig` only in hub PostgreSQL (`pending_submissions.contributor_sig`, `rotation_buffer.contributor_sig`). At Tier 2 escalation, the verifier would have to trust the hub to produce the signature — but the entire point of Tier 2 is to operate when the hub or org is captured. The signature MUST be on chain for Tier 2 verification to be trustworthy.
+
+**On-chain bytes cost:**
+
+Ed25519 signatures are 64 bytes. Per-memory overhead is negligible compared to the encrypted blob and the keyword index. The chain pays this cost once at commit time; it pays back at every Tier 2 verification. Verification is on-demand and rare; storage is permanent. The trade is correct.
+
+**Why the existing hub-side persistence (`pending_submissions.contributor_sig`) is retained:**
+
+It is needed during the moderation pipeline (pre-commit) when the chain has no record yet. Once the batch commit confirms, the chain record becomes authoritative. The hub-side row remains for operational lookup but is no longer the sole record.
+
+**Reference:** GO-001 Task C Q6 findings.
+
+---
+
+### D-VR-5: WrappedDekEnc Must Be Forwarded to Chain
+
+**Decision:** `handlers/moderation.go:762` (the leader batch chain-submit path) must populate `BatchMemory.WrappedDekEnc` from `pending_submissions.wrapped_dek_mod` before constructing `MsgApproveMemory`. The chain's `StoredMemoryCommitment.wrapped_dek_enc` MUST be non-empty for all memories committed via this path.
+
+**Why this is part of the verification anchor design and not a separate bug:**
+
+The verification anchor at Tier 2 verifies the contributor's signature against a canonical body reconstructed from on-chain state. The canonical body includes `wrapped_dek_hash = sha256(wrapped_dek_mod)`. If `wrapped_dek_mod` is not on chain (currently `WrappedDekEnc` is left nil per GO-001 Task C Q5), the canonical body cannot be reconstructed from on-chain state alone. The verifier would need to query the hub for the missing bytes — which means the hub is in the trust path again, which means Tier 2 verification is not robust against hub capture.
+
+Forwarding WrappedDekEnc to chain closes this gap. The chain now holds every byte the contributor signed over, plus the signature, plus the salt and hashes. Verification is fully chain-local.
+
+**Reference:** GO-001 Task C Q5 findings — "WrappedDekEnc gap: contributor's wrapped_dek_mod is preserved in postgres but never forwarded to chain."
+
+---
+
+### D-VR-6: Rotation Buffer Path Must Verify Signatures Before Persisting
+
+**Decision:** `internal/orgs/orgs.go:125` (`BufferSubmission`) MUST call `verify.RequestSignature` before writing `contributor_sig` to `rotation_buffer`. The flush path that copies `rotation_buffer` rows into `pending_submissions` MUST also verify the signature (not trust the buffered row).
+
+**Why this is part of the verification anchor design and not a separate bug:**
+
+The rotation buffer is the path through which submissions land during an epoch rotation. If unverified signatures can enter the buffer, then after flush, the hub's `pending_submissions` table contains rows with `contributor_sig` values that nothing has ever verified. The leader's batch commit reads from `pending_submissions` and forwards the signature to chain. The chain has no way to detect that the signature was never verified by the hub. A malicious hub operator (or compromised hub process) could inject arbitrary signatures.
+
+Verifying at the buffer write closes this. The verification path is uniform: every persistence point that holds a `contributor_sig` value has verified that signature against the corresponding canonical body before storing it.
+
+**Reference:** GO-001 Task C OPEN ITEMS — "Rotation-buffer path is SIGNATURE-UNVERIFIED at intake."
+
+---
+
+### D-VR-7: Dashboard Must Not Send Plaintext to Hub
+
+**Decision:** `wevibe-server/wevibe-dashboard/lib/wevibe-submit.ts` MUST NOT include `plaintext` in the submit payload to the hub. The dashboard's submit flow is overhauled to match the MCP's flow: encrypt locally, sign canonical body locally, submit only `(ciphertext, wrapped_dek_mod, plaintext_hash, salt, ciphertext_hash, contributor_pubkey, contributor_sig, …)` to the hub. The plaintext is never sent over the network.
+
+**Why this is part of the verification anchor design and not a separate bug:**
+
+The verification anchor's threat model assumes the hub does not see plaintext. The MCP client honors this; the dashboard violates it (GO-001 Task D OPEN ITEMS). If the dashboard sends plaintext, then:
+
+- The hub's `sanitization_findings` scan operates on plaintext (which is the only reason the dashboard currently sends it — for hub-side scanning).
+- A honest-but-curious hub sees every dashboard-submitted memory in cleartext.
+- A captured hub harvests plaintext from every dashboard submission.
+
+The sanitization scan must move client-side (run inside the dashboard before encryption) or be deferred (run by the moderator at decryption time). Either path is acceptable. Sending plaintext to the hub is not.
+
+**Reference:** GO-001 Task D OPEN ITEMS — "Dashboard payload includes plaintext as cleartext over TLS to the hub; MCP does not."
+
+---
+
+### D-VR-8: No ZK Cryptography in Production Path
+
+**Decision:** No production component (chain, hub, dashboard, MCP, plugin, sidecar) depends on a zero-knowledge proof system. SP1, zkVM, Groth16, the previously-scoped `wevibe-prover` local service, the previously-scoped `wevibe-veproof-sidecar`, and the previously-scoped chain-side `wevibe-veproof-verifier-service` are removed from the architecture. The `spike-aead-ve/` workspace remains as historical record but is not committed to any production repo (R-ISOLATED-WORKSPACE) and produces no shipping artifact.
+
+**Why explicitly documented as a non-decision:**
+
+DMO-028 locked the ZK pathway. CO-028 spike validated and then unblocked walking away from it. Without explicit documentation that ZK is out, future contributors reading the spike's positive feasibility numbers might re-propose the pathway. This decision exists to prevent that — the verification anchor is signatures, full stop, and the spike's "GO-WITH-RESERVATIONS" is decisively superseded.
+
+**Reference:** Walter directive 2026-05-27 ("we redesign everything"), CO-028 feasibility report Section 8 (memory ceiling observations), this DMO.
+
+---
+
+## 17. Sprint 30 Deferred Decisions
 
 ### D-2026-05-25-B: Leader Activity Aggregation — Deferred
 

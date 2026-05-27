@@ -461,47 +461,63 @@ Contributors extract technical insights from their coding sessions and submit th
 
 **Why contributors don't handle keywords:** Keywords are assigned during moderation by moderators selecting from the org's vocabulary. Contributors submit raw insights only. This prevents keyword drift and keeps vocabulary curated.
 
-### UX Flow: Verifiable Encryption at Submit Time (Pattern B Tier 2 Anchor)
+### UX Flow: Signed Canonical Body at Submit Time (Pattern B Tier 2 Anchor)
 
-When a contributor submits a memory, the existing AEAD + sealed-box encryption flow runs unchanged. In parallel, a **zero-knowledge proof** is generated that binds the encrypted memory's content to a public hash. This proof becomes the verification anchor for Pattern B Tier 2 public report escalation.
+When a contributor submits a memory, the encryption flow runs as it does today (AEAD with random DEK, sealed-box DEK wrap to moderator pubkey). The change at submit time is that the contributor's canonical body now includes three additional fields, all signed in one signature:
+
+- **plaintext_hash** — `sha256(salt || plaintext)`, where `salt` is a fresh random 32 bytes
+- **salt** — the 32 random bytes used in the plaintext_hash computation
+- **ciphertext_hash** — `sha256(ciphertext)`, the AEAD output bytes
+- **wrapped_dek_hash** — `sha256(wrapped_dek_mod)`, the sealed-box envelope bytes
 
 ```
 Contributor reviews and selects memories to submit (see UX Flow: Memory Contribution above)
-For each selected memory, the contributor's local prover service runs:
-a. Generate random 32-byte salt
-b. Compute plaintext_hash = sha256(salt || plaintext)
-c. Existing flow: encrypt plaintext with AEAD (ChaCha20-Poly1305) under a random DEK → ciphertext
-d. Existing flow: sealed-box wrap DEK to moderator pubkey → wrapped_dek
-e. NEW: generate ZK proof that proves:
-   "I know plaintext P, salt S, DEK K, nonce N such that:
-    sha256(S || P) == plaintext_hash AND
-    ciphertext == ChaCha20-Poly1305(K, N, P, aad)"
-   where (plaintext_hash, salt, ciphertext) are public inputs and (P, S, K, N) are private witness
-Contributor's machine submits to hub: ciphertext + wrapped_dek + plaintext_hash + salt + zk_proof + contributor_signature
-Hub validates submission shape (signature valid, hash/salt formats correct) and queues into moderation
+For each selected memory, the contributor's machine:
+a. Generates a fresh random 32-byte salt
+b. Computes plaintext_hash = sha256(salt || plaintext)
+c. Runs the existing flow: AEAD-encrypts plaintext under a random DEK → ciphertext
+d. Computes ciphertext_hash = sha256(ciphertext)
+e. Runs the existing flow: sealed-box wraps DEK to moderator pubkey → wrapped_dek_mod
+f. Computes wrapped_dek_hash = sha256(wrapped_dek_mod)
+g. Computes submission_hash = sha256(ciphertext || wrapped_dek_mod) (existing, retained)
+h. Builds the canonical body containing all nine fields (see D-VR-3 for the exact ordering)
+i. Signs the canonical body with the contributor's Ed25519 key
+j. POSTs to hub: ciphertext + wrapped_dek_mod + plaintext_hash + salt + ciphertext_hash +
+   wrapped_dek_hash + submission_hash + contributor_pubkey + contributor_sig + memory_type
+Hub verifies the signature against the reconstructed canonical body before writing pending_submissions
+Hub does NOT receive plaintext at any point
 Moderation, leader batch extraction, leader review proceed unchanged
-At leader chain commit time: chain verifies the zk_proof against (plaintext_hash, salt, ciphertext) before accepting the memory.
-  If proof verification fails, the memory is rejected from the batch and the leader sees an error.
-After successful chain commit: the proof is permanent on-chain. The recall path does not re-verify it.
-  Only Tier 2 report escalation uses the established anchor.
+At leader chain commit time:
+  - leader's batch reads pending_submissions.contributor_sig + the nine signed fields
+  - leader signs MsgApproveMemory with their wallet (transaction envelope)
+  - MsgApproveMemory payload carries the contributor_sig and all signed fields to chain
+  - chain verifies the contributor signature against the reconstructed canonical body before committing
+  - if verification fails, the memory is rejected from the batch (per-memory rejection, batch continues)
+After successful chain commit:
+  - StoredMemoryCommitment carries plaintext_hash, salt, ciphertext_hash, wrapped_dek_hash,
+    wrapped_dek_enc (the actual wrapped DEK bytes), and contributor_sig — all permanent on-chain.
+Recall path: no change. Existing PRE re-encryption to consumer flow unchanged.
+Tier 2 escalation: reporter reveals (plaintext, salt). Chain verifies:
+  - sha256(salt || plaintext) == on-chain plaintext_hash    [plaintext is the one signed]
+  - sha256(on-chain ciphertext) == on-chain ciphertext_hash [ciphertext is unchanged from submit]
+  - ed25519_verify(contributor_pubkey, canonical_body, contributor_sig) [signature is valid]
 ```
 
 **UX implications for the contributor:**
 
-- **Proving time.** Proof generation takes an estimated 10-30 seconds per memory on consumer hardware. Batch submissions of multiple memories show a progress indicator. The contributor cannot bypass this step — proof generation is mandatory for the memory to be commit-eligible on chain.
-- **Prover service dependency.** Proof generation runs in a local prover service (`wevibe-prover`) co-located with wevibe-mcp on the contributor's machine. If the prover service is unavailable, submission fails with a clear error: "WeVibe Prover is not running. Start it with: wevibe-prover". Per D-12.6's plugin failure pattern, the dashboard attempts to auto-start the prover before surfacing the error.
-- **Hardware tolerance.** The prover runs in an SP1 zkVM guest program. Minimum recommended hardware: 16 GB RAM, modern CPU. Contributors on lower-spec hardware may see proving times exceed 60 seconds. See DECISIONS.md D-VE-3 (locked: local proving only; helper service architecture out of scope for v1).
-- **Failure UX.** If proof generation fails (out of memory, prover crash, malformed plaintext), the dashboard surfaces the error and the memory does NOT submit. The contributor can retry or cancel.
+- **No proving wait.** Hash and signature computation is sub-millisecond. The contributor experiences no latency increase compared to the current submit flow.
+- **No prover service dependency.** No new local service is required. The dashboard and MCP sign in-process with the existing Ed25519 signing primitive (`wevibe-sdk` `sign(privkey, data)`).
+- **No new hardware requirement.** The contributor's machine performs nothing beyond hashing and signing. Any machine that can run the dashboard or MCP today can submit memories under the new design.
+- **No failure UX added.** The existing failure modes (hub unreachable, encryption error) are unchanged. No "prover crashed" or "prover ran out of memory" error states.
 
 **What the contributor never has to do:**
 
-- The contributor does NOT need to understand zero-knowledge proofs. The dashboard displays "Generating cryptographic proof — this protects you and the network from manipulation" with a progress bar. No cryptography jargon in user-facing copy.
-- The contributor does NOT need to manage proof storage. The proof is opaque bytes that travel with the submission.
-- The contributor does NOT need to re-prove on recall, moderation, or any other path. Once the memory is committed, the contributor's involvement with the proof ends.
+- The contributor does NOT need to understand the verification anchor. The dashboard and MCP handle salt generation, hash computation, and canonical body assembly invisibly.
+- The contributor does NOT see any user-facing copy about cryptography, signatures, or zero-knowledge. The submit UI is unchanged.
 
 **Why this exists:**
 
-The ZK proof closes a specific attack: a captured org leader colluding with a captured contributor could otherwise commit a memory with a "decoy" plaintext hash that doesn't match what's actually in the ciphertext. Future Tier 2 reports against the actually-served content would fail verification, making the reporter look fraudulent. The ZK proof eliminates this attack by mathematically binding the on-chain hash to the on-chain ciphertext's content at commit time. See DECISIONS.md D-VE-1 through D-VE-9.
+The signed canonical body cryptographically binds the contributor to the exact (plaintext, ciphertext) pair they submitted. At Tier 2 escalation, anyone can verify that the revealed plaintext + salt produces the on-chain plaintext_hash, that the on-chain ciphertext matches the on-chain ciphertext_hash, and that the contributor's signature is valid over the canonical body containing those fields. The leader is removed from the verification chain — they sign the chain transaction envelope but not the inner canonical body. A captured leader cannot poison the anchor. See DECISIONS.md D-VR-1 through D-VR-8.
 
 ### API Surfaces Required
 
@@ -618,13 +634,13 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
     → Leader reviews and clicks "Submit to Chain" with reason (max 500 chars)
     → Dashboard requests cfrag from hub for leader's PRE pubkey
     → Dashboard decrypts memory via Umbral sidecar (capsule + cfrag + ciphertext + leader_pre_sk → plaintext)
-     → Dashboard packages `plaintext + ciphertext + capsule` into `MsgReportMemory` payload
-     → If plaintext exceeds 4096 bytes: dashboard sets `plaintext_oversized=true`, omits plaintext/ciphertext/capsule, publishes full plaintext off-chain (hub persists in `published_plaintext` table) with off-chain verification anchor TBD per new Pattern B design
-     → Leader signs the full TX with wallet, broadcasts to chain
-     → On confirmation: hub deletes memory from Qdrant
-     → On-chain commitment records: memory hash, contributor wallet, reason, reporting org
-     → Memory becomes public record on contributor's social graph
-     **Why the triplet is stored on-chain:** The `plaintext + ciphertext + capsule` triplet proves the memory existed and was retrievable at commit time. Verification anchor: the chain verifies sha256(on-chain salt || revealed plaintext) == on-chain plaintext_hash. The on-chain hash was bound to the actual ciphertext content via a ZK proof verified at memory commit time (see UX Flow: Verifiable Encryption at Submit Time in §4 Contributor, and DECISIONS.md D-VE-1 through D-VE-9). Reporters do not generate or verify ZK proofs themselves; they reveal plaintext + salt, and the chain's hash-equality check is sufficient because the underlying ZK binding was established at commit time.
+→ Dashboard packages `plaintext + ciphertext + capsule` into `MsgReportMemory` payload
+      → If plaintext exceeds 4096 bytes: dashboard sets `plaintext_oversized=true`, omits plaintext/ciphertext/capsule, publishes full plaintext off-chain (hub persists in `published_plaintext` table) with off-chain verification anchor TBD per new Pattern B design
+      → Leader signs the full TX with wallet, broadcasts to chain
+      → On confirmation: hub deletes memory from Qdrant
+      → On-chain commitment records: memory hash, contributor wallet, reason, reporting org
+      → Memory becomes public record on contributor's social graph
+      **Why the triplet is stored on-chain:** The `plaintext + ciphertext + capsule` triplet, together with the on-chain `plaintext_hash`, `salt`, `ciphertext_hash`, and `contributor_sig`, lets any party independently verify the upheld report. The chain verifies `sha256(on-chain salt || revealed plaintext) == on-chain plaintext_hash` and `sha256(on-chain ciphertext) == on-chain ciphertext_hash`, and verifies that the contributor's on-chain signature is valid over the canonical body containing those fields. The leader is not in the verification chain — they sign the chain transaction envelope, not the inner verification anchor. See DECISIONS.md D-VR-1 through D-VR-8.
 8. If DISMISSED:
    → Reporter's dismissed_reports_count incremented
    → Memory unchanged, continues serving
@@ -651,17 +667,19 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 
 ```
 Anyone with memory_hash can query `VerifyUpheldReport(memory_hash)` via gRPC.
-Response: {plaintext, ciphertext, capsule, plaintext_hash, salt, plaintext_oversized}
+Response: {plaintext, ciphertext, capsule, plaintext_hash, salt, ciphertext_hash, wrapped_dek_hash, contributor_sig, contributor_pubkey, canonical_body, plaintext_oversized}
 
 Verification steps for any external party:
 
 1. Compute sha256(salt || plaintext) — confirm it equals plaintext_hash. This binds the revealed plaintext to the on-chain hash.
 
-2. (Optional, for cryptographically rigorous verification) Re-verify the ZK proof attached to the memory's original chain commit. The proof was verified once at commit time, but a skeptical verifier can re-run the SP1 Groth16 verifier against the on-chain (plaintext_hash, salt, ciphertext) to confirm the binding was mathematically valid. This is a ~1ms operation against the published verifier circuit.
+2. Compute sha256(ciphertext) — confirm it equals ciphertext_hash. This binds the on-chain ciphertext to the contributor's signature.
 
-3. (Optional, requires PRE access) Independently decrypt ciphertext using the org's epoch PRE key material. Confirm decryption produces the same plaintext.
+3. Reconstruct the canonical body from the on-chain fields (org_id, epoch_id, memory_type, contributor_pubkey, submission_hash, plaintext_hash, salt, ciphertext_hash, wrapped_dek_hash, with the domain tag `wevibe.submit_memory.v1`). Verify the contributor's Ed25519 signature against the reconstructed body and contributor_pubkey.
 
-Any mismatch in steps 1, 2, or 3 indicates either a leader fabricating the upheld report (step 1 fails) or a deeper cryptographic incident requiring investigation (step 2 or 3 fails). Step 1 alone is sufficient evidence for public judgment; steps 2 and 3 are available for rigorous post-incident audit.
+4. (Optional, requires PRE access) Independently decrypt ciphertext using the org's epoch PRE key material. Confirm decryption produces the same plaintext as the revealed plaintext.
+
+Any mismatch in steps 1, 2, or 3 indicates either a leader fabricating the upheld report (step 1 fails — revealed plaintext does not match committed hash) or a captured hub forwarding tampered fields to chain (step 2 or 3 fails — ciphertext was substituted, or signature is invalid). Step 4 catches the case where ciphertext on chain decrypts to something different from the revealed plaintext, indicating the contributor and leader colluded to substitute ciphertext bytes after signing.
 ```
 
 ### UX Flow: Plugin Failure UX
@@ -1328,30 +1346,36 @@ Chain modules (`x/emissions`, `x/bandwidth`, `x/reputation`, `x/org`) have defau
 ---
 
 ### GAP-VE-1: AEAD-in-SP1 Feasibility Spike Required Before Implementation
+**Status:** CLOSED (resolved by CO-028 feasibility spike 2026-05-27 + DMO-029 redesign). Spike measured ChaCha20-Poly1305 + SHA-256 in SP1 v6, returned GO-WITH-RESERVATIONS at 16.6 GB peak RSS and 45 s wall on M3 Ultra. Walter and manager concluded the ZK pathway is operationally unshippable. DMO-029 supersedes the ZK design with a signed-canonical-body design (D-VR-1 through D-VR-8) that requires no proving. Spike workspace preserved as historical record at /Users/jerrysmith/Desktop/wevibe-workspace/spike-aead-ve/ (local-only, not committed). Sprint 31 implementation CO ships the canonical-body redesign instead.
 
-**Participant:** All (blocks Pattern B Tier 2 implementation)
-**Milestone:** Sprint 30 (or next sprint, depending on spike timeline)
-**Severity:** MAJOR (blocks Pattern B Tier 2 implementation)
+### GAP-VR-1: Sprint 31 Implementation — Canonical Body Overhaul + Three Bug Fixes
+
+**Participant:** All
+**Milestone:** Sprint 31
+**Severity:** MAJOR
 **Status:** OPEN
 
-**Decision context:** D-VE-9 (DMO-028) gates implementation on a feasibility spike measuring AEAD (ChaCha20-Poly1305) + SHA-256 inside an SP1 zkVM guest program. The previous spike (CO-026.5) measured Umbral PRE + SHA-256, which does not match production primitives.
+DMO-029 locks the redesigned verification anchor (D-VR-1 through D-VR-8). The Sprint 31 implementation CO must land:
 
-**Spike scope:**
+1. **Canonical body overhaul in place** (no version bump). Add plaintext_hash, salt, ciphertext_hash, wrapped_dek_hash to:
+   - wevibe-mcp/src/canonical.ts submitMemoryMessage
+   - wevibe-server/wevibe-dashboard/lib/wevibe-signing.ts submitMemoryCanonical
+   - wevibe-server/wevibe-hub/internal/verify/canonical.go SubmitMemoryMessage
+2. **Proto field additions on chain:**
+   - MsgApproveMemory adds plaintext_hash, salt, ciphertext_hash, wrapped_dek_hash, contributor_sig
+   - StoredMemoryCommitment adds the same fields
+3. **Hub-side handler fixes (load-bearing per D-VR-5, D-VR-6):**
+   - handlers/moderation.go:762 populates BatchMemory.WrappedDekEnc from pending_submissions.wrapped_dek_mod
+   - internal/orgs/orgs.go:125 BufferSubmission calls verify.RequestSignature before persisting
+   - rotation_buffer flush path verifies signatures before copying to pending_submissions
+4. **Dashboard plaintext removal (per D-VR-7):**
+   - wevibe-server/wevibe-dashboard/lib/wevibe-submit.ts removes plaintext from submit payload
+   - sanitization scan moves client-side or to moderator-decrypt time
+5. **Chain wipe + hub state wipe** per Walter directive (pre-MVP, no migration).
+6. **End-to-end Tier 2 verification path** — VerifyUpheldReport gRPC query reconstructs canonical body from on-chain fields, verifies sha256 hashes, verifies contributor signature.
+7. **Integration tests** covering: honest submit + commit + verify; tampered-plaintext reveal at Tier 2 (must fail step 1); tampered-ciphertext post-commit (must fail step 2); forged contributor_sig (must fail step 3).
 
-1. Build a working SP1 guest program proving the statement in D-VE-5
-2. Generate proofs for 256B, 1KB, 2KB, 4KB plaintext sizes (5 runs each, median + min + max)
-3. Measure proving time, proof size, verifier cost, peak memory
-4. Produce a feasibility report with go/no-go recommendation
-
-**Resolution requires:**
-
-- Spike CO drafted and dispatched
-- Spike report delivered with concrete numbers
-- Walter sign-off on the numbers
-- If go: implementation CO drafted referencing locked design (D-VE-1 through D-VE-10)
-- If no-go: design session revisit per D-VE-9 escape clause
-
-**References:** D-VE-9 (gate), DMO-028 (design lock), CO-026.5 (defunct spike against wrong primitives).
+Closes: GAP-VR-1, and addresses the previously-orphaned three bugs surfaced by GO-001 (WrappedDekEnc gap, rotation_buffer signature-unverified path, dashboard plaintext-over-TLS).
 
 ---
 
@@ -1710,7 +1734,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Severity | Open Count | Items |
 |----------|------------|-------|
 | CRITICAL | 0 | (GAP-CHAIN-1 closed by CO-009) |
-| MAJOR | 3 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-VE-1 (AEAD-in-SP1 feasibility spike) |
+| MAJOR | 3 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-VR-1 (canonical body overhaul + three bug fixes per DMO-029) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
 | **Total OPEN** | **9** | |
