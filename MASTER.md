@@ -1,9 +1,3 @@
-Perfect. Starting with `MASTER.md` — UX + Gap Log only.
-
----
-
-# MASTER.md
-
 # WeVibe Network — Participant UX & Gap Log
 
 This document defines the **desired user experience for every participant in the WeVibe ecosystem**, mapped to the **top-level API surfaces** each experience requires, followed by the **open gap log** of what remains to be built.
@@ -1151,20 +1145,6 @@ Every memory in the system moves through a defined lifecycle. The state machine 
 
 Open gaps only. Resolved gaps have been removed (history lives in implementation reports). Architectural decisions and rationale live in `DECISIONS.md`.
 
-## Closed in Sprint 25
-
-### GAP-M4 (Org Discovery) CLOSED in Sprint 25
-
-discovery.go implemented, routes wired at GET /v1/orgs/discover, dashboard page at /discover, sidebar entry present. Handler: DiscoverOrgs in wevibe-hub/internal/api/handlers/discovery.go. See D-12.7.
-
-### GAP-M5 (Join Request Workflow) CLOSED in Sprint 25
-
-join.go implemented (347 lines, SubmitJoinRequest + ListJoinRequests + ApproveJoinRequest + DenyJoinRequest), routes wired, dashboard page at /join-requests, sidebar entry present. See D-12.8.
-
-### GAP-M9 (Qdrant Per-Org Collections) CLOSED in Sprint 25
-
-OrgCollectionName(orgID) returns org_<orgID>_memories, EnsureCollection creates per-org collections on first upsert, old shared wevibe_memories collection removed. See D-12.1.
-
 ## Severity Classifications
 
 | Severity | Definition |
@@ -1636,62 +1616,6 @@ Sessions page submitted memories one at a time via individual POST requests.
 **Status:** CLOSED by CO-265 (Sprint 27)
 
 `wevibe-opencode-plugin/plugins/wevibe-plugin.ts` contained a TypeScript syntax error: `TS1005: ';' expected`. The malformed type annotation and generic syntax around the inline type expression was fixed. See CO-265 implementation report.
-
----
-
-## Sprint 26 Scope
-
-### In Scope (Sprint 26)
-
-| Item | D-Reference | Closes |
-|------|-------------|--------|
-| Plugin HTTP API with per-session token auth (Bearer token, ~/.wevibe/mcp-session-token mode 0600) | D-12.5, D-12.5a | GAP-C1, GAP-C2, D-12.5a | **CLOSED** |
-| Serve event recording via wevibe-mcp value-add proxy | D-12.5 | GAP-M8 | **CLOSED** |
-| CO-260 finishing items (Makefile dogfood probe + cross-module doc updates) | CO-262 | — | **CLOSED** |
-
-### Out of Scope (Deferred)
-
-| Item | D-Reference | Reason |
-|------|-------------|--------|
-| Transport encryption (TLS) for wevibe-mcp HTTP API | — | Post-alpha; loopback-only is sufficient for local dev |
-| Per-request token rotation | D-12.5a | Boot-lifetime token sufficient for solo dogfood |
-
----
-
-## Sprint 25 Scope
-
-### In Scope (Sprint 25)
-
-| Item | D-Reference | Closes |
-|------|-------------|--------|
-| Multi-org isolation hardening (Qdrant per-org collections + authz middleware) | D-12.1 | GAP-M9 | **CLOSED** |
-| Plugin HTTP API replacing subprocess (wevibe-mcp at 127.0.0.1:4450, loopback-only, no auth) | D-12.5 | GAP-C1, GAP-C2 | — |
-| Plugin failure UX (auto-start first, plugin-specific fallback) | D-12.6 | — | — |
-| Consumer profile pages (/profile, /u/:wallet) | D-12.4 | — | — |
-| Per-memory org destination dropdown in contributor extraction UI | D-12.2 | — | — |
-| Moderator multi-org queue switcher | D-12.1 | — | — |
-| Org discovery (public wevibe.network/orgs + in-dashboard /discover) | D-12.7 | GAP-M4 | **CLOSED** |
-| Zero-friction join request workflow (no form fields, profile is application) | D-12.8 | GAP-M5 | **CLOSED** |
-| Activity feed (WebSocket + bell + /activity page, all-orgs aggregated) | D-12.9 | GAP-M6 (partial) | — |
-| Solo dogfood end-to-end pipeline validation + make dogfood smoke-test command | D-12.10 | — | — |
-
-### Closed in Sprint 25
-
-| Item | Reference | Closes |
-|------|-------------|--------|
-| Container topology consolidation (umbral-sidecar containerized, six-service stack locked) | CO-258 | — |
-
-### Out of Scope (Deferred)
-
-| Item | D-Reference | Reason |
-|------|-------------|--------|
-| Cross-org retrieval at recall time | D-12.3 | Solo dogfood doesn't need it; builds single-org loop first |
-| Per-session token auth for plugin ↔ wevibe-mcp | D-12.5a | Pre-alpha requirement, not needed for dogfood |
-| Notification infra beyond activity feed (email, mobile push, agent-channel pings) | D-12.9 | Post-Sprint 25 |
-| Verified social links on profile | D-12.4 (future) | Nice-to-have, not blocking |
-| Multi-org memory submission | D-12.2 (future) | Design exists, not yet implemented |
-| Auto-approve join requests based on reputation | D-12.8 | Per-org human decision for v1 |
-| Multi-team alpha onboarding | — | Post-Sprint 25 |
 
 ---
 

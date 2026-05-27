@@ -64,38 +64,6 @@ Sprint 22 chain hardening work (CO-162 through CO-170) remains valid — the Cos
 
 ---
 
-<details>
-<summary>Prior revision notes (click to expand)</summary>
-
-### Revision notes (v1.5 → v1.6)
-
-Sprint 22 delivered chain production hardening: governance-adjustable module params, epoch-driven automatic processing, real operator staking with token burns, hub↔chain integration, and on-chain Merkle root attestation with real roots.
-
-### Revision notes (v1.4 → v1.5)
-
-Sprint 21–22 delivered the first runnable WeVibe chain binary and validated the node bootstrap workflow.
-
-### v1.3 → v1.4
-
-Sprint 19 technical debt cleanup and architectural pivot to plugin-gated memory injection.
-
-### v1.2 → v1.3
-Sprint 16 benchmark validation and Sprint 17 contributor experience overhaul.
-
-### v1.1 → v1.2
-Sprint 14 selective re-ranking and Sprint 15 security hardening.
-
-### v1.0 → v1.1
-Sprint 13 matching engine refinement. ADR-025: Vector-First Staged Retrieval.
-
-### v0.9 → v1.0
-Sprint 12 MVP validation.
-
-### v0.3 → v0.9
-Key hierarchy iterations. Moderation keypairs. BIP39 recovery. Authorization headers.
-
-</details>
-
 ---
 
 ## Abstract
