@@ -112,6 +112,37 @@ Leaders create organizations, manage membership, configure moderation policy, fu
 
 **Why recovery phrase matters:** The epoch secret key derives all memory access for this org. If lost and re-encryption keys cannot be reconstructed, all encrypted memories become permanently inaccessible. The recovery phrase is the only backup path.
 
+### UX Flow: Memory Approval Model — Leader's Choice
+
+WeVibe gives leaders two valid approval models for their org. The choice is per-org and configurable from `/settings`:
+
+**Model A — Leader as sole approver (default for new orgs).**
+- No moderators appointed.
+- Leader reviews and approves memories directly from `/moderation`.
+- `required_approvals = 1` (the leader's own approval).
+- The leader is the on-chain TX signer for batch commits.
+- Simplest path. Suitable for solo-led orgs, small expert orgs, or orgs that prefer direct leader curation.
+
+**Model B — Leader + moderators with quorum.**
+- Leader appoints one or more moderators from `/members`.
+- Leader configures `required_approvals` from `/settings` (1-10).
+- Moderators (and the leader, who has all moderator capabilities) cast approve votes on `/moderation`.
+- When approval count reaches `required_approvals`, the memory transitions to `pending_keyword`.
+- The leader is still the on-chain TX signer for batch commits. Moderator approvals are operational; the leader's wallet signature is the on-chain authority.
+- Suitable for orgs where the leader wants distributed review or cannot review every submission personally.
+
+**Switching models.**
+- A leader can change `required_approvals` at any time from `/settings` (requires wallet signature per D-1.3).
+- A leader can appoint moderators at any time from `/members`.
+- A leader can demote moderators back to regular members at any time.
+- Setting `required_approvals = 1` and removing all moderator roles reverts the org to Model A.
+
+**The leader is always the final authority.**
+- The leader signs all batch chain commits with their wallet (per D-1.3).
+- Moderator approvals are vouching signals visible to the leader, not chain authority.
+- The leader can override moderator decisions by directly approving or rejecting any submission.
+- Internal moderator vote history is org-local accountability (D-6.4), not chain-level enforcement.
+
 ### UX Flow: Member Management
 
 ```
@@ -228,7 +259,7 @@ The leader's batch pipeline is their primary operational activity. The dashboard
 ```
 1. Leader opens dashboard → "Settings" page
 2. Configures:
-   - Required moderator approvals (1-10)
+   - Required approvals (1-10): the number of approvals needed before a memory transitions from `pending` to `pending_keyword`. Default 1 (leader as sole approver, Model A). Set higher to require moderator quorum (Model B). See UX Flow: Memory Approval Model above. Change requires wallet signature (D-1.3).
    - Egress mode (local_only / allowlist / unrestricted)
    - Allowed providers list
    - Reputation tier payouts (payout_per_memory per tier)
@@ -545,13 +576,13 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
     → Leader reviews and clicks "Submit to Chain" with reason (max 500 chars)
     → Dashboard requests cfrag from hub for leader's PRE pubkey
     → Dashboard decrypts memory via Umbral sidecar (capsule + cfrag + ciphertext + leader_pre_sk → plaintext)
-    → Dashboard packages `plaintext + ciphertext + capsule + plaintext_hash` into `MsgReportMemory` payload
-    → If plaintext exceeds 4096 bytes: dashboard sets `plaintext_oversized=true`, omits plaintext/ciphertext/capsule, publishes full plaintext off-chain (hub persists in `published_plaintext` table) with `sha256` as verification anchor
-    → Leader signs the full TX with wallet, broadcasts to chain
-    → On confirmation: hub deletes memory from Qdrant
-    → On-chain commitment records: memory hash, contributor wallet, reason, reporting org
-    → Memory becomes public record on contributor's social graph
-    <!-- Why the triplet is stored on-chain — see DECISIONS.md D-13.2 -->**Why the triplet is stored on-chain:** The `plaintext + ciphertext + capsule` triplet proves the memory existed and was retrievable at commit time. Verifiers can re-derive `plaintext_hash = sha256(plaintext)` to confirm integrity. See DECISIONS.md D-13.2.
+     → Dashboard packages `plaintext + ciphertext + capsule` into `MsgReportMemory` payload
+     → If plaintext exceeds 4096 bytes: dashboard sets `plaintext_oversized=true`, omits plaintext/ciphertext/capsule, publishes full plaintext off-chain (hub persists in `published_plaintext` table) with off-chain verification anchor TBD per new Pattern B design
+     → Leader signs the full TX with wallet, broadcasts to chain
+     → On confirmation: hub deletes memory from Qdrant
+     → On-chain commitment records: memory hash, contributor wallet, reason, reporting org
+     → Memory becomes public record on contributor's social graph
+     **Why the triplet is stored on-chain:** The `plaintext + ciphertext + capsule` triplet proves the memory existed and was retrievable at commit time. Verification anchor design is pending re-architecture (see DECISIONS.md Pattern B section). See DECISIONS.md D-13.2 (will be revised).
 8. If DISMISSED:
    → Reporter's dismissed_reports_count incremented
    → Memory unchanged, continues serving
@@ -578,12 +609,10 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 
 ```
 Anyone with memory_hash can query `VerifyUpheldReport(memory_hash)` via gRPC.
-Response: {plaintext, ciphertext, capsule, plaintext_hash, plaintext_oversized}
-Verifier computes sha256(plaintext) and confirms it matches plaintext_hash.
+Response: {plaintext, ciphertext, capsule, plaintext_oversized}
+Verification anchor mechanism is pending re-architecture (see DECISIONS.md Pattern B section).
 Verifier with PRE access independently decrypts ciphertext to confirm it produces same plaintext.
-Mismatch = leader fabricated the upheld report.
-```
-<!-- See DECISIONS.md D-13.2 --><strong>Why the triplet is stored on-chain:</strong> The `plaintext + ciphertext + capsule` triplet proves the memory existed and was retrievable at commit time. Verifiers can re-derive `plaintext_hash = sha256(plaintext)` to confirm integrity. See DECISIONS.md D-13.2.
+Mismatch indicates leader fabricated the upheld report.
 
 ### UX Flow: Plugin Failure UX
 
@@ -1248,7 +1277,38 @@ Chain modules (`x/emissions`, `x/bandwidth`, `x/reputation`, `x/org`) have defau
 
 ---
 
+### GAP-PIPELINE-STATUS: Pending Submission Status Constraint Mismatch
+
+**Participant:** Leader, Moderator, Contributor
+**Milestone:** Sprint 31 (priority)
+**Status:** OPEN
+
+`pending_submissions.status` currently constrains values to `pending`, `pending_keyword`, `pending_chain`, and `committed`, but moderation handler code writes and reads statuses `ready` and `approved`.
+
+**Blocking impact:** This mismatch blocks the dogfood first-use loop, end-to-end smoke tests, and memory lifecycle progression past approval.
+
+**References:**
+- `wevibe-server/wevibe-hub/internal/api/handlers/moderation.go:203` writes `ready`
+- `wevibe-server/wevibe-hub/internal/api/handlers/moderation.go:709` reads `ready`
+- `wevibe-server/wevibe-hub/internal/api/handlers/moderation.go:781` writes `approved`
+- `wevibe-server/db/schema.sql:101` rejects both `ready` and `approved`
+
+Likely Sprint 31 priority due to downstream blockage immediately after moderation approval.
+
+---
+
 ## MODERATE
+
+### GAP-DENIAL-LOOP: Denial Loop Actionable Surface Coverage
+
+**Participant:** Moderator, Contributor, Leader
+**Status:** CLOSED (Sprint 30)
+
+All 8 actionable denial-loop surfaces shipped in Sprint 30 under CO-012 through CO-017.
+
+**Closure notes:**
+- Complete denial-loop surface delivery landed across CO-012, CO-013, CO-014, CO-015, CO-016, and CO-017
+- Optimistic ledger behavior was proven by CO-013 fixture tests
 
 ### GAP-O3: Dashboard Voting UI Missing for Approval Quorum
 
@@ -1572,10 +1632,10 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Severity | Open Count | Items |
 |----------|------------|-------|
 | CRITICAL | 0 | (GAP-CHAIN-1 closed by CO-009) |
-| MAJOR | 1 | GAP-CHAIN-5 (genesis params) |
+| MAJOR | 2 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **7** | |
+| **Total OPEN** | **8** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---

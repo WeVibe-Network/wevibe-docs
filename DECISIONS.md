@@ -452,6 +452,37 @@ The moderator pubkey is embedded in the `pending_keyword` status entry and propa
 
 ---
 
+### D-6.7: Moderator Quorum Is the Leader's Choice (Two Approval Models)
+
+**Decision:** Every org operates under one of two approval models, configurable per-org by the leader:
+
+- **Model A — Leader as sole approver.** No moderators appointed. `required_approvals = 1`. The leader reviews and approves all memories directly. This is the default for new orgs.
+- **Model B — Leader + moderator quorum.** Leader appoints moderators (`/members`) and configures `required_approvals` (1-10, via `/settings`). Moderators cast approval votes; once the threshold is met, the memory transitions to `pending_keyword`.
+
+In both models, the **leader is the on-chain TX signer** for batch chain commits (D-1.3). Moderator approvals are operational signals visible to the leader, not chain-level authority.
+
+**Why both models exist:**
+
+- **Solo-led and small expert orgs benefit from Model A.** A leader with deep domain expertise reviewing every memory themselves is the simplest, fastest, highest-quality path. Forcing a moderator layer on small orgs adds friction without benefit.
+- **Larger orgs and orgs with multiple contributors benefit from Model B.** When the leader cannot personally review every submission, delegating to trusted moderators distributes the review load. The leader still controls who is a moderator and still signs chain commits.
+- **The leader can always override.** Even in Model B, the leader has all moderator capabilities. They can approve or reject any submission directly without waiting for quorum. Moderators are advisory; the leader is sovereign.
+
+**Why the leader is always the on-chain TX signer:**
+
+- **Single-actor accountability for chain state.** The leader's wallet signature is the public attribution for every on-chain commit. Adding moderator signatures to the chain TX would either (a) require chain-side validation of vote process (which violates D-6.3 — operational decisions stay off-chain) or (b) create co-attestation that implicates moderators in commits they didn't directly sign for.
+- **Moderator accountability remains org-local.** Moderator vote history is tracked in the hub's `vote_records` table. Orgs that want to surface moderator accountability can do so via their own UX. The chain does not need to enforce it.
+- **Consistent with D-1.3.** Security-critical operations (chain commits, leadership transfer, org closure) require the wallet signature. Approval model configuration also requires wallet signature for changes to `required_approvals`.
+
+**Why no auto-quorum-from-reputation:**
+
+- Auto-quorum (e.g., "any 3 moderators with rep > X can approve") was considered and deferred. It introduces a runtime authorization model where the leader's discretion is mediated by chain state. The current model — leader explicitly appoints moderators and sets the threshold — is simpler and gives leaders direct control.
+
+**Implementation status:** Already implemented. `required_approvals` is stored on the org config, defaults to 1, and is configurable from `/settings`. The leader-as-sole-approver path works today. This decision documents the canonical UX framing rather than introducing new behavior.
+
+**Reference:** MASTER.md §2 Leader — UX Flow: Memory Approval Model — Leader's Choice (added by DMO-027).
+
+---
+
 ## 7. Reports & Accountability
 
 ### D-7.1: Reports Do NOT Auto-Blacklist
@@ -875,26 +906,34 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 
 ### D-13.2: Upheld Report Plaintext + Ciphertext + Capsule Triplet
 
-**Decision:** When a report is upheld and committed on-chain via `MsgReportMemory`, the chain stores all three of:
+**Status:** Verification anchor mechanism is PENDING RE-ARCHITECTURE as of 2026-05-27 (post-CO-026 revert).
+
+**Decision (locked):** When a report is upheld and committed on-chain via `MsgReportMemory`, the chain stores:
 - `plaintext` (raw memory content, max 4096 bytes)
-- `ciphertext` (Umbral-encrypted blob, max 8192 bytes)
-- `capsule` (Umbral capsule, ~200 bytes)
-- `plaintext_hash` (SHA-256 of plaintext, always present)
+- `ciphertext` (AEAD-encrypted blob, max 8192 bytes)
+- `capsule` (wrapped DEK sealed to moderator pubkey)
 - `plaintext_oversized` flag
 
-For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the plaintext/ciphertext/capsule fields are empty — only `plaintext_hash` is stored. The full plaintext is published off-chain (hub stores it permanently) and verified against the on-chain hash.
+For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the plaintext/ciphertext/capsule fields are empty. The full plaintext is published off-chain (hub stores it permanently) and verified against an on-chain verification anchor whose design is pending.
 
-A new gRPC query `VerifyUpheldReport(memory_hash) → {plaintext, ciphertext, capsule, plaintext_hash, plaintext_oversized}` enables anyone to challenge a leader's upheld-report TX by:
-1. Computing `sha256(plaintext)` from returned plaintext
-2. Verifying it matches returned `plaintext_hash`
-3. Independently decrypting `ciphertext` (if they have access via PRE) and verifying it produces the same plaintext
+**Decision (pending):** The on-chain verification anchor that binds revealed plaintext to the actual content inside the on-chain ciphertext is undecided. CO-026's contributor-signed `sha256(plaintext)` was reverted because:
+1. It used no salt (rainbow-table vulnerability for low-entropy plaintexts)
+2. The verification chain assumed Umbral PRE on the submission path, but production uses AEAD + sealed-box
+3. Without binding the hash to the actual ciphertext, contributor+leader collusion can submit a hash that does not match the ciphertext's content, neutralizing future report verification
 
-**Why:**
-- **The check-and-balance against a rogue leader needs cryptographic verifiability.** Without ciphertext+capsule on-chain, a malicious leader could "uphold" a fabricated report by publishing fake plaintext to discredit a contributor. Storing the triplet means anyone can demand the leader prove decryption matches.
-- **Plaintext alone is insufficient.** It's just a string the leader claims is what was decrypted. The ciphertext+capsule are the cryptographic evidence that the published plaintext is indeed what the contributor originally submitted and the moderators approved.
-- **4KB cap is economically considered.** At Cosmos gas costs (~200 gas per byte), a 4KB plaintext + 8KB ciphertext + 200B capsule + metadata = ~1-2M gas per upheld report. Upheld reports are rare and consequential — paying 10-40× normal approval gas is acceptable. 4KB covers ~95% of memories based on typical extraction outputs.
-- **Oversized fallback preserves the property.** Even for large memories, the on-chain hash is evidence of deletion. Anyone with the off-chain plaintext can verify against it. The leader cannot fabricate; they can only commit.
-- **`VerifyUpheldReport` is a query, not a write.** No gas cost for verification — anyone can audit any leader at any time.
+The replacement design must:
+- Bind the verification anchor to the actual AEAD ciphertext and wrapped DEK on the submission path
+- Be feasible to verify on consumer hardware (Pattern B Tier 2 reporter does not need to generate cryptographic proofs)
+- Survive a contributor+leader collusion attack (the leader cannot poison the anchor at commit time)
+- Use a per-submission salt to prevent rainbow-table attacks on the hash
+
+A new gRPC query `VerifyUpheldReport(memory_hash) → {plaintext, ciphertext, capsule, verification_anchor_TBD, plaintext_oversized}` will enable anyone to challenge a leader's upheld-report TX. The exact verification_anchor field shape will be defined when the re-architecture is locked.
+
+**Why the triplet is stored regardless of anchor design:**
+- **Cryptographic verifiability against rogue leader.** Without ciphertext + capsule on-chain, a malicious leader could "uphold" a fabricated report by publishing fake plaintext to discredit a contributor. Storing the triplet means anyone can demand the leader prove decryption matches.
+- **Plaintext alone is insufficient.** It's just a string the leader claims is what was decrypted. The ciphertext + capsule are the cryptographic evidence that the published plaintext is what the contributor originally submitted and the moderators approved.
+- **4KB cap is economically considered.** Upheld reports are rare and consequential — paying 10-40× normal approval gas is acceptable. 4KB covers ~95% of memories based on typical extraction outputs.
+- **Oversized fallback preserves the property.** For large memories, the on-chain hash (once redesigned) is evidence of deletion. Anyone with the off-chain plaintext can verify against it.
 
 ---
 
@@ -1115,6 +1154,43 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ---
 
+### D-13.14: CO-026 Contributor-Signed Plaintext Hash — Reverted
+
+**Status:** REVERTED via DMO-027 + CO-026R (2026-05-27).
+
+**Decision:** The work shipped under CO-026 (contributor-signed `sha256(plaintext)` carried across proto, chain keeper, hub canonical v2, dashboard, MCP, and e2e tests) is reverted in full.
+
+**Why reverted:**
+
+1. **No salt.** CO-026 used `sha256(plaintext)` without a per-submission salt. For low-entropy plaintexts (short memories, common technical advice), this is rainbow-table-vulnerable. A captured hub operator with read access to on-chain hashes could brute-force the original content for many memories.
+
+2. **Wrong cryptographic foundation.** CO-026 was scoped as the first half of a verifiable-encryption design intended to defeat contributor+leader collusion attacks on Pattern B Tier 2 reports. The intended verification mechanism (a ZK proof binding the hash to the on-chain ciphertext) was scoped on the assumption that production used Umbral PRE encapsulation. The CO-027 abort report (2026-05-27) revealed that production uses AEAD + sealed-box on the submission path. The verification design must be rebuilt against the actual primitives.
+
+3. **Incomplete threat coverage.** Even with salt, a hash signed only by the contributor protects against leader hash poisoning but not against contributor+leader collusion (when both are adversaries). The replacement design must address this explicitly — either by binding the hash to the AEAD ciphertext through a verifiable encryption proof, or by accepting the residual risk and documenting it as a known limit of the verification anchor.
+
+**What is preserved from CO-026:**
+- The architectural goal: a verification anchor on-chain that binds revealed plaintext in a Tier 2 report to the actual content the contributor submitted, without trusting the leader.
+- The 7-state lifecycle and other proto fields not introduced by CO-026.
+
+**What is removed by the revert:**
+- `MsgApproveMemory.plaintext_hash` (field 9)
+- `MsgReportMemory.plaintext_hash` (field 12)
+- `StoredMemoryCommitment.plaintext_hash` (field 15)
+- `StoredMemoryReport.plaintext_hash` (field 12)
+- DB migration `000005_add_plaintext_hash.up/down.sql`
+- `pending_submissions.plaintext_hash` column
+- Hub canonical v2 → reverts to canonical v1
+- Hub validation of `plaintext_hash` at submit time
+- Hub batch chain submit inclusion of `plaintext_hash`
+- Dashboard and MCP computation of `plaintext_hash` at submission
+- All e2e test assertions involving `plaintext_hash`
+
+**What replaces it:** A re-architected verification anchor design will be drafted as a follow-on CO once the AEAD + sealed-box feasibility spike completes. See D-13.2 (status: pending re-architecture) and the Sprint 30 gap log entry for Pattern B Tier 2.
+
+**Reference:** DMO-027 (this doc revert), CO-026R (companion code revert), CO-027 questions report (2026-05-27, original abort discovery).
+
+---
+
 ### D-S29-VECTORS-CLOSED: Sprint 28 Deferred Test Vectors Regenerated [PROCESS]
 
 **Decision:** All 4 vectors deferred from Sprint 28 MO-006 per D-S28-MO006-VECTORS-SCOPE have been regenerated via the REGEN_VECTORS pattern. `wevibe-protocol/test_vectors/` now contains no stale vectors.
@@ -1270,6 +1346,27 @@ The fix (D-S29-CHAIN-RESTART-FOUNDATION, CO-005d) writes a sentinel marker to ev
 **Review trigger:** When daily serve+denial TX count exceeds 50% of single-validator block capacity, or when the second external org onboards — whichever comes first.
 
 **What does NOT change:** D-4.3 and D-4.5 remain locked. The per-event model is the current implementation. The post-alpha review may propose amendments to those decisions via a formal CO with Walter approval.
+
+---
+
+## 15. Sprint 30 Deferred Decisions
+
+### D-2026-05-25-B: Leader Activity Aggregation — Deferred
+
+**Status:** DEFERRED
+
+**Extends:** D-2026-05-25-A
+
+**Context:**
+- Sprint 30 CO-013 removed `leader_last_chain_commit_at` from `GetOrg` because it was misleading.
+- The removed field was org-level `last_chain_submission_at`, not per-leader activity.
+- Walter deferred final definition of "leader last active" until leader action taxonomy is finalized.
+- Candidate leader actions include denial batch submissions, memory approvals, user invites, report submissions, credit top-ups, org config changes, plus TBD actions.
+
+**Decision:**
+- Per-leader RPC-queryable activity aggregation is deferred to a future sprint.
+- This deferral is intentional to avoid rework before the leader action taxonomy is locked.
+- `chain_commit_events` already stores raw `committing_leader_pubkey` data; the deferred scope is the query/API surface and formal action definition.
 
 ---
 
