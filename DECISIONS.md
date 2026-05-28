@@ -201,23 +201,71 @@ Documented as acceptable risk gated behind operational/contractual controls duri
 
 ---
 
-### D-4.2: Dual-Vector Decay Model
+### D-4.2: Earned Trust Decay Model
 
-**Decision:** Keyword weights move along two independent vectors per epoch:
-- **Idle decay** (50 bps/epoch) — applied when memory had 0 serves AND 0 denials
-- **Negative-signal decay** (500 bps per denial event) — applied per denial TX
-- **Serve boost** (100 bps per serve, capped at 5 serves/epoch) — applied per serve TX
-- **Bootstrap grace** (14 epochs) — no decay during grace period; boost still applies
+**Decision:** Per-memory keyword weights decay under an **Earned Trust** formula. Each memory carries `serve_count` and `denial_count` aggregates (D-4.1 primitives, unchanged). The decay rules at the end of each chain epoch:
 
-Denial decay is applied first, then serve boost — net effect of both signals visible in the final weight.
+**Effective signal: `denial_rate = denial_count / (serve_count + denial_count)`**
+
+This is the discriminator. Raw counts do not drive decay — the ratio does.
+
+**Per-keyword weight updates per chain epoch (chain authority):**
+
+For each keyword the memory carries, given `s` serves and `d` denials touching that keyword this epoch:
+
+- **Serve boost:** `+ serveD × s × (serveFloor + (1 - serveFloor) × trust²)`
+  where `trust = 1 - denial_rate`. Good memories accelerate; suspect memories get a damped boost.
+- **Denial decay:** `- denialD × d × (denialFloor + (1 - denialFloor) × denial_rate)`
+  Bad memories die faster as their denial rate climbs.
+- **Idle decay (when `s = 0 AND d = 0`):**
+  - If **trust-earned** (`serve_count >= trustMinServes AND denial_rate < trustMaxRate`): `- idleD × idleProtect`
+  - Otherwise: `- idleD × idleUntrusted`
+
+Memory archives when **every** keyword weight ≤ `retrievalThreshold` (default 1500 bps = 15% of MAX_W).
+
+**Locked default parameters:**
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| `serveD` | 220 bps | base serve boost per serve event |
+| `denialD` | 900 bps | base denial decay per denial event |
+| `idleD` | 600 bps | base idle decay per epoch |
+| `grace` | 20 chain epochs | no decay during bootstrap |
+| `trustMinServes` | 1 | minimum served events to gate trust |
+| `trustMaxRate` | 0.30 | denial rate ceiling to keep trust |
+| `idleProtect` | 0.05 | trusted memories idle-decay at 5% of base |
+| `idleUntrusted` | 1.0 | unverified memories idle-decay at full base |
+| `serveFloor` | 0.4 | minimum fraction of boost regardless of trust |
+| `denialFloor` | 0.3 | minimum fraction of decay regardless of rate |
+| `retrievalThreshold` | 1500 bps | weight below which a keyword is non-retrievable |
+
+All parameters are chain-governance changeable.
 
 **Why:**
-- **Denials must take precedence.** A memory being actively reported as wrong is a stronger signal than serves; we want the negative signal to dominate.
-- **Boost still applies during grace.** New memories need a fair chance to accumulate positive signal; punishing them during their initial epochs would suppress new knowledge.
-- **Idle ≠ denied.** A memory with no signal at all this epoch isn't necessarily wrong — it just wasn't queried. Slow idle decay handles that case without penalizing it as harshly as denial.
-- **Memories archive when ALL keyword weights = 0.** Terminal state is reached when every topic has fully decayed.
 
-**Note on bootstrap grace duration:** The 14-epoch bootstrap grace period is measured in **chain epochs** (D-4.7), not wall time. The actual wall-clock duration depends on the chain's epoch configuration at initialization (query via `wevibed query epochs epoch-info wevibe_epoch`). With a 12-hour chain epoch, 14 epochs ≈ 7 days. With a 24-hour chain epoch, 14 epochs ≈ 2 weeks. The D-4.2 comment "~2 weeks at 12h/epoch" assumes 12h epochs — verify against actual chain configuration.
+The previous formula (flat 500 bps/denial keyword decay, 100 bps/serve boost, 50 bps/epoch idle decay) used raw counts. Empirically validated against 9 org scenarios × 7 seeds × 300 epochs, raw-count decay could not separate good memories from bad. A good memory with 50 serves and 2 false-positive denials decayed almost the same as a bad memory with 2 serves and 2 true-positive denials. Result: ~68% good-memory survival and ~54% bad-memory persistence — barely better than noise.
+
+The Earned Trust formula decouples them by three structural moves:
+
+1. **Signal change: use the ratio, not the counts.** `denial_rate` discriminates 50/2 from 2/2 immediately. The chain already tracks both `serve_count` and `denial_count` per memory (D-4.1) — no new state.
+
+2. **Trust gate on idle decay.** Memories that have demonstrated value (≥1 served event with denial rate < 30%) are protected from idle decay. Memories that have never been served — and therefore never demonstrated value — drain at full base rate and archive. This is the load-bearing insight: **untested memories must demonstrate value or archive**. Bad memories that get queried accumulate denials → lose the trust gate → drain fast. Bad memories that never get queried drain anyway because they never earned the gate. No path for a bad memory to survive.
+
+3. **Boost amplified by trust, decay amplified by denial rate.** Both the positive and negative signals scale with the memory's current quality. Good memories accelerate; bad memories collapse.
+
+**Empirical results (9 scenarios × 7 seeds × 300 epochs):**
+
+| Metric | Old (flat-count) formula | Earned Trust formula |
+|---|---|---|
+| Average decoupling gap (good-surv minus bad-persist) | 15pp | **78pp** |
+| Good memory survival | 68% | **94%** |
+| Bad memory persistence | 54% | **16%** |
+| Bad memory time-to-archive (median) | 191 epochs | **58 epochs** |
+| Good memory false-archive rate | 30% | **5.5%** |
+
+5× improvement in decoupling, 5.5× drop in false-archive of good memories. Same chain primitives, same transactions, same state. Only the math expression in the decay step changes.
+
+**Note on grace duration:** The 20-epoch grace period is measured in **chain epochs** (D-4.7), not wall time. With a 12-hour chain epoch, 20 epochs ≈ 10 days. With a 24-hour chain epoch, 20 epochs ≈ 20 days. Verify against actual chain epoch configuration via `wevibed query epochs epoch-info wevibe_epoch`.
 
 ---
 
@@ -229,11 +277,13 @@ Denial decay is applied first, then serve boost — net effect of both signals v
 
 ---
 
-### D-4.4: Archived at Confidence Zero, Not Dormant
+### D-4.4: Archived When All Keywords Below Retrieval Threshold
 
-**Decision:** Memories with all keyword weights at 0 transition directly to `ARCHIVED`. The `DORMANT` state is not used.
+**Decision:** Memories transition to `ARCHIVED` when every keyword's weight has decayed at or below the retrieval threshold (default 1500 bps per D-4.2). The `DORMANT` state is not used.
 
-**Why:** `DORMANT` was a holdover from the per-memory confidence design that implied "recoverable if usage returns." Under keyword weights, full decay across all keywords means the memory has been comprehensively rejected — recovery is not the right path. `ARCHIVED` memories are excluded from all queries.
+**Why:** `DORMANT` was a holdover from the per-memory confidence design that implied "recoverable if usage returns." Under Earned Trust (D-4.2), a memory whose every keyword has fallen below the retrieval threshold has comprehensively failed to demonstrate value — either by accumulating denials, by never being served, or both. Recovery is not the right path. `ARCHIVED` memories are excluded from all queries.
+
+The threshold-based archive (vs requiring weights to hit exactly zero) is intentional: a weight just above zero is functionally useless for retrieval but adds noise to ranking. Archiving at the retrieval cutoff aligns the chain's terminal state with the retrieval engine's effective availability.
 
 ---
 
@@ -257,7 +307,7 @@ The org cost estimation formula: `(daily_serves × serve_gas) + (daily_denials �
 
 **Decision:** The memory lifecycle state set is reduced to 7 states: `pending`, `pending_keyword`, `pending_chain`, `denied`, `committed`, `archived`, `reported_deleted`. DORMANT, DEGRADED, and STABLE are not used.
 
-**Why:** With `confidence_bps` removed (D-4.1), intermediate health states have no signal to track. A memory is either committed and live, archived (all keyword weights at 0), or removed via report. Pre-commit states (`pending`, `pending_keyword`, `pending_chain`, `denied`) capture the moderation pipeline. The three removed states described gradient health that no longer exists in the model — keeping them around would be theater. Simpler state machines have fewer bugs.
+**Why:** With `confidence_bps` removed (D-4.1), intermediate health states have no signal to track. A memory is either committed and live, archived (all keyword weights below the retrieval threshold per D-4.4), or removed via report. Pre-commit states (`pending`, `pending_keyword`, `pending_chain`, `denied`) capture the moderation pipeline. The three removed states described gradient health that no longer exists in the model — keeping them around would be theater. Simpler state machines have fewer bugs.
 
 The 7 states map to two locations:
 - **Hub PostgreSQL only (pre-commit):** `pending`, `pending_keyword`, `pending_chain`, `denied`
@@ -276,7 +326,7 @@ Only `committed` memories appear in Qdrant and are returned during retrieval.
 
 **Why:** Conflating event-driven crypto rotation with time-based emission/decay epochs caused real confusion (manager-architect conversation, 2026-05-18). The two are independent — an org may rotate frequently while chain epochs tick steadily, or vice versa. An org with no member removals has 0 rotation epochs but hundreds of chain epochs. Disambiguation prevents future readers from making wrong assumptions about durations or triggers.
 
-The bootstrap grace period (D-4.2) is measured in **chain epochs**, not rotation epochs. The "~2 weeks" estimate is `14 × chain_epoch_duration` — the actual duration depends on the chain's epoch configuration at initialization.
+The bootstrap grace period (D-4.2) is measured in **chain epochs**, not rotation epochs. With a 12-hour chain epoch, the 20-epoch grace ≈ 10 days. With a 24-hour chain epoch, ≈ 20 days. The actual duration depends on the chain's epoch configuration at initialization.
 
 ---
 
@@ -288,7 +338,7 @@ The bootstrap grace period (D-4.2) is measured in **chain epochs**, not rotation
 
 **Why:** Type proliferation creates ambiguity at extraction and moderation time. The preference-vs-fact distinction was considered as a third type and rejected for six reasons:
 
-1. **Decay model breakage.** The dual-vector decay model treats serves as positive signal and denials as negative signal. If "preference" were a third type, denials on preferences would mean "I disagree" — not "this is wrong" — which corrupts the keyword weight signal entirely. The decay model depends on denials representing factual inaccuracy, not opinion divergence.
+1. **Decay model breakage.** The Earned Trust decay model (D-4.2) treats serves as positive signal and denials as negative signal, with discrimination driven by `denial_rate`. If "preference" were a third type, denials on preferences would mean "I disagree" — not "this is wrong" — which corrupts the keyword weight signal entirely. The decay model depends on denials representing factual inaccuracy, not opinion divergence.
 
 2. **wevibe-guard scanning limitations.** The guard was designed to detect credential leakage, injection patterns, and homoglyph attacks. It cannot meaningfully scan soft/opinion content for threats it wasn't built to detect. Classifying preferences as a separate type would require the guard to make judgments about opinion vs fact — a task beyond its threat model.
 
@@ -615,7 +665,60 @@ The earlier decision to strip keywords from Qdrant for "security" was architectu
 - Keyword overlap boost (overlap × 0.1)
 - Per-keyword weight ranking (memories with stronger weights on matching keywords rank higher)
 
+Position assignment within the result set is governed by D-9.4 (probabilistic exploration).
+
 **Why:** Raw vector similarity isn't enough — keyword weights add health-aware ranking, ensuring decayed memories rank lower than well-validated ones for the same query.
+
+---
+
+### D-9.4: Probabilistic Exploration in Result Positions 2..N
+
+**Decision:** The retrieval engine assigns result positions in two phases:
+
+1. **Position 1** — strictly the highest-scoring candidate. Deterministic. This is the system's strongest answer; predictability matters for top-1 quality.
+2. **Positions 2..N** — sampled probabilistically from remaining candidates using softmax weighting: `weight_i = (score_i / max_score)^(1 / temperature)`. Default `temperature = 0.7`.
+
+The candidate pool is the standard D-9.3 ranked output (vector + keyword + weight). The change is *how* positions below #1 are filled.
+
+**Why:**
+
+Pure deterministic top-N ranking creates a **ranking-loss death spiral** that idle-decay cannot fix:
+
+1. Two memories match a query. One has slightly higher weight. It wins, gets served, gets a serve boost, increases its lead.
+2. The loser does not get served, does not get a boost, gets idle-decayed (per D-4.2 untrusted path).
+3. Next query touching the same keywords: same outcome.
+4. Eventually the loser archives, even though it was a perfectly good memory — it just lost the first ranking battle.
+
+This is **independent of the decay formula**. Even with Earned Trust (D-4.2), 23% of good memories archive falsely in sparse-query orgs (Cold Storage scenario: 200 memories, 8 queries/epoch) because the deterministic ranking deprives them of the serves they need to earn the trust gate.
+
+Probabilistic exploration in positions 2..N solves this without compromising top-1 quality:
+
+- The user always gets the system's best answer at position 1
+- Lower-ranked memories get occasional chances to be served
+- Memories that are actually good win those chances and accumulate trust
+- Memories that are not good lose serves to denial rate and archive
+
+**Empirical results (Cold Storage scenario):**
+
+| Engine | Good Memory False-Archive Rate |
+|---|---|
+| Deterministic top-N + D-4.2 (current chain) | 60.5% |
+| Deterministic top-N + Earned Trust (D-4.2 new) | 23.6% |
+| **Probabilistic positions 2..N + Earned Trust** | **16.4%** |
+
+Across all scenarios, probabilistic exploration lifts worst-case decoupling gap from 61.8pp to 68.2pp without lowering average gap.
+
+**Why this is a hub-side change, not a chain change:**
+
+The chain produces the authoritative keyword weights (D-4.2). The retrieval engine consumes those weights and produces a ranked result set. The position-assignment policy is purely a query-engine concern — the chain has no visibility into which position a memory was served in. No new chain state, no new transactions, no consensus implications.
+
+**Implementation lives in `wevibe-hub/internal/retrieval`** (Qdrant query handler). Temperature is a hub config parameter, not a chain parameter.
+
+**Why not just adjust α/β scoring weights?**
+
+Adjusting scoring weights (Section 3.5: `γ × keyword_boost`, `δ × vector_score`) changes how candidates are ordered but the order is still deterministic. Same memory wins every time. The death spiral persists. Probabilistic sampling is what breaks the loop.
+
+**Optional companion: new-memory score boost.** For memories with age < `grace + boostWindow` chain epochs, multiply the score by `(1 + boostMult × (1 - age/boostWindow))`. Default: `boostMult = 0.5`, `boostWindow = 30 epochs`. This is a stabilizer that helps new memories cross the trust threshold in growth-heavy orgs. Empirically smaller effect than the probabilistic sampling itself but composes cleanly.
 
 ---
 

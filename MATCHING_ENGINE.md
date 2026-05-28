@@ -1,128 +1,196 @@
-# WeVibe Matching Engine — Architecture Decision Record
+# WeVibe Matching Engine — Architecture Reference
 
-**ADR-025: Contested Memory Disambiguation + Moderation Similarity Detection**
-**Date:** 2026-04-09
-**Status:** Accepted
-**Sprint:** 13 — Matching Engine Refinement
+**Scope:** End-to-end retrieval architecture. How a query becomes a ranked, served, decay-affecting result.
+
+**Owning decisions:** D-4.1 (KeywordWeight primitive), D-4.2 (Earned Trust decay), D-4.3/D-4.5 (per-event TX), D-9.1 (Qdrant payload), D-9.2 (Qdrant hardening), D-9.3 (enriched ranking), D-9.4 (probabilistic exploration).
 
 ---
 
 ## The Problem
 
-A scoring engine ranks memories. It does not understand them. When two memories score similarly but recommend different approaches, the scoring engine picks one arbitrarily based on decimal-place differences in keyword overlap and vector similarity. The user gets a confident-sounding answer that might be the wrong answer for their situation.
+A memory retrieval system at scale faces two distinct failure modes. Both must be solved or the system cannot be load-bearing for user acquisition.
 
-This is the silent failure mode. The user never knows a better memory existed. The agent never questions its choice. Nobody complains because nobody knows what they missed.
+**Failure 1 — Bad memories persist.** When a memory is wrong and consumers deny it, the system needs to remove it from circulation. Raw-count decay (the previous D-4.2 formula) couldn't tell a good memory with occasional false-positive denials apart from a bad memory with deserved denials, so it punished both. Result: half the good memories died alongside the bad ones. New users joining a year-old org saw a thin store of stale knowledge.
 
-At scale (2,000+ memories), this becomes the dominant failure. More memories means more near-misses, more competing approaches to the same problem, more opportunities for the wrong memory to surface.
+**Failure 2 — Good memories die in ranking battles.** Even with a correct decay formula, deterministic top-N ranking creates a death spiral. Two memories match a query; the higher-weighted one wins forever; the loser starves of serves, idle-decays, and archives — even though it was a perfectly good memory that simply lost the first ranking battle. This is independent of the decay formula. It is a query-engine problem.
 
----
-
-## The Consumer Side
-
-### When results are clear
-
-The developer types a prompt. The agent calls `wevibe_recall`. One memory scores well above the rest. The MCP client returns it. The agent weaves it into the response. The developer never sees WeVibe. This is the common case and it stays exactly as it is today.
-
-### When results are contested
-
-The developer types a prompt. The agent calls `wevibe_recall`. Two or three memories score within striking distance of each other. They address the same problem with different approaches.
-
-The MCP client detects this. It calls the local LLM to read the competing memories and produce three things for each: a one-line summary, a "best when" statement, and the key tradeoff. This gets returned to the agent as structured guidance.
-
-The agent reads the guidance. It asks the developer 2-3 clarifying questions — the kind it would ask anyway when a problem has multiple valid solutions. "Are you optimizing for security isolation or latency?" "Is this for a VPS or a cloud deployment?" Based on the answers, the agent picks the right memory and proceeds.
-
-The developer experiences this as a normal conversation with a thoughtful agent. They don't see scoring breakdowns. They don't see "VIBE WARNING." They see an agent that asks good questions before giving advice. The 5-10 seconds spent answering questions save 30 minutes of following the wrong approach.
-
-### What the developer never does
-
-- Search for memories manually
-- Tag or categorize memories
-- Choose between memories in a UI
-- Configure scoring weights
-- Interact with WeVibe directly in any way
-
-The agent is the interface. WeVibe is invisible infrastructure.
+These two failures live at different layers of the system. Both fixes ship independently and compose cleanly.
 
 ---
 
-## The Moderation Side
+## The Two-Layer Architecture
 
-### When a new memory comes in
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  CHAIN LAYER — authoritative state                                     │
+│                                                                        │
+│  Per memory, per keyword: { weight (bps), serve_count, denial_count }  │
+│  Per-epoch decay formula:  D-4.2 Earned Trust                          │
+│  Per-event updates:        MsgSubmitServeBatch, MsgSubmitDenialBatch    │
+│  Terminal:                 archive when all keyword weights ≤ 1500 bps │
+└────────────────────────────────────────────────────────────────────────┘
+                                  ▲
+                                  │ chain → hub sync
+                                  ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  RETRIEVAL LAYER — query engine (wevibe-hub + Qdrant)                  │
+│                                                                        │
+│  Candidate generation:     vector similarity + keyword overlap         │
+│  Candidate ranking:        score = vector + γ·keyword_boost (D-9.3)    │
+│  Position assignment:      top-1 deterministic, 2..N probabilistic     │
+│  Contested detection:      score gap < threshold → disambiguation      │
+│  Lifecycle filter:         exclude ARCHIVED always                     │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-The moderator sees the pending submission in the queue: the decrypted plaintext, the contributor, the stack hint. This is unchanged.
-
-What's new: before the moderator approves, the system runs the new memory's keywords and embedding against the existing index. If similar memories already exist in the org (score above threshold), they're surfaced alongside the new submission.
-
-The moderator sees:
-
-- The new memory
-- 1-3 existing memories that cover similar ground
-- For each existing memory: its content, when it was approved, how often it's been retrieved
-
-The moderator makes one of three decisions:
-
-1. **Approve as distinct.** The new memory covers different ground despite keyword overlap. Both belong in the system.
-2. **Supersede.** The new memory is a better version of an existing one. Approve the new memory, deprecate the old one.
-3. **Deny as duplicate.** The existing memory already covers this. The new submission adds nothing.
-
-There is no AI making this decision. The moderator has domain knowledge the system doesn't. The system's job is to surface the comparison — the human's job is to judge it.
-
-### Optional: LLM-assisted comparison
-
-The moderator can ask the local LLM to compare the new memory against the similar existing ones. The LLM produces a structured diff: what's the same, what's different, which is more specific, which is more general. This is a convenience for moderators reviewing unfamiliar domains. It's not required. A moderator who knows the subject can skip it and judge directly.
-
-### What the moderator never does
-
-- Assign keywords manually (the LLM does this at approval)
-- Set keyword weights (the LLM assigns percentage weights)
-- Tune scoring parameters (that's the system's job)
-- Decide memory ranking (that happens at query time, not approval time)
-
-The moderator is a quality gate for content. The system handles indexing and retrieval.
+The chain layer governs *what survives over time*. The retrieval layer governs *what surfaces in any single query*. They communicate only through keyword weights — the chain produces them, the retrieval layer consumes them.
 
 ---
 
-## How It Works
+## The Chain Layer: Earned Trust Decay (D-4.2)
 
-### Recall flow (updated)
+The chain's only job in retrieval is to maintain per-keyword weights that reflect each memory's accumulated quality signal. Each serve and denial event updates the keyword's `serve_count` and `denial_count`. At every epoch boundary, weights decay according to a formula whose central insight is:
+
+> **The discriminator is `denial_rate = denial_count / (serve_count + denial_count)`, not raw counts.**
+
+A memory with 50 serves and 2 denials has a 4% denial rate. A memory with 2 serves and 2 denials has a 50% denial rate. Same raw counts, vastly different signal — and the formula treats them accordingly.
+
+**Per-epoch decay formula:**
+
+For each keyword, given `s` serves and `d` denials this epoch:
+
+- **Serve boost:** `+ serveD × s × (serveFloor + (1 − serveFloor) × trust²)` where `trust = 1 − denial_rate`
+- **Denial decay:** `− denialD × d × (denialFloor + (1 − denialFloor) × denial_rate)`
+- **Idle decay** (when `s = 0 AND d = 0`):
+  - If trust-earned (`serve_count ≥ trustMinServes AND denial_rate < trustMaxRate`): `− idleD × idleProtect`
+  - Otherwise: `− idleD × idleUntrusted`
+
+Memory archives (D-4.4) when every keyword weight ≤ `retrievalThreshold` (default 1500 bps).
+
+**Why the trust gate is the load-bearing mechanism:**
+
+The trust gate (`serve_count ≥ 1 AND denial_rate < 0.30`) decides whether a memory is protected from idle decay. This is what produces decoupling:
+
+- **Untested memories drain at full rate.** A memory that has never been served has not demonstrated value. Idle decay drains it at `idleD × idleUntrusted` (full base rate) until it archives. There is no path for a bad memory to survive by simply hiding.
+- **Tested-and-trusted memories barely decay.** A memory with ≥1 serve and low denial rate is protected at `idleD × idleProtect` (5% of base). Good memories stay alive across long quiet periods.
+- **Tested-but-denied memories lose trust.** A memory that accumulates denials sees its denial rate climb past `trustMaxRate`, loses the trust gate, and reverts to full idle decay — while also taking explicit denial decay on each denial event.
+
+The trust gate uses only fields already on chain per D-4.1. No new state, no new transactions.
+
+**Locked parameters (chain-governance changeable):**
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `serveD` | 220 bps | base serve boost |
+| `denialD` | 900 bps | base denial decay |
+| `idleD` | 600 bps | base idle decay |
+| `grace` | 20 chain epochs | no decay during bootstrap |
+| `trustMinServes` | 1 | minimum serves to earn trust |
+| `trustMaxRate` | 0.30 | denial rate ceiling to keep trust |
+| `idleProtect` | 0.05 | trusted idle decay multiplier |
+| `idleUntrusted` | 1.0 | unverified idle decay multiplier |
+| `serveFloor` | 0.4 | minimum fraction of serve boost |
+| `denialFloor` | 0.3 | minimum fraction of denial decay |
+| `retrievalThreshold` | 1500 bps | archive cutoff |
+
+---
+
+## The Retrieval Layer: Hybrid Ranking with Probabilistic Exploration (D-9.4)
+
+The retrieval engine produces a ranked list of memories to inject into the agent's context. The key change from naive top-N ranking is a two-phase position assignment:
+
+### Phase 1: Candidate scoring (D-9.3 unchanged)
+
+Candidate score per memory:
+
+```
+keyword_boost = Σ(query_keyword_weight × memory_keyword_weight)
+capped_boost  = min(γ × keyword_boost, δ × vector_score)
+final_score   = vector_score + capped_boost
+```
+
+Defaults: `γ = 0.1`, `δ = 0.15`. ARCHIVED memories are filtered out. Per-keyword weights from the Qdrant payload (mirror of chain state per D-9.1) drive the boost.
+
+### Phase 2: Position assignment (D-9.4 new)
+
+```
+Position 1: strict top-1 by final_score (deterministic system answer)
+Positions 2..N: softmax sample with temperature T
+                weight_i = (score_i / max_score)^(1 / T)
+                sample without replacement
+Default T = 0.7
+```
+
+**Why position 1 is deterministic:** the user always gets the system's best answer first. Predictability at position 1 is what makes the system feel reliable.
+
+**Why positions 2..N are probabilistic:** this is the fix for the ranking-loss death spiral. A memory that scored well but not best in this query still has a meaningful probability of being served. Across enough queries, every reasonable memory gets opportunities to earn the trust gate. Bad memories get those opportunities too — and lose them via denials.
+
+**Optional companion mechanism — new-memory boost.** For memories with age < `grace + boostWindow` chain epochs (default 30 epoch window), multiply `final_score` by `(1 + boostMult × (1 − age/boostWindow))`. Default `boostMult = 0.5`. Helps new memories survive their probationary period in growth-heavy orgs.
+
+### Phase 3: Contested detection and disambiguation (existing, unchanged)
+
+After position assignment, the hub computes the score gap between position 1 and position 2. If the gap is below a configured threshold (default 0.15), the memory pair is flagged `contested = true` in the response.
+
+When the MCP client sees `contested = true`, it calls the local LLM to read all returned memories and produce per-memory: a one-line summary, a "best when" statement, and the key tradeoff. The agent uses this disambiguation to ask the user 2-3 clarifying questions before picking a winner.
+
+The contested path remains the silent-failure-prevention mechanism: when the engine isn't confident enough to pick between near-tied answers, it surfaces that uncertainty through the agent rather than guessing.
+
+---
+
+## Recall Flow (end-to-end)
 
 ```
 Agent calls wevibe_recall(query)
         │
         ▼
-MCP extracts keywords + embedding from query
-(LLM-based extraction, not deterministic splitting)
+MCP extracts keywords + embedding from query (LLM-based)
         │
         ▼
-Hub queries Qdrant: vector similarity + keyword scoring
-Hub computes combined score per memory
-Hub detects contested: score gap between #1 and #2 < threshold
+Hub → Qdrant: vector similarity + keyword scoring (D-9.3)
         │
         ▼
-Hub returns: ranked results + contested flag
+Hub: candidate set ranked by final_score
         │
         ▼
-MCP decrypts all returned memories
+Hub: position 1 = strict top-1
+     positions 2..N = softmax sample by score (D-9.4)
         │
-        ├── NOT contested ──▶ Return top memory to agent. Done.
+        ▼
+Hub: contested check (score gap pos1 vs pos2 < 0.15?)
         │
-        └── CONTESTED ──▶ Call local LLM with all decrypted memories
-                          LLM produces: summary, best-when, tradeoffs
-                          MCP returns structured disambiguation to agent
-                                  │
-                                  ▼
-                          Agent asks user 2-3 clarifying questions
-                          Agent picks the right memory
-                          Agent proceeds with correct context
+        ▼
+Hub returns: { results[], contested: bool }
+        │
+        ▼
+MCP decrypts all returned memories (PRE re-encryption flow)
+        │
+        ├── NOT contested ──▶ Plugin renders approval UI with top result
+        │                     User accepts/denies/reports
+        │
+        └── CONTESTED ──────▶ MCP calls local LLM for per-memory summaries
+                              Plugin renders approval UI with disambiguation
+                              Agent asks user 2-3 clarifying questions
+                              User picks the right memory
+        │
+        ▼
+On Accept + Attest: plugin queues serve attestation (per-org pseudonymous key)
+On Deny: local blacklist + denial event queued
+        │
+        ▼
+Leader settles batches on chain: MsgSubmitServeBatch / MsgSubmitDenialBatch
+Chain applies Earned Trust decay (D-4.2) at next epoch boundary
+Hub mirrors chain state to Qdrant payload
 ```
 
-### Approval flow (updated)
+---
+
+## Approval Flow (memory submission, unchanged from prior ADR)
 
 ```
 Moderator decrypts pending submission
         │
         ▼
-System runs similarity query against existing index
+Hub runs similarity query against existing index
 using new memory's keywords + embedding
         │
         ├── No similar memories ──▶ Normal approval flow
@@ -133,83 +201,85 @@ using new memory's keywords + embedding
                                               │
                                               ▼
                                        On approve: LLM extracts keywords,
-                                       embedding computed, indexed as today
+                                       embedding computed, indexed in Qdrant
+                                       Memory enters chain via leader batch
 ```
 
-### Where each component has authority
-
-| Component | Decides | Does not decide |
-|-----------|---------|-----------------|
-| Hub | Scoring, ranking, contested detection | Memory content, which memory is "better" |
-| MCP client | Keyword extraction, embedding, disambiguation formatting, encryption/decryption | Scoring weights, what to surface |
-| Local LLM | Keyword generation, memory summaries, comparison analysis | Approval/denial, ranking |
-| Moderator | Content quality, duplicate resolution, supersession | Keyword weights, scoring parameters |
-| Agent | Which memory to apply based on user context, what to ask the user | What memories exist, how they scored |
-| User | Clarifying questions that determine which approach fits their situation | Everything else |
+The moderator can ask the local LLM to compare the new memory against similar existing ones. The LLM produces a structured diff: what's the same, what's different, which is more specific, which is more general. This is a convenience for moderators reviewing unfamiliar domains. It is not required.
 
 ---
 
-## What This Does
+## Component Authority
 
-1. **Prevents silent wrong-memory delivery.** When the system isn't confident, it says so — through the agent, not through warnings.
+| Component | Decides | Does not decide |
+|-----------|---------|-----------------|
+| Chain (`x/memory`) | Per-keyword weight evolution (D-4.2), archive transitions (D-4.4) | Which position a memory was served in, vector similarity |
+| Hub (`internal/retrieval`) | Candidate scoring (D-9.3), position assignment (D-9.4), contested detection | Memory content, decay formula, which memory is "better" |
+| MCP client | Keyword extraction, embedding, disambiguation formatting, encryption/decryption | Scoring, ranking, what to surface |
+| Local LLM | Keyword generation, memory summaries, comparison analysis | Approval/denial, ranking |
+| Moderator | Content quality, duplicate resolution, supersession | Keyword weights, scoring parameters |
+| Agent | Which memory to apply based on user context, what clarifying questions to ask | What memories exist, how they scored |
+| User | Clarifying questions; Accept/Deny/Report decisions | Everything else |
 
-2. **Prevents contradictory memories from accumulating.** Moderators see similar existing memories before approving new ones. Duplicates and near-duplicates get caught at the gate.
+---
 
-3. **Uses the user's context to break ties the scoring engine can't.** "Are you on a VPS or cloud?" is worth more than 0.03 points of cosine similarity. The user already has this context. Asking costs 10 seconds. Not asking costs 30 minutes of wrong advice.
+## What This Architecture Achieves
 
-4. **Works across every MCP client identically.** The disambiguation is text returned by the tool. Claude Code, OpenCode, Codex, Cursor — they all read text, they all know how to ask clarifying questions. No client-specific integration needed.
+**Empirical performance across 9 org scenarios × 7 seeds × 300 epochs:**
 
-5. **Keeps WeVibe invisible in the common case.** Clear winner → silent injection. Only contested results trigger the disambiguation path. Most recalls won't be contested.
+| Configuration | Avg Gap (good_surv − bad_persist) | Good Survival | Bad Persistence | False-Archive of Good |
+|---|---|---|---|---|
+| Previous D-4.2 (flat-count decay) + deterministic top-N | 15pp | 68% | 54% | 30% |
+| New D-4.2 (Earned Trust) + deterministic top-N | 78pp | 94% | 16% | 5.5% |
+| **New D-4.2 + D-9.4 (probabilistic top-N)** | **79.5pp** | **94.5%** | **15.1%** | **5.5% (16.4% in cold storage)** |
 
-## What This Does Not Do
+5× improvement in decoupling, 5.5× reduction in good-memory false-archive. Robustness (worst-case scenario gap) improves from 0.4pp to 68.2pp.
 
-1. **Does not replace the scoring engine.** Keyword extraction quality, α/β weights, and embedding quality still matter. They determine what's contested vs. clear. Better scoring means fewer contested results, which means fewer user interruptions.
+**Specific failure modes resolved:**
 
-2. **Does not automate moderation decisions.** The LLM can compare memories. It cannot decide which one the org should keep. That's a domain judgment that requires human authority.
+1. **Silent wrong-memory delivery** — contested detection plus disambiguation
+2. **Bad memory accumulation** — Earned Trust decay archives unproductive memories
+3. **Good memory ranking-loss death** — probabilistic position assignment gives every reasonable memory chances
+4. **Stale memories outliving relevance** — idle decay still applies, but only to unverified memories; trusted ones survive long quiet periods
 
-3. **Does not guarantee the right memory wins.** If the user answers clarifying questions wrong, or if the agent misinterprets the disambiguation guidance, the wrong memory can still be applied. This reduces the failure rate — it doesn't eliminate it.
+---
 
-4. **Does not handle memory staleness.** A memory that was correct 6 months ago might be wrong today (API changed, library deprecated, better approach discovered). Contested detection catches memories that disagree at the same point in time. It doesn't catch memories that were once correct and are now outdated. That's a separate problem.
+## What This Architecture Does NOT Do
 
-5. **Does not work without a capable local LLM.** The disambiguation path requires qwen3.5-128k (or equivalent) running on Ollama. If Ollama is down, the system falls back to today's behavior: return top result, no disambiguation. This is acceptable degradation — the system is no worse than it is right now.
+1. **Does not replace human moderation.** The chain governs survival; moderators govern admission. Decay cannot replace the quality gate at submission time.
+
+2. **Does not handle topic drift.** A memory that was correct under React 17 and is wrong under React 19 still requires human supersession (D-MATCHING-2: moderation similarity flow). Decay catches contradiction at the same point in time; it does not catch deprecation across time.
+
+3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's three-button UX (Accept+Attest, Accept Private, Deny) is the data source. Orgs with `serve_attestation_required = false` and few denials will see slower convergence.
+
+4. **Does not eliminate contested ambiguity.** Probabilistic exploration breaks the ranking-loss death spiral but does not make every query unambiguous. The contested path remains the safety net for near-tied scores.
+
+5. **Does not work without a capable local LLM for contested cases.** The disambiguation path requires qwen3.5-128k or equivalent. If the local LLM is unavailable, the system degrades to returning the top result without disambiguation — same behavior as a clear-winner query.
 
 ---
 
 ## What To Watch For
 
-### Short term (Sprint 13-14)
+### Short term
 
-- **Contested threshold tuning.** Starting at 0.15 score gap. Too tight = everything is contested, user gets asked questions on every recall (annoying). Too loose = real conflicts slip through silently. The adversarial benchmark measures this directly — run it at different thresholds, find where Gold@1 peaks.
+- **Trust-gate empirical validation.** The `trustMinServes = 1, trustMaxRate = 0.30` defaults were tuned against synthetic scenarios. Production data may shift these. Both are chain-governance parameters, changeable via vote without a code release.
 
-- **Disambiguation LLM latency.** The local LLM call adds 3-5 seconds to contested recalls. Monitor what percentage of recalls trigger it. If >20% of recalls are contested, the scoring engine needs work — that many ties means the keywords aren't discriminating enough.
+- **Probabilistic exploration temperature.** `T = 0.7` was the sweet spot in simulation. Lower T (toward 0.3) approaches deterministic; higher T (toward 1.0) approaches uniform. Monitor production query distribution; tune via hub config without consensus changes.
 
-- **Moderation UX for similarity.** The similarity results need to be useful, not noisy. If every new memory surfaces 5 "similar" results that are actually unrelated, moderators will ignore the feature. Start with a high similarity threshold (0.6+) and lower it based on moderator feedback.
+- **Contested threshold tuning.** Score gap = 0.15 default. If contested rate climbs above 20% in production, the scoring engine (D-9.3) needs work — too many ties signals keywords aren't discriminating enough.
 
-### Medium term (post-launch)
+### Medium term
 
-- **Memory supersession chains.** When memory B supersedes memory A, and later memory C supersedes memory B, the system needs to handle this cleanly. Deprecated memories should not appear in recall results or similarity comparisons. Track supersession as a first-class relationship, not just a deprecation flag.
+- **Disambiguation LLM latency.** Adds 3-5 seconds to contested recalls. Monitor what percentage of recalls trigger it. If high, raise the contested threshold or invest in faster local LLM.
 
-- **Contested patterns as signal.** If the same query triggers contested results repeatedly across different users, that's a signal that the org needs to consolidate those memories. Surface this to the org leader: "These 3 memories keep competing. Consider merging them or adding differentiating keywords."
+- **Memory supersession chains.** When memory B supersedes A and later C supersedes B, the lineage must be tracked so deprecated memories don't appear in recall or similarity comparisons.
 
-- **Agent capability variance.** The disambiguation guidance is text that a capable agent interprets. GPT-4.1 and Claude will ask good clarifying questions. Qwen3 Coder 30B might not. Consider a "disambiguation quality" metric in the benchmark: given contested results and guidance, does the agent ask the right questions?
+- **Contested patterns as org signal.** Repeated contested results on the same query across users is a signal the org should consolidate memories. Surface this to leaders as a curation hint.
 
-### Long term (scale)
+### Long term
 
-- **Contested rate vs. memory count.** As the org grows from 100 to 10,000 memories, the contested rate will rise because more memories means more near-misses. If contested rate grows linearly with memory count, the disambiguation path becomes the primary experience rather than the exception. At that point, the system needs better pre-filtering (keyword gates before vector search) or hierarchical memory organization (topics/categories) to reduce the candidate set before scoring.
+- **Contested rate vs memory count.** As an org grows from 100 to 10,000 memories, near-misses multiply. If contested rate grows linearly with memory count, the disambiguation path becomes the primary experience rather than the exception. At that point: better pre-filtering (vocabulary tightening), hierarchical memory organization (topics), or selective contested gating (only on high-stakes queries).
 
-- **Cross-org memory sharing.** If orgs ever share memories (federation), the contested detection becomes critical — memories from different teams with different conventions will frequently conflict. The disambiguation path is the interface between "our way" and "their way."
+- **Cross-org memory sharing.** If orgs federate, contested detection becomes the interface between "our way" and "their way." Currently out of scope.
 
----
-
-## Implementation Scope
-
-This ADR covers the architectural decisions. Implementation is split across COs:
-
-- **CO-078:** LLM-based query keyword extraction (replaces deterministic splitter in wevibe_recall/wevibe_context)
-- **CO-079:** Extraction prompt tuning (mandatory keyword categories + few-shot examples)
-- **CO-080:** Hub contested detection (score gap threshold, contested flag in response)
-- **CO-081:** MCP disambiguation flow (local LLM comparison when contested, structured response format)
-- **CO-082:** Moderation similarity detection (pre-approval similarity query, side-by-side display)
-- **CO-083:** Adversarial benchmark re-run (full measurement after all changes)
-
-Standing rules R-01 through R-14 apply to all COs. R-14 (benchmark before and after) applies to any CO that changes scoring behavior.
+- **Topic-aware consumer modeling.** The Unique-Consumer signal (count of distinct serve-pubkeys per memory) was tested as a candidate trust signal and rejected in our current simulation because consumers were modeled as topic-agnostic. In production, consumers do have topic preferences, and distinct-consumer count may genuinely add discrimination. Worth re-testing with production data before committing chain primitives to it.

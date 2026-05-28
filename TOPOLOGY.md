@@ -1257,9 +1257,9 @@ wevibe-chain x/serve MsgSubmitDenialBatch handler
        │
        │ Per accepted denial entry:
        │   StoredDenialAttestation persisted (keyed org_id / epoch_id / memory_hash)
-│   Calls memoryKeeper.ApplyDenialDecay → −500 bps on all keywords
-        │     of that memory, floored at 0.0; transitions to MEMORY_STATE_ARCHIVED
-        │     if all weights reach zero.
+│   Calls memoryKeeper.ApplyEarnedTrustDecay (D-4.2): updates per-keyword
+        │     weight using denial_rate-scaled decay; transitions to
+        │     MEMORY_STATE_ARCHIVED if all weights ≤ retrievalThreshold (1500 bps).
         │ Chain emits `denial_batch_submitted` event {org_id, submitter, epoch,
         │   accepted_count, rejected_count, block_height} — queryable via CometBFT
         │   `tx_search` as `denial_batch_submitted.org_id='<org_id>'` (CO-016).
@@ -1280,7 +1280,7 @@ payout_per_memory counted (not payout_per_serve)
 ```
 
 **Chain module changes (CO-225):**
-- `x/memory`: dual-vector decay params (idle=50bps, negative=500bps), `confidence_bps=0` → `ARCHIVED`
+- `x/memory`: Earned Trust decay params (D-4.2: serveD=220, denialD=900, idleD=600, grace=20, trustMinServes=1, trustMaxRate=0.30, idleProtect=0.05, idleUntrusted=1.0, retrievalThreshold=1500); archive when all keyword weights ≤ retrievalThreshold
 - `x/serve`: `MsgSubmitDenialBatch`, `StoredDenialAttestation` (keyed org/epoch/memory-hash)
 - `x/emissions`: `ProcessOrgPayouts` rewrite — `payout_per_memory` replaces `payout_per_serve`, counts approved memories per contributor
 
