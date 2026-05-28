@@ -279,6 +279,10 @@ D-4.2 lock and are derived from GO-005's verbatim sim extraction.
 specification. Where this prose and the sim diverge, the sim wins.
 Implementation must reproduce sim behavior.
 
+**Chain-side state extension.** The per-keyword `matchedThisEpoch` gate in
+this section requires per-serve matched-keyword tracking added to `x/serve`
+in CO-031 Rev 2 (2026-05-28). See "Per-serve matched-keyword tracking" below.
+
 **Trust computation.** Trust is computed inline at the start of each
 applyDecay invocation. Not stored, not cached, not a persisted field.
 Inputs are memory-level lifetime counters:
@@ -357,6 +361,91 @@ indexed queries `getMemoryServeCount(ctx, orgID, cidHex, currentEpoch)` and
 keyword set `kwIdsMatched` is derived from the same per-epoch index — every
 serve event records the matched-keyword IDs at submission time; idle decay
 reads the union for the epoch.
+
+**Per-serve matched-keyword
+tracking (added 2026-05-28 via CO-031 R-ABORT resolution, Option A).**
+The per-keyword `matchedThisEpoch` gate requires the chain to know which
+keywords were matched by the query that drove each serve (and the
+corresponding denial, if any). This information is computed hub-side at
+query time but is not currently persisted on-chain. Option A extends
+`x/serve` to carry this state.
+
+**Proto extensions to `x/serve`:**
+
+    // proto/wevibe/serve/v1/tx.proto, message ServeEntry:
+    //   add field:
+    repeated string matched_keywords = <next>;
+
+    // proto/wevibe/serve/v1/state.proto, message StoredServeAttestation:
+    //   add field:
+    repeated string matched_keywords = <next>;
+
+The keyword strings are the same `Keyword` identifier used in
+`KeywordWeight.Keyword` (D-4.1). Order is not significant; the set semantics
+apply (duplicates are equivalent to a single match for that keyword).
+
+**Hub submission.** When the hub submits a serve event, it includes the
+exact matched-keyword set used to compute that serve's `rawScore`. Per the
+sim source `wevibe-sim/ranking-fix.js:184`, this is the intersection of the
+memory's keywords and the query's keyword set:
+
+    matched_keywords = [k.Keyword for k in memory.Keywords if k.Keyword ∈ query_keywords]
+
+Hub submission of an empty `matched_keywords` array is invalid — every
+serve has at least one matched keyword by construction (`rawScore > 0`
+filter at sim line 167). The chain validates `len(matched_keywords) > 0`
+on serve TX submission and rejects empty sets as malformed.
+
+**Denial parity.** A denial event is conditional on a preceding serve event.
+The denial inherits the serve's `matched_keywords` — the same set used to
+serve the memory is the set negated by the denial. The hub does not
+re-compute matched keywords on denial submission; it references the
+preceding serve. The chain enforces this by requiring the denial TX to
+reference (by `nullifier` or `serve_key`) the originating serve.
+
+**Keeper method.** A new method on the serve keeper exposes the union of
+matched keywords for a memory across an epoch:
+
+    GetMatchedKeywordsForEpoch(ctx, orgID, cidHex, epoch) (map[string]bool, error)
+
+The map keys are keyword strings; the value is always `true`. (The map
+type is chosen for O(1) per-keyword lookup inside `applyDecay`'s
+per-keyword loop.) The method aggregates over all serve attestations for
+this memory in this epoch and returns the union.
+
+If a memory has had no serves this epoch, the method returns an empty
+non-nil map. `applyDecay` treats an empty map as the "no matched keywords"
+case — every keyword takes the `!matched` branch, which is the pure
+idle-decay path.
+
+**Memory keeper integration.** `x/memory/keeper/lifecycle.go` `applyDecay`
+consumes `GetMatchedKeywordsForEpoch` via the serve keeper interface
+declared in `x/memory/types/expected_keepers.go`:
+
+    type ServeKeeperExpected interface {
+        GetMemoryServeCountForEpoch(ctx, orgID, cidHex, epoch) (uint64, error)
+        GetMemoryDenialCountForEpoch(ctx, orgID, cidHex, epoch) (uint64, error)
+        GetMatchedKeywordsForEpoch(ctx, orgID, cidHex, epoch) (map[string]bool, error)
+    }
+
+The `kwIdsMatched` parameter to `applyDecay` (per the formula in this
+section above) is the return value of `GetMatchedKeywordsForEpoch`.
+
+**Cross-references.**
+- D-4.1: `KeywordWeight.Keyword` is the canonical keyword identifier
+  consumed by matched-keyword tracking.
+- D-13.9: Pre-MVP wipe acceptable for the new `matched_keywords` fields
+  and the resulting epoch-indexed state.
+
+**Empirical contract.** This expansion preserves the 79.5pp decoupling-gap
+result. The per-keyword gate is the mechanism that produces it; without
+per-serve matched-keyword tracking, the gate cannot be executed faithfully.
+
+**Implementation source.** CO-031 Rev 2 (2026-05-28) implements this in
+`proto/wevibe/serve/v1/tx.proto`, `proto/wevibe/serve/v1/state.proto`,
+`x/serve/keeper/msg_server.go`, `x/serve/keeper/keeper.go`,
+`x/memory/types/expected_keepers.go`, and `x/memory/keeper/lifecycle.go`.
+Pre-MVP wipe per D-13.9; no migration.
 
 **Locked parameter values (binding, all governance-changeable):**
 
