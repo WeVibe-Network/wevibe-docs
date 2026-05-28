@@ -363,27 +363,6 @@ Moderators see sanitization findings surfaced by the extraction pipeline and pre
 
 **Why leader triggers the chain TX:** The on-chain commitment is a permanent public record. Only the org leader — authenticated via wallet signature, not delegate key — can trigger this consequential action. If the chain TX fails, nothing changes (atomic: chain TX must confirm before Qdrant delete).
 
-### UX Flow: Chain Commit Notifications
-
-```
-1. Moderator opens dashboard → top-bar activity feed shows real-time notifications
-2. Category "chain_commit_involving_you" fires whenever a leader commits a TX that lists this moderator's pubkey in `approvers[]` or `upholding_moderators[]`
-3. Notification body: "Memory [hash] was committed to chain in [org] by leader [name]. You were listed as approver." + link to chain TX
-4. Click notification → opens side-by-side view: chain record (immutable, from `chain_commit_events` table) vs hub's `vote_records` history (operational, from hub's vote tally)
-5. If discrepancy (moderator's pubkey in chain `approvers[]` but no matching approval vote in hub records): alarm state, user can raise public flag against the leader
-```
-<!-- See DECISIONS.md D-13.3 --><strong>Why chain_commit_events vs vote_records divergence matters:</strong> The chain record is immutable and proves the moderator's pubkey was included. The hub's vote_records are the operational log of what the moderator actually voted. Divergence suggests either a governance issue (leader included a moderator who didn't vote) or a synchronization issue. The alarm state lets the moderator take public action. See DECISIONS.md D-13.3.
-
-### UX Flow: Approval Overturn Alert
-
-```
-1. When a memory the moderator previously approved is later upheld-reported, moderator receives `your_approval_was_overturned` notification
-2. Notification body: "Memory [hash] you approved in [org] was deleted via upheld report on [date]. Reason: [reason]."
-3. Click → view the upheld report record (chain) + moderator's own approval record (hub)
-4. Moderator's profile now shows `approvals_later_upheld_count` incremented
-```
-<!-- See DECISIONS.md D-13.7 --><strong>Why approvals_later_upheld_count matters:</strong> This counter is a direct accountability signal. A moderator with a high ratio of approvals-that-were-later-upheld vs total approvals is a quality risk. It feeds into the chain's `ModeratorProfile` and is queryable via `UpheldReportsByModerator`. See DECISIONS.md D-13.7.
-
 ### API Surfaces Required
 
 | Surface | Endpoint / Module | Purpose |
@@ -890,7 +869,7 @@ Real-time aggregated activity stream across all orgs a user belongs to.
 | Layer | Lives In | Contains | Owner |
 |-------|----------|----------|-------|
 | Immutable provenance | wevibe-chain | Aggregates, indices, on-chain events keyed by wallet pubkey | Chain (cryptographic) |
-| Operational queue | wevibe-hub | Pending submissions, votes, batches, chain_commit_events, vote_records | Hub operator (WeVibe-hosted OR self-hosted) |
+| Operational queue | wevibe-hub | Pending submissions, votes, batches, BlockResults (hub reads from CometBFT block events; chain_commit_events table dropped Sprint 31) | Hub operator (WeVibe-hosted OR self-hosted) |
 | Display layer | Social Graph Service (separate container/VPS) | Wallet → display name + avatar + bio + linked socials | Separate Docker container, separate VPS |
 
 ### Chain-Side Data
@@ -904,7 +883,6 @@ Real-time aggregated activity stream across all orgs a user belongs to.
 
 ### Hub-Side Data
 
-- `chain_commit_events` — every relevant chain TX recorded by ChainWatcher
 - `vote_records` — operational voting history (what moderators actually voted)
 - `published_plaintext` — off-chain storage for oversized upheld memories (verified against on-chain hash)
 
@@ -1658,7 +1636,7 @@ Sessions page submitted memories one at a time via individual POST requests.
 | Severity | Open Count | Items |
 |----------|------------|-------|
 | CRITICAL | 0 | (GAP-CHAIN-1 closed by CO-009) |
-| MAJOR | 3 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-VR-1 (canonical body overhaul + three bug fixes per DMO-029) |
+| MAJOR | 2 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
 | **Total OPEN** | **9** | |

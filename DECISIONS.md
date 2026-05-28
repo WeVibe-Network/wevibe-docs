@@ -32,7 +32,7 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 15. [Sprint 29 Chain Foundation Decisions](#15-sprint-29-chain-foundation-decisions)
 16. [Pattern B Tier 2 Verification Anchor (Current Design)](#16-pattern-b-tier-2-verification-anchor-current-design)
 
-**New decisions in this update:** D-13.1 (Moderator Pubkey Persistence on Memory), D-13.2 (Upheld Report Plaintext + Ciphertext + Capsule Triplet), D-13.3 (Hub-Side Manipulation Alarm via chain_commit_events), D-13.4 (Social Graph Data On-Chain, Display Layer Separate), D-13.5 (Reputation Active at Genesis, Additive-Only), D-13.6 (Memory State Cleanup — 7-State Lifecycle Locked at Code Level), D-13.7 (Cross-Module Event Wiring), D-13.8 (Reputation as Tiering Signal — total_approved_memories), D-13.9 (Chain Wipe Acceptable Pre-MVP), D-13.12 (Chain Broadcast via Comet RPC), D-13.13 (Chain Pruning + IAVL Dev Settings); updates to D-2.2 (Umbral container) and D-13.10 (only host exception is Ollama).
+**New decisions in this update:** D-13.1 (Moderator Pubkey Persistence on Memory), D-13.2 (Upheld Report Plaintext + Ciphertext + Capsule Triplet), D-13.3 (Hub-Side Manipulation Alarm via BlockResults), D-13.4 (Social Graph Data On-Chain, Display Layer Separate), D-13.5 (Reputation Active at Genesis, Additive-Only), D-13.6 (Memory State Cleanup — 7-State Lifecycle Locked at Code Level), D-13.7 (Cross-Module Event Wiring), D-13.8 (Reputation as Tiering Signal — total_approved_memories), D-13.9 (Chain Wipe Acceptable Pre-MVP), D-13.12 (Chain Broadcast via Comet RPC), D-13.13 (Chain Pruning + IAVL Dev Settings); updates to D-2.2 (Umbral container) and D-13.10 (only host exception is Ollama).
 
 ---
 
@@ -900,6 +900,8 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 
 **Decision:** All moderators who voted to approve a memory are stored permanently on `StoredMemoryCommitment` as `approvers []string`. The previous single-string `approver` field is removed. `MsgApproveMemory` carries `approvers[]` plus `committing_leader_pubkey`.
 
+**D-CO030-APPROVERS:** The `approvers` repeated field in `MsgApproveMemory` has been deleted (CO-030). Co-attestation was removed in the Pattern B redesign. Proto field retained temporarily for backward compatibility through Sprint 31; deleted in Sprint 32 with chain wipe per D-13.9.
+
 **Why:**
 - **Multi-mod quorum accountability requires preserving all participants.** For orgs with `required_approvals > 1`, only recording the final approver who triggered the chain commit lets the other quorum members escape accountability if a memory later turns out to be harmful. The whole point of the moderator social graph showing "moderator X approved Y memories that were later upheld-reported" depends on every approver being on-chain.
 - **Single-mod orgs are not affected.** With `required_approvals = 1`, the array contains one entry. No semantic change for them.
@@ -931,17 +933,16 @@ For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the
 - **4KB cap is economically considered.** Upheld reports are rare and consequential — paying 10-40× normal approval gas is acceptable. 4KB covers ~95% of memories based on typical extraction outputs.
 - **Oversized fallback preserves the property.** For large memories, the on-chain hash is evidence of deletion. Anyone with the off-chain plaintext can verify against it via standard sha256.
 
-**`VerifyUpheldReport` is a query, not a write.** No gas cost for verification — anyone can audit any leader at any time, including re-running the SP1 verifier against the original commit's proof for cryptographically rigorous verification.
+**`VerifyUpheldReport` is a query, not a write.** No gas cost for verification — anyone can audit any leader at any time. Verification reconstructs the canonical memory body from on-chain fields (plaintext, ciphertext, capsule, plaintext_hash, salt), recomputes the sha256 hash, and verifies the contributor signature. This replaces the SP1 verifier approach; canonical-body verification is defined in D-VR-1 through D-VR-8.
 
 ---
 
-### D-13.3: Hub-Side Manipulation Alarm via chain_commit_events
+### D-13.3: Hub-Side Manipulation Alarm via BlockResults
 
 **Decision:** The check-and-balance against leader manipulation of approval or report TXs is NOT chain-side runtime validation. It is a hub-side event log + moderator notification:
 
-- New `chain_commit_events` PostgreSQL table on every hub instance records every chain TX involving moderators (`MsgApproveMemory` and `MsgReportMemory`).
-- Hub `ChainWatcher` subscribes to CometBFT blocks, parses relevant TXs, writes events idempotently with restart-safety via a `watcher_state` table.
-- For each moderator listed in `approvers[]` (approval) or `upholding_moderators[]` (upheld report): emit notification through D-12.9 activity feed channel.
+- Hub `ChainWatcher` subscribes to CometBFT BlockResults (not a PostgreSQL table), parses relevant TX events, writes events idempotently with restart-safety via a `watcher_state` table.
+- Note: `chain_commit_events` PostgreSQL table was dropped Sprint 31 (CO-030). Hub now reads directly from CometBFT block events via BlockResults.
 - For approval-overturn case (memory previously approved → later upheld-reported): notify the ORIGINAL approving moderators that their approval was overturned.
 - Dashboard exposes side-by-side view: chain record vs hub's vote_records history. Visible discrepancy = the manipulation alarm.
 
@@ -961,7 +962,7 @@ For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the
 | Layer | Lives In | Contains | Owner |
 |---|---|---|---|
 | Immutable provenance | wevibe-chain | Aggregates, indices, on-chain events with wallet pubkeys | Chain (cryptographic) |
-| Operational queue | wevibe-hub | Pending submissions, votes, batches, chain_commit_events | Hub operator (WeVibe-hosted OR self-hosted) |
+| Operational queue | wevibe-hub | Pending submissions, votes, batches, BlockResults (hub reads from CometBFT block events) | Hub operator (WeVibe-hosted OR self-hosted) |
 | Display layer | Social Graph Service | Wallet → display name + avatar + bio + linked socials (future) | Separate Docker container, separate VPS |
 
 The Social Graph Service is a separate scoped CO (not part of CO-245). Both WeVibe-hosted hubs and self-hosted hubs consume it for human-readable names. Mandatory display name registration before a user can be accepted into moderator role (enforced at the hub-side "accept moderator role" handler — also part of the future Social Graph Service CO).
@@ -1020,6 +1021,8 @@ The Social Graph Service is a separate scoped CO (not part of CO-245). Both WeVi
 - **org keeper** — bump aggregate counters (`total_committed_memories`, `total_upheld_reports`, `total_epoch_rotations`, `last_activity_epoch`)
 - **reputation keeper — contributor profile** — bump `total_approved_memories`, `total_reports_upheld_against`, `serves_received`, `denials_received`
 - **reputation keeper — moderator profile** — for each pubkey in `approvers[]`: bump `total_approvals`, append to `approved_memory_hashes[]` (bounded), bump `approvals_later_upheld_count` on upheld report
+
+**D-CO030-APPROVERS:** The `approvers` repeated field in `MsgSubmitMemoryBatch` has been deleted (CO-030). Co-attestation was removed in the Pattern B redesign. See D-CO030-APPROVERS note in D-13.1.
 - **reputation keeper — leader profile** — bump `total_chain_commits_signed` on approval; `total_upheld_reports_committed` on upheld report; append epoch rotations
 
 Cross-module dependencies are explicit: memory module's keeper struct holds `orgKeeper` and `reputationKeeper` interfaces. App-level wiring in `app/app.go` injects these at keeper construction.
@@ -1539,7 +1542,7 @@ DMO-028 locked the ZK pathway. CO-028 spike validated and then unblocked walking
 **Decision:**
 - Per-leader RPC-queryable activity aggregation is deferred to a future sprint.
 - This deferral is intentional to avoid rework before the leader action taxonomy is locked.
-- `chain_commit_events` already stores raw `committing_leader_pubkey` data; the deferred scope is the query/API surface and formal action definition.
+- BlockResults (hub reads from CometBFT block events) already provides raw `committing_leader_pubkey` data; the deferred scope is the query/API surface and formal action definition.
 
 ---
 
