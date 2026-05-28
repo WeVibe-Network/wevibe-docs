@@ -25,9 +25,10 @@ These two failures live at different layers of the system. Both fixes ship indep
 │  CHAIN LAYER — authoritative state                                     │
 │                                                                        │
 │  Per memory, per keyword: { weight (bps), serve_count, denial_count }  │
-│  Per-epoch decay formula:  D-4.2 Earned Trust                          │
-│  Per-event updates:        MsgSubmitServeBatch, MsgSubmitDenialBatch    │
-│  Terminal:                 archive when all keyword weights ≤ 1500 bps │
+│  Per memory totals:        { serve_count_total, denial_count_total }    │
+│  Canonical decay formula:  D-4.2 Earned Trust (applyDecay)              │
+│  Event source:             matched_keywords from serve/denial batches    │
+│  Terminal:                 archive when all keyword weights ≤ 1500 bps   │
 └────────────────────────────────────────────────────────────────────────┘
                                   ▲
                                   │ chain → hub sync
@@ -49,7 +50,7 @@ The chain layer governs *what survives over time*. The retrieval layer governs *
 
 ## The Chain Layer: Earned Trust Decay (D-4.2)
 
-The chain's only job in retrieval is to maintain per-keyword weights that reflect each memory's accumulated quality signal. Each serve and denial event updates the keyword's `serve_count` and `denial_count`. At every epoch boundary, weights decay according to a formula whose central insight is:
+The chain's only job in retrieval is to maintain per-keyword weights that reflect each memory's accumulated quality signal. Each serve and denial event updates keyword counters only for the keywords that actually matched that retrieval (`matched_keywords` from `ServeEntry` / `StoredServeAttestation`). Event handlers execute canonical `applyDecay` immediately; epoch-end processing runs an idle sweep only for memories with no events in that epoch. The central discriminator remains:
 
 > **The discriminator is `denial_rate = denial_count / (serve_count + denial_count)`, not raw counts.**
 
@@ -75,7 +76,7 @@ The trust gate (`serve_count ≥ 1 AND denial_rate < 0.30`) decides whether a me
 - **Tested-and-trusted memories barely decay.** A memory with ≥1 serve and low denial rate is protected at `idleD × idleProtect` (5% of base). Good memories stay alive across long quiet periods.
 - **Tested-but-denied memories lose trust.** A memory that accumulates denials sees its denial rate climb past `trustMaxRate`, loses the trust gate, and reverts to full idle decay — while also taking explicit denial decay on each denial event.
 
-The trust gate uses only fields already on chain per D-4.1. No new state, no new transactions.
+The trust gate uses on-chain per-memory lifetime totals (`serve_count_total`, `denial_count_total`) and per-keyword counters. No fallback path exists for missing matched keywords: serve submissions with empty `matched_keywords` are invalid and rejected by chain validation.
 
 **Locked parameters (chain-governance changeable):**
 
@@ -115,21 +116,33 @@ Defaults: `γ = 0.1`, `δ = 0.15`. ARCHIVED memories are filtered out. Per-keywo
 
 ```
 Position 1: strict top-1 by final_score (deterministic system answer)
-Positions 2..N: softmax sample with temperature T
-                weight_i = (score_i / max_score)^(1 / T)
+Positions 2..N: tempered power-law sample with temperature T
+                w_i = (score_i / max_score)^(1 / T)
                 sample without replacement
 Default T = 0.7
 ```
+
+Hub runtime knobs (wevibe-hub env vars):
+
+- `RETRIEVAL_TEMPERATURE` (default `0.7`)
+- `RETRIEVAL_NEW_MEM_BOOST_MULT` (default `0.5`)
+- `RETRIEVAL_NEW_MEM_BOOST_WINDOW` (default `30`)
+
+With chain `grace = 20`, the boost window used in ranking is `window = grace + boostWindow = 50` epochs.
 
 **Why position 1 is deterministic:** the user always gets the system's best answer first. Predictability at position 1 is what makes the system feel reliable.
 
 **Why positions 2..N are probabilistic:** this is the fix for the ranking-loss death spiral. A memory that scored well but not best in this query still has a meaningful probability of being served. Across enough queries, every reasonable memory gets opportunities to earn the trust gate. Bad memories get those opportunities too — and lose them via denials.
 
-**Optional companion mechanism — new-memory boost.** For memories with age < `grace + boostWindow` chain epochs (default 30 epoch window), multiply `final_score` by `(1 + boostMult × (1 − age/boostWindow))`. Default `boostMult = 0.5`. Helps new memories survive their probationary period in growth-heavy orgs.
+**New-memory boost (enabled by default).** For memories with age < `window` chain epochs, multiply query score by:
+
+`query_score = raw_score × (1 + boostMult × max(0, 1 − age/window))`
+
+where `window = grace + boostWindow`.
 
 ### Phase 3: Contested detection and disambiguation (existing, unchanged)
 
-After position assignment, the hub computes the score gap between position 1 and position 2. If the gap is below a configured threshold (default 0.15), the memory pair is flagged `contested = true` in the response.
+After position assignment, the hub computes the score gap between position 1 and position 2. If the gap is below a configured threshold (default 0.20), the memory pair is flagged `contested = true` in the response.
 
 When the MCP client sees `contested = true`, it calls the local LLM to read all returned memories and produce per-memory: a one-line summary, a "best when" statement, and the key tradeoff. The agent uses this disambiguation to ask the user 2-3 clarifying questions before picking a winner.
 
@@ -153,7 +166,7 @@ Hub: candidate set ranked by final_score
         │
         ▼
 Hub: position 1 = strict top-1
-     positions 2..N = softmax sample by score (D-9.4)
+     positions 2..N = tempered power-law sample by score (D-9.4)
         │
         ▼
 Hub: contested check (score gap pos1 vs pos2 < 0.15?)
@@ -174,11 +187,13 @@ MCP decrypts all returned memories (PRE re-encryption flow)
         │
         ▼
 On Accept + Attest: plugin queues serve attestation (per-org pseudonymous key)
+                    including matched_keywords intersection (required)
 On Deny: local blacklist + denial event queued
         │
         ▼
 Leader settles batches on chain: MsgSubmitServeBatch / MsgSubmitDenialBatch
-Chain applies Earned Trust decay (D-4.2) at next epoch boundary
+Chain applies Earned Trust decay (D-4.2) on serve/denial events,
+plus idle sweep for no-event memories at epoch end
 Hub mirrors chain state to Qdrant payload
 ```
 
@@ -254,7 +269,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 4. **Does not eliminate contested ambiguity.** Probabilistic exploration breaks the ranking-loss death spiral but does not make every query unambiguous. The contested path remains the safety net for near-tied scores.
 
-5. **Does not work without a capable local LLM for contested cases.** The disambiguation path requires qwen3.5-128k or equivalent. If the local LLM is unavailable, the system degrades to returning the top result without disambiguation — same behavior as a clear-winner query.
+5. **Does not work without a capable local LLM for contested cases.** The disambiguation path requires qwen3.5-128k or equivalent. There is no fallback ranking mode for contested queries: if disambiguation cannot run, contested recall cannot complete safely.
 
 ---
 
