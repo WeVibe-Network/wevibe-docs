@@ -267,6 +267,131 @@ The Earned Trust formula decouples them by three structural moves:
 
 **Note on grace duration:** The 20-epoch grace period is measured in **chain epochs** (D-4.7), not wall time. With a 12-hour chain epoch, 20 epochs ≈ 10 days. With a 24-hour chain epoch, 20 epochs ≈ 20 days. Verify against actual chain epoch configuration via `wevibed query epochs epoch-info wevibe_epoch`.
 
+#### D-4.2 — Implementation Clarifications (2026-05-28 GO-005 synthesis)
+
+The Earned Trust Decay Model is specified by the canonical sim source at
+`wevibe-sim/ranking-fix.js`, function `applyDecay` (lines 113–141), helpers
+`makeMemory` (lines 40–48), and the per-epoch loop in `simulate` (lines
+154–199). The following clarifications resolve ambiguities in the original
+D-4.2 lock and are derived from GO-005's verbatim sim extraction.
+
+**Source of truth.** `wevibe-sim/ranking-fix.js` is the authoritative
+specification. Where this prose and the sim diverge, the sim wins.
+Implementation must reproduce sim behavior.
+
+**Trust computation.** Trust is computed inline at the start of each
+applyDecay invocation. Not stored, not cached, not a persisted field.
+Inputs are memory-level lifetime counters:
+
+    denial_rate = m.denials / (m.serves + m.denials)   if (m.serves + m.denials) > 0
+    denial_rate = 0                                     otherwise
+    trust       = max(0, 1 - denial_rate)
+    trustSq     = trust * trust
+    trustEarned = (m.serves >= trustMinServes) AND (denial_rate < trustMaxRate)
+
+Edge case: a memory with zero serves AND zero denials has denial_rate = 0
+and trust = 1, but trustEarned is FALSE because m.serves < trustMinServes=1.
+Such a memory receives full-multiplier serve boost (irrelevant — no serves
+to boost on) but does NOT pass the idle-protection gate.
+
+**New chain state required.** `MemoryCommitment` gains two `uint64` fields:
+`serve_count_total` and `denial_count_total`. Both increment by 1 per
+respective TX (serve, denial) in `x/memory/keeper/msg_server.go`. These
+counters are memory-level lifetime, never reset, never decremented.
+
+The per-keyword `KeywordWeight.ServeCount` and `KeywordWeight.DenialCount`
+fields (D-4.1) remain unchanged and continue to increment on matched
+keywords only. The canonical Earned Trust formula does NOT read the
+per-keyword counters; they remain available for future per-keyword analytics.
+
+Pre-MVP wipe acceptable per D-13.9; no migration required.
+
+**Per-keyword `matchedThisEpoch` gate.** All three operations — serve boost,
+denial decay, AND idle decay — are gated per-keyword on whether that specific
+keyword matched the query that drove the event. Concretely, given per-epoch
+event counters `servesThisEpoch`, `denialsThisEpoch` (the chain's existing
+`getMemoryServeCount` / `getMemoryDenialCount` indexed queries) and the set
+of keyword IDs matched that epoch `kwIdsMatched`:
+
+    for each keyword k in memory.Keywords:
+      matched = (k.id ∈ kwIdsMatched)
+      if servesThisEpoch  > 0 AND matched:
+        k.w += serveD * servesThisEpoch  * (serveFloor  + (1 - serveFloor)  * trustSq)
+      if denialsThisEpoch > 0 AND matched:
+        k.w -= denialD * denialsThisEpoch * (denialFloor + (1 - denialFloor) * denial_rate)
+      if (NOT matched) OR (servesThisEpoch == 0 AND denialsThisEpoch == 0):
+        idleMult = trustEarned ? idleProtect : idleUntrusted
+        k.w -= idleD * idleMult
+      k.w = clamp(k.w, 0, MAX_W)
+
+Consequence: an active memory's unmatched keywords still receive idle decay
+each epoch. Matched keywords stay strong; unmatched keywords trend toward
+archive. The empirical decoupling-gap result depends on this per-keyword
+discrimination.
+
+**Grace period gates all three operations uniformly.** If
+`current_epoch - memory.created_epoch < grace`, applyDecay returns early —
+no boost, no decay, no idle decay. The early-return precedes any per-keyword
+loop. Grace blanket-protects new memories from all three operations during
+their first `grace` epochs.
+
+**Archive trigger semantics (clarifies D-4.4).** Replace the prior `allZero`
+predicate with:
+
+    archive iff memory.Keywords.every(k => k.weight <= retrievalThreshold)
+
+This means **ALL** keywords (not ANY) must be at or below the threshold for
+archive to fire. Sim source: `ranking-fix.js:198`, identical predicate in
+`sim-runner.js:117`, `iterate.js:233`, `final-analysis.js:158`, and
+`app/page.js:182`. The archive transition fires at end-of-epoch after
+applyDecay completes for the memory.
+
+Archive is **terminal** — no resurrection path. `MemoryCommitment.archived_epoch`
+(`uint64`, default 0 / "not archived") records the epoch at which transition
+occurred for audit purposes.
+
+**Per-epoch event counter source.** The `servesThisEpoch` and
+`denialsThisEpoch` inputs to applyDecay correspond to the chain's existing
+indexed queries `getMemoryServeCount(ctx, orgID, cidHex, currentEpoch)` and
+`getMemoryDenialCount(ctx, orgID, cidHex, currentEpoch)`. The matched
+keyword set `kwIdsMatched` is derived from the same per-epoch index — every
+serve event records the matched-keyword IDs at submission time; idle decay
+reads the union for the epoch.
+
+**Locked parameter values (binding, all governance-changeable):**
+
+| Parameter           | Value | Source (ranking-fix.js) | Notes |
+|---------------------|-------|-------------------------|-------|
+| serveD              | 220   | ET_BASE:269             | Serve boost coefficient (bps) |
+| denialD             | 900   | ET_BASE:269             | Denial decay coefficient (bps) |
+| idleD               | 600   | ET_BASE:269             | Idle decay coefficient (bps) |
+| serveFloor          | 0.4   | ET_BASE:270             | Minimum serve-boost multiplier |
+| denialFloor         | 0.3   | ET_BASE:270             | Minimum denial-decay multiplier |
+| idleProtect         | 0.05  | ET_BASE:270             | Trust-earned idle multiplier |
+| idleUntrusted       | 1.0   | ET_BASE:270             | Untrusted idle multiplier |
+| grace               | 20    | ET_BASE:269             | Chain epochs of decay protection from `memory.created_epoch` |
+| trustMinServes      | 1     | ET_BASE:271             | Lifetime memory-level serves required for trustEarned gate |
+| trustMaxRate        | 0.30  | ET_BASE:271             | Lifetime denial_rate ceiling for trustEarned gate |
+| retrievalThreshold  | 1500  | simulate() arg:251      | bps; archive trigger threshold (= 0.15 fractional) |
+
+All 11 are exposed as governance Params fields in `proto/wevibe/memory/v1/params.proto`.
+Sim source: `ET_BASE` constant in `wevibe-sim/ranking-fix.js:267–272`.
+
+**Cross-references.**
+- D-4.1: KeywordWeight primitive (unchanged; canonical formula reads
+  memory-level counters, not per-keyword).
+- D-4.4: Archive trigger predicate semantics (this section is the canonical
+  reference).
+- D-4.6: 7-state lifecycle (archive transition fires as specified; intermediate
+  states unchanged).
+- D-13.9: Pre-MVP wipe acceptable for the new `serve_count_total` /
+  `denial_count_total` fields.
+
+**Implementation source.** CO-031 implements this against
+`wevibe-chain/x/memory/keeper/lifecycle.go`, `x/memory/keeper/msg_server.go`,
+`x/memory/types/params.go`, and `proto/wevibe/memory/v1/params.proto` (with
+proto regen via Docker-pinned `make proto-gen` per R-PROTO-REGEN).
+
 ---
 
 ### D-4.3: Per-Event Gas Model
@@ -284,6 +409,27 @@ The Earned Trust formula decouples them by three structural moves:
 **Why:** `DORMANT` was a holdover from the per-memory confidence design that implied "recoverable if usage returns." Under Earned Trust (D-4.2), a memory whose every keyword has fallen below the retrieval threshold has comprehensively failed to demonstrate value — either by accumulating denials, by never being served, or both. Recovery is not the right path. `ARCHIVED` memories are excluded from all queries.
 
 The threshold-based archive (vs requiring weights to hit exactly zero) is intentional: a weight just above zero is functionally useless for retrieval but adds noise to ranking. Archiving at the retrieval cutoff aligns the chain's terminal state with the retrieval engine's effective availability.
+
+**Predicate semantics (clarified 2026-05-28 via GO-005).** "Every keyword
+weight ≤ retrievalThreshold" means **ALL** keywords, not ANY. The predicate
+in Go is functionally:
+
+    allBelow := true
+    for _, kw := range memory.Keywords {
+      if parseWeight(kw.Weight).GT(retrievalThreshold) {
+        allBelow = false
+        break
+      }
+    }
+    if allBelow { memory.State = MEMORY_STATE_ARCHIVED }
+
+Equivalent to JavaScript `memory.Keywords.every(k => k.weight <=
+retrievalThreshold)`. Sim source: `wevibe-sim/ranking-fix.js:198`. Worker
+Option B from GO-005 confirmed by Walter on 2026-05-28.
+
+See D-4.2 Implementation Clarifications for the full archive transition
+context (end-of-epoch placement, terminal nature, `archived_epoch` audit
+field).
 
 ---
 
@@ -719,6 +865,143 @@ The chain produces the authoritative keyword weights (D-4.2). The retrieval engi
 Adjusting scoring weights (Section 3.5: `γ × keyword_boost`, `δ × vector_score`) changes how candidates are ordered but the order is still deterministic. Same memory wins every time. The death spiral persists. Probabilistic sampling is what breaks the loop.
 
 **Optional companion: new-memory score boost.** For memories with age < `grace + boostWindow` chain epochs, multiply the score by `(1 + boostMult × (1 - age/boostWindow))`. Default: `boostMult = 0.5`, `boostWindow = 30 epochs`. This is a stabilizer that helps new memories cross the trust threshold in growth-heavy orgs. Empirically smaller effect than the probabilistic sampling itself but composes cleanly.
+
+#### D-9.4 — Implementation Clarifications (2026-05-28 GO-005 synthesis)
+
+The original D-9.4 entry described the position-2..N sampler as
+"softmax-sampled (temperature 0.7)." GO-005 sim-semantics extraction
+(2026-05-28) confirmed that the empirical 79.5pp decoupling-gap result was
+produced by a **tempered power-law sampler**, not a softmax. There is no
+`Math.exp` in `wevibe-sim/ranking-fix.js`. This subsection codifies the
+actual mechanism. Where the original D-9.4 prose and this subsection
+disagree, this subsection wins.
+
+**Source of truth.** `wevibe-sim/ranking-fix.js`, functions
+`probabilisticRanking` (lines 93–111), `weightedSampleWithoutReplacement`
+(lines 73–90), `queryScore` (lines 58–71), `rawScore` (lines 51–55).
+Implementation must reproduce sim behavior.
+
+**Query-time score (per candidate memory M, query keyword set Q, epoch e):**
+
+    rawScore = sum over k in M.Keywords where k.id ∈ Q of k.weight
+
+    if rawScore == 0:
+      candidate dropped (queryScore = 0, filtered out)
+
+    if new-memory boost is enabled AND (e - M.created_epoch) < (grace + boostWindow):
+      age      = e - M.created_epoch
+      window   = grace + boostWindow                        // canonical: 20 + 30 = 50
+      boost    = max(0, 1 - age / window)                   // linear: age=0 → 1.0, age=window → 0
+      queryScore = rawScore * (1 + boostMult * boost)       // peak at age 0: × (1 + boostMult) = ×1.5
+    else:
+      queryScore = rawScore
+
+The new-memory boost decays linearly from `age=0` (not from `age=grace`).
+The total boost window equals `grace + boostWindow`. Initial peak multiplier
+at age 0 is `1 + boostMult = 1.5` for canonical parameters. A 25-epoch-old
+memory receives `1 + 0.5 * (1 - 25/50) = 1.25` multiplier. A memory aged
+`grace + boostWindow` or older receives no boost.
+
+**Position assignment:**
+
+    sorted = candidates sorted by queryScore descending
+    if servePer == 1 OR sorted.length == 1:
+      return sorted[:servePer]
+
+    position 1 = sorted[0]                                  // STRICT argmax, never sampled
+    rest       = sorted[1:]
+    maxS       = rest[0].queryScore
+
+    for each candidate i in rest:
+      weighted_i = (rest_i.queryScore / maxS) ^ (1 / max(0.01, temperature))
+
+    sampled    = weighted_sample_without_replacement(weighted, servePer - 1)
+    finalRest  = rest filtered to sampled members, preserving rest's original score-descending order
+
+    return [position1, ...finalRest]
+
+This is a **tempered power-law sampler**:
+
+    weight_i = (score_i / score_max) ^ (1 / T)
+
+Lower temperature → exponent grows → distribution concentrates on top
+candidates. Higher temperature → exponent shrinks toward 1 → distribution
+flattens. At T → 0, only the top candidate has nonzero weight (effectively
+strict). At T = ∞, the distribution approaches uniform.
+
+This is **not** softmax. Softmax computes `exp(score / T)`; the power law
+computes `(score / score_max) ^ (1 / T)`. The two have different sampling
+behavior for the same T. The empirical 79.5pp result was measured with the
+power law; an actual softmax implementation would produce different
+empirical outcomes and would not honor the sprint's empirical contract.
+
+**Sampling is without replacement.** `weightedSampleWithoutReplacement`
+recomputes the total weight after each draw (`pool.reduce((s, x) => s + x.s, 0)`
+inside the per-draw loop). Sim source: `ranking-fix.js:78` inside the
+`for (let i = 0; i < k && pool.length > 0; i++)` loop.
+
+**Ordering within positions 2..N.** The sampler chooses which candidates
+fill positions 2..N, but their final order within those positions preserves
+the original score-descending order of `rest` — not the draw order. Sim
+source: `ranking-fix.js:108–109`:
+
+    const sampledIds = new Set(sampled.map(x => x.m.id));
+    const finalRest  = rest.filter(x => sampledIds.has(x.m.id));
+
+This means within positions 2..N, higher-score sampled candidates appear
+before lower-score sampled candidates.
+
+**Locked parameter values (hub config, env-var-changeable):**
+
+| Parameter   | Env var                          | Value | Source (ranking-fix.js)        | Notes |
+|-------------|----------------------------------|-------|--------------------------------|-------|
+| temperature | RETRIEVAL_TEMPERATURE            | 0.7   | QS3b winner:296                | Power-law exponent = 1/T ≈ 1.43 |
+| boostMult   | RETRIEVAL_NEW_MEM_BOOST_MULT     | 0.5   | QS3b winner:296                | Peak boost = ×(1 + 0.5) = ×1.5 at age 0 |
+| boostWindow | RETRIEVAL_NEW_MEM_BOOST_WINDOW   | 30    | QS3b winner:296                | Chain epochs past `grace`; total window = grace + boostWindow = 50 |
+
+**Determinism.** RNG must be injectable for testing. Tests inject a
+fixed-seed PRNG (`rand.New(rand.NewSource(seed))` in Go); production seeds
+from `time.Now().UnixNano()` (or equivalent non-deterministic source).
+
+**Strict top-1 invariant.** Position 1 is always the argmax of queryScore.
+Tests asserting on position 1 remain deterministic regardless of RNG seed.
+Tests asserting on positions 2..N MUST seed the RNG.
+
+**Hub scope (resolves GO-005 Q2.1).** The hub does NOT recompute Earned Trust at query time. The sim's `rawScore` reads pre-decayed weights stored
+by the chain — `k.weight` is whatever the chain last wrote. The hub mirrors
+chain-settled weights into Qdrant per D-9.1 / D-9.3 and queries them. Per
+D-9.4 implementation:
+
+- The hub sums matched keyword weights at query time (`rawScore`).
+- The hub applies the new-memory boost based on `memory.created_epoch`
+  (multiplicative on `rawScore`).
+- The hub applies position-1 strict + power-law-sample positions 2..N.
+
+The hub does NOT:
+
+- Re-derive Earned Trust at query time.
+- Track `m.serves` / `m.denials` in its mirror.
+- Apply idle decay at query time.
+- Apply any decay arithmetic at query time beyond the existing pending-denial
+  optimistic ledger (`applyPendingDenialDecay` in
+  `internal/retrieval/retrieval.go`), which is a separate concern not
+  modeled by the sim and out of scope for D-9.4.
+
+**Cross-references.**
+- D-9.1 / D-9.2 / D-9.3: Qdrant payload, hardening, enriched ranking
+  (unchanged; D-9.4 reads the same payload).
+- D-4.2 + D-4.2 Implementation Clarifications: chain-side weight evolution
+  that produces the values D-9.4 reads.
+- D-13.9: pre-MVP state pattern (no new chain state introduced by D-9.4;
+  hub-only change).
+
+**Implementation source.** CO-032 implements this against
+`wevibe-server/wevibe-hub/internal/retrieval/retrieval.go`,
+`internal/config/config.go`, `cmd/wevibe-hub/main.go`, and
+`wevibe-server/docker-compose.yml`. CO-032 also verifies the Qdrant payload's
+"first appearance" epoch semantics (whether `epoch_id` represents creation
+or approval) and, if necessary, adds a `created_epoch` payload field to
+match `m.created_epoch` in the sim.
 
 ---
 
