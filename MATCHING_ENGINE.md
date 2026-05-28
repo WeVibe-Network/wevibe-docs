@@ -78,6 +78,13 @@ The trust gate (`serve_count ≥ 1 AND denial_rate < 0.30`) decides whether a me
 
 The trust gate uses on-chain per-memory lifetime totals (`serve_count_total`, `denial_count_total`) and per-keyword counters. No fallback path exists for missing matched keywords: serve submissions with empty `matched_keywords` are invalid and rejected by chain validation.
 
+**Hub-side enforcement (CO-033a):** the hub now mirrors the chain's non-empty `matched_keywords` constraint at ingress. `POST /v1/orgs/{orgID}/serves` requires a non-empty `matched_keywords []string` on every request; missing / empty / whitespace-only payloads return HTTP 400 (`internal/serves/serves.go normalizeMatchedKeywords`). The value is persisted on `serve_events.matched_keywords TEXT[] NOT NULL` (migration `wevibe-server/db/migrations/000005_add_serve_events_matched_keywords.up.sql`) and read back into `protocol.MemoryResult.MatchedKeywords` at retrieval time, where the hub computes the intersection of memory keywords and query keywords per result and filters candidates with zero overlap (consistent with the sim's `applyNewMemoryBoost` base==0 short-circuit at `wevibe-sim/ranking-fix.js:184`).
+
+**Sprint status (CO-033a landed / CO-033b open):**
+- LANDED: hub serve_events persistence, hub retrieval pass-through, hub validator strictness, 5 unit tests (3 retrieval pure-fn + 2 serve persistence DB-backed).
+- DEFERRED to CO-033b: `wevibe-protocol` JS bindings regen so `ServeEntry.matchedKeywords` exists on the wire; dashboard `MsgSubmitServeBatch` caller (currently the chain-submit page stub at `wevibe-server/wevibe-dashboard/app/(dashboard)/chain-submit/page.tsx:212` — no live broadcaster exists); MCP + opencode-plugin payload update to include `matched_keywords` on `POST /v1/serves`; empirical replay harness that measures chain.gap vs the sim Steady-State scenario.
+- IMPLICATION until CO-033b ships: every plugin → MCP → hub serve flow that does not include `matched_keywords` will receive HTTP 400 from the hub. This is the explicit contract — chain rejects empty sets, hub mirrors the rejection. CO-033b updates the upstream callers.
+
 **Locked parameters (chain-governance changeable):**
 
 | Parameter | Default | Purpose |
