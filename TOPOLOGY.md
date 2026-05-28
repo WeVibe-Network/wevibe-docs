@@ -184,6 +184,9 @@ ChainRPCURL           string    // env: WEVIBE_CHAIN_RPC_URL (optional in Phase 
 ChainID               string    // env: WEVIBE_CHAIN_ID
 ChainSubmitterMnemonic string // env: WEVIBE_CHAIN_SUBMITTER_MNEMONIC
 ChainEnabled          bool      // env: WEVIBE_CHAIN_ENABLED
+RetrievalTemperature       float64 // env: RETRIEVAL_TEMPERATURE, default: 0.7
+RetrievalNewMemBoostMult   float64 // env: RETRIEVAL_NEW_MEM_BOOST_MULT, default: 0.5
+RetrievalNewMemBoostWindow uint64  // env: RETRIEVAL_NEW_MEM_BOOST_WINDOW, default: 30
 ```
 **Known issues:** None
 **CO-219:** Hub panics at startup if `QDRANT_API_KEY` is missing or < 32 chars.
@@ -272,7 +275,7 @@ func GetOrgCredits(w, r)  // GET /v1/orgs/{orgID}/credits — returns balance + 
 **Exports:**
 ```go
 func QueryMemories(w, r)       // POST — keyword + vector query, creates receipt, deducts credit, returns PRE payload from PostgreSQL
-func ListMemories(w, r)        // GET — scroll through approved memories with pagination (keywords/confidence/state from Qdrant payload)
+func ListMemories(w, r)        // GET — scroll through approved memories with pagination (keyword_weights/lifecycle_state from Qdrant payload)
 func SessionLookup(w, r)       // STUB — returns 501
 func RejectMemory(w, r)       // POST — increments rejection count in Qdrant
 func GetMemory(w, r)          // GET — retrieves a single memory by CID
@@ -284,7 +287,7 @@ func extractCIDs(results)      // helper
 
 **CO-224 retrieval behavior:**
 - `QueryMemories` passes `include_dormant` to retrieval layer (default false)
-- Query ranking combines vector score, keyword overlap boost, and confidence weighting
+- Query ranking combines vector score, keyword overlap boost, optimistic pending-denial decay, and new-memory boost before D-9.4 position assignment
 - Lifecycle state filter always excludes `ARCHIVED`; excludes `DORMANT` unless explicitly included
 
 #### `internal/api/handlers/dashboard.go`
@@ -341,7 +344,7 @@ func (c *GrpcClient) SubmitMemoryReport(ctx, orgID string, input ReportMemoryInp
 **Role:** On-chain state queries for org/memory/reputation verification and retrieval metadata reconciliation
 **Exports:** `IsOrgRegistered`, `GetOrgFromChain`, `GetEpochMerkleRoot`, `GetServeParams`, `GetEpochServeStats`, `GetAttestationParams`, `GetSessionAttestation`, `GetBandwidth`, `GetEmissionsParams`, `GetReputationStats`, `GetContributorProfile`, `GetMemoriesBatch`
 
-**Memory batch parity (CO-224):** `MemoryBatchResult` now includes `ConfidenceBps` and `State` copied from chain `StoredMemoryCommitment` (`retrieval_confidence_bps`, `state`) so hub can compare and sync Qdrant payload metadata.
+**Memory batch parity (CO-224):** `MemoryBatchResult` includes `Keywords`, `Epoch`, `State`, and `MemoryType` copied from chain `StoredMemoryCommitment` so hub can reconcile Qdrant payload metadata.
 
 **Chain→Hub reputation wiring (CO-213):** `GetContributorProfile` queries the chain's x/reputation module for a contributor's on-chain profile (contribution_count, serve_count, first_seen_epoch). Nil-safe — returns nil if chain unreachable or contributor not found. Used by `retrieval.GetContributorStats` to merge chain and hub data.
 
@@ -351,9 +354,9 @@ func (c *GrpcClient) SubmitMemoryReport(ctx, orgID string, input ReportMemoryInp
 
 **Sync flow (CO-224):**
 - Loads orgs with approved memories from PostgreSQL (`pending_submissions.status='approved'`)
-- Scrolls org memory payloads from Qdrant (`cid`, `confidence_bps`, `lifecycle_state`)
+- Scrolls org memory payloads from Qdrant (`cid`, `keyword_weights`, `lifecycle_state`, `memory_type`)
 - Batch-queries chain via `GetMemoriesBatch`
-- Updates changed Qdrant payloads via `retrieval.UpdateMemoryConfidenceAndState`
+- Updates changed Qdrant payloads via `retrieval.UpdateMemoryState`
 - Logs sync summary (`Synced N memories across M orgs, updated K confidence/state values`)
 
 #### `internal/chain/merkle.go`
@@ -441,13 +444,14 @@ func QueryByKeywords(ctx, client, orgID, accessibleEpochs, keywordWeights, vecto
 func ScrollOrgMemoryPayloads(ctx, client, orgID) ([]OrgMemoryPayload, error)
 func ScrollApprovedMemories(ctx, client, orgID, limit, offset) ([]MemoryResult, string, error)
 func UpdateMemoryKeywords(ctx, client, orgID, oldKeywords, newKeyword) error
-func UpdateMemoryConfidenceAndState(ctx, client, orgID, memoryCID, confidenceBps, lifecycleState) error
+func UpdateMemoryState(ctx, client, orgID, memoryCID, lifecycleState) error
 ```
 **Constants:** `EMBED_DIM = 768`, `contestedThreshold = 0.20`
-**Key detail:** `UpsertPoint` applies Gaussian noise (σ=0.1 × L2 norm) before storing vectors. `QueryPoints` performs vector search, then applies keyword-overlap boost and confidence weighting before final ranking.
+**Key detail:** `UpsertPoint` applies Gaussian noise (σ=0.1 × L2 norm) before storing vectors. `QueryPoints` performs vector search, then applies keyword-overlap boost, optimistic pending-denial decay, and new-memory boost, then assigns positions with D-9.4 tempered power-law sampling (strict top-1; positions 2..N sampled without replacement).
 **Noise injection:** `injectGaussianNoise(vector, sigma)` — adds calibrated Gaussian noise at storage time only
 **Lifecycle filtering (CO-224):** `ARCHIVED` is always excluded; `DORMANT` is excluded unless `includeDormant=true`
-**Qdrant payload fields:** `cid`, `org_id`, `epoch_id`, `content_flags`, `keywords`, `confidence_bps`, `lifecycle_state`, `embedding_model_id`, `embedding_schema_version`, `vector_dim`
+**Qdrant payload fields:** `cid`, `org_id`, `epoch_id`, `content_flags`, `keyword_weights`, `lifecycle_state`, `memory_type`, `embedding_model_id`, `embedding_schema_version`, `vector_dim`
+**Retrieval env wiring (`cmd/wevibe-hub/main.go` + compose):** `RETRIEVAL_TEMPERATURE`, `RETRIEVAL_NEW_MEM_BOOST_MULT`, `RETRIEVAL_NEW_MEM_BOOST_WINDOW` configure `ProbabilisticRanker`.
 **Known issues:** None
 
 #### `internal/retrieval/stats.go`
@@ -1167,14 +1171,15 @@ KFrag store updated (kfrags deleted for removed member)
 5. Hub returns `cfrag + capsule + umbral_ciphertext`; wevibe-mcp calls sidecar `decrypt-reencrypted` with local PRE secret key and epoch delegating pubkey to recover DEK locally.
 
 **Chain metadata parity flow (CO-224):**
-1. On approval, hub writes chain-mirror retrieval metadata into Qdrant payload: `keywords`, `confidence_bps=10000`, `lifecycle_state=APPROVED`.
-2. Keyword rename/merge operations update PostgreSQL vocabulary tables and then call `UpdateMemoryKeywords` to keep Qdrant payload keywords synchronized.
+1. On approval, hub writes retrieval metadata into Qdrant payload: `keyword_weights`, `lifecycle_state`, `memory_type`, and embedding metadata.
+2. Keyword rename/merge operations update PostgreSQL vocabulary tables and then call `UpdateMemoryKeywords` to keep Qdrant payload keyword weights synchronized.
 3. Query path (`QueryPoints`) uses Qdrant payload metadata for lifecycle filtering and ranking:
    - hard exclude `ARCHIVED`
    - exclude `DORMANT` unless `include_dormant=true`
-   - apply keyword overlap boost and confidence weighting on top of vector score
-4. Epoch poller (`SyncEpochData`) runs on a ticker, loads approved orgs from PostgreSQL, compares Qdrant payload vs chain `GetMemoriesBatch`, and updates changed `confidence_bps`/`lifecycle_state` via `UpdateMemoryConfidenceAndState`.
-5. `ScrollApprovedMemories` reads `keywords`, `confidence_bps`, and `lifecycle_state` directly from Qdrant payload (no PostgreSQL keyword join).
+   - apply keyword overlap boost, optimistic pending-denial decay, and D-9.4 new-memory boost
+   - assign positions using tempered power-law sampling (strict top-1, sampled positions 2..N)
+4. Epoch poller (`SyncEpochData`) runs on a ticker, loads approved orgs from PostgreSQL, compares Qdrant payload vs chain `GetMemoriesBatch`, and updates changed lifecycle state values.
+5. `ScrollApprovedMemories` reads `keyword_weights` and `lifecycle_state` directly from Qdrant payload (no PostgreSQL keyword join).
 
 **wevibe-mcp PRE identity + registration flow (CO-222):**
 1. `auth.ts` loads/generates PRE identity and stores secret key hex in keystore account `pre-identity-key`.
