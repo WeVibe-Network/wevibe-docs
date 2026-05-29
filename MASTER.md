@@ -192,7 +192,7 @@ The leader's batch pipeline is their primary operational activity. The dashboard
 4. Leader clicks "Run Batch Extraction"
    → Hub triggers LLM extraction against org vocabulary for all `pending_keyword` memories
    → For each memory, proposed keywords are drawn from existing org vocabulary
-   → Weights form a probability distribution (must sum to 1.0)
+   → Run Keyword Weight which uses LLM to determine Weights to form a probability distribution (must sum to 1.0)
    → New vocabulary terms not yet in org set are flagged as "suggested additions"
 
 5. Review screen: for each memory, leader sees:
@@ -247,6 +247,8 @@ The leader's batch pipeline is their primary operational activity. The dashboard
 **Why Qdrant insert deferred to chain commit:** Memories are only inserted into Qdrant after `committed` status is confirmed on-chain. This ensures the retrieval index only contains memories that have passed the full approval pipeline and are permanently recorded (see DECISIONS.md D-6.2).
 
 **Why scores sum to 1.0:** Keyword weights form a probability distribution. A weight of 0.25 means "25% of retrieval relevance signal comes from this keyword." Sum-to-1.0 normalization ensures the distribution is interpretable and comparable across memories (see DECISIONS.md D-5.4).
+
+--------------------------------(WALTER STOPPED HERE)------------------------------------
 
 ### UX Flow: Org Configuration
 
@@ -1507,6 +1509,26 @@ The following chain features have proto definitions and working keeper logic but
 | Bootstrap credits | `x/emissions` | New User |
 | Asymmetric gating | `x/emissions` | Validator |
 | Bandwidth state visibility | `x/bandwidth` | Leader, all members |
+
+### GAP-REP-1: Reputation Module Inactive at Genesis + Empty Contributor Wallet on Serve Path
+
+**Participant:** Contributor
+**Status:** OPEN (surfaced during CO-037 empirical replay)
+
+The `x/reputation` keeper's per-serve tracking (`RecordServe`, called from `x/serve` `ProcessServeBatch`) never executes, so contributor serve counts are not accumulated on-chain. Two independent defects:
+
+1. **Genesis activation contradicts D-13.5.** DECISIONS.md D-13.5 ("Reputation Active at Genesis") mandates reputation be on from chain genesis, and `x/reputation/types/params.go DefaultParams()` sets `Active: true`. However, `x/reputation/module/module.go:32 DefaultGenesis()` hardcodes `GenesisState{Active: false}`, and `wevibe-chain/scripts/init-chain.sh` never patches `.app_state.reputation.active`. Result: `RecordServe` returns `ErrReputationNotActive` on every serve. During the CO-037 300-epoch replay this floods chain logs with `INF failed to record serve reputation error="reputation module not active"` (one line per serve event, ~4500 lines/run).
+
+2. **Empty `ContributorWallet` on the serve path.** Even with reputation active, `x/serve` `ProcessServeBatch` calls `reputationKeeper.RecordServe(ctx, []byte(serve.ContributorWallet), ...)` with an empty wallet (`contributor=` in the log). The hub's `submitServeToChainSync` resolves the wallet via `members.GetWalletAddress`, which is empty for contributors whose wallet was never bootstrapped (the empirical-replay harness only bootstraps the leader wallet). Reputation would therefore key on the empty string rather than the contributor.
+
+**Impact scope:** Both defects are **orthogonal to the Earned-Trust decoupling-gap measurement.** `RecordServe` is the final call in the `ProcessServeBatch` loop and its error is swallowed (logged `Info`); it runs *after* the serve attestation, per-epoch serve count, `ServeCountTotal++`, and `applyDecay`. Memory survival/archive dynamics are unaffected. The CO-037 sprint-contract measurement is valid despite this gap.
+
+**Future sprint dependency:** Per the design intent, reputation currently tracks how many times a contributor's memory was served; later it wires into `x/attestation` for session tracking ("user X using model Y took N turns to solve problem Z"). Both require this gap closed first.
+
+**Resolution requires:**
+- Patch `init-chain.sh` to set `.app_state.reputation.active = true` (align genesis with D-13.5), and/or fix `module.go DefaultGenesis()` to honor `DefaultParams.Active`.
+- Populate a real contributor wallet on the serve path: hub `submitServeToChainSync` must resolve a non-empty wallet, and the empirical-replay harness must bootstrap a contributor wallet (currently only the leader is bootstrapped).
+- Add a chain integration assertion that `RecordServe` increments contributor serve count after a serve batch.
 
 ### GAP-CHAIN-7: Validator Operations Runbook
 
