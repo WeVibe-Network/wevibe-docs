@@ -1237,54 +1237,6 @@ Phase 1 mitigations are in place (Gaussian noise σ=0.1, Qdrant API key auth, in
 
 ---
 
-### GAP-CHAIN-1: Earned Trust Decay Formula Implementation
-
-**Participant:** Consumer, Contributor, Leader
-**Milestone:** ALPHA
-**Status:** OPEN. Sprint 29 CO-009 wired the original flat-count D-4.2 formula end-to-end (serve boost + denial decay in chain TX handlers, per-keyword weights in Qdrant payload, hub local updates after TX confirmation, startup sync from chain). The Earned Trust replacement (current D-4.2) supersedes that implementation and requires the formula change documented in DECISIONS.md D-4.2.
-
-D-4.2 now defines the Earned Trust decay model (serveD=220 bps, denialD=900 bps, idleD=600 bps, grace=20 chain epochs, trust gate at trustMinServes=1 / trustMaxRate=0.30, idleProtect=0.05, idleUntrusted=1.0). The chain primitives (per-keyword `serve_count`, `denial_count`, `weight` per D-4.1) are unchanged. Only the math expression in the decay step changes.
-
-Without the new formula:
-
-- Memory decay treats good and bad memories nearly equally — empirical decoupling gap ~15pp vs ~78pp under Earned Trust
-- ~30% of good memories falsely archive vs ~5.5% under Earned Trust
-- Bad memories take 191 epochs to archive vs 58 under Earned Trust
-- The retrieval system cannot be load-bearing for user acquisition
-
-**Resolution requires (single chain CO):**
-- Update `x/memory` decay handlers to compute `denial_rate = denial_count / (serve_count + denial_count)` per memory
-- Apply Earned Trust formula in `x/epochs` end-of-epoch processing (serve boost amplified by trust², denial decay scaled by denial_rate, idle decay gated by trust-earned flag)
-- Update grace check to 20 chain epochs (was 14)
-- Update archive transition (D-4.4) to trigger when all keyword weights ≤ `retrievalThreshold` (default 1500 bps) — replaces "weights = 0" check
-- Expose all 11 parameters from D-4.2 table as governance-changeable chain params with defaults
-- Hub-side `SyncKeywordWeightsFromChain` reconciliation continues to apply (no hub schema change)
-- Qdrant payload updates on every confirmed serve/denial TX continue to apply
-
-**Pre-MVP migration note:** Per D-13.9, chain is wiped before MVP. No memory data migration required — the new formula applies from chain genesis.
-
----
-
-### GAP-RETRIEVAL-1: Probabilistic Position Assignment Not Implemented
-
-**Participant:** Consumer
-**Milestone:** ALPHA
-**Status:** OPEN. Hub-side change only; no chain dependency.
-
-D-9.4 specifies probabilistic exploration in result positions 2..N to fix the ranking-loss death spiral. The current `wevibe-hub/internal/retrieval` Qdrant query handler returns strictly top-N by score. Without D-9.4:
-
-- Good memories that lose initial ranking battles never recover serves and idle-decay out
-- Cold-storage scenarios show ~16-23% false-archive of good memories even with Earned Trust on the chain side
-- Worst-case scenario gap is ~62pp vs ~68pp with probabilistic exploration
-
-**Resolution requires (single hub CO):**
-- Modify the Qdrant result handler in `internal/retrieval/retrieval.go`: position 1 stays strict top-1, positions 2..N use softmax sampling with `weight_i = (score_i / max_score)^(1 / temperature)`
-- Expose `temperature` as a hub config parameter (default 0.7) — not a chain parameter
-- Optional companion: new-memory score boost during `grace + boostWindow` epochs (default `boostMult = 0.5`, `boostWindow = 30 epochs`)
-- No chain changes, no new state, no consensus implications
-
----
-
 ### GAP-CHAIN-20: IAVL State Query Failure on Fresh Chains
 
 **Participant:** Validator, Leader, all CLI users
@@ -1652,15 +1604,52 @@ Sessions page submitted memories one at a time via individual POST requests.
 
 ---
 
+## Sprint 32 Scope
+
+### Completed (Sprint 32 ingress)
+
+| Item | CO | Status |
+|------|-----|--------|
+| Chain Earned Trust decay formula (D-4.2 per-keyword matched gate, memory-level lifetime counters, archive predicate `.every() ≤ retrievalThreshold`, grace 14→20) | CO-031 Rev 2 | **CLOSED** — GAP-CHAIN-1 |
+| ServeEntry + StoredServeAttestation gain `matched_keywords` field, validated non-empty on chain | CO-031 Rev 2 | **CLOSED** — chain ingress contract |
+| Hub tempered power-law sampler (D-9.4 position 1 strict, positions 2..N sampled), new-memory boost, retrieval env vars | CO-032 | **CLOSED** — GAP-RETRIEVAL-1 |
+| Hub serve_events.matched_keywords TEXT[] NOT NULL persistence, strict 400-on-empty validator on POST /v1/serves | CO-033a | **CLOSED** — hub ingress contract |
+| wevibe-protocol JS bindings regen (matchedKeywords on ServeEntry, all 33 .ts files updated) | CO-033b | **CLOSED** — JS contract |
+| Dashboard `buildServeBatchMsg` + live `handleSubmitBatch` broadcaster (replaces deprecated stub at chain-submit/page.tsx) | CO-033b | **CLOSED** — dashboard contract |
+| MCP forwards matched_keywords on POST /v1/serves, validates non-empty inline | CO-033b | **CLOSED** — MCP contract |
+| Plugin threads matched_keywords from recall response through inject loop to serve POST | CO-033b | **CLOSED** — plugin contract |
+| Hub test infrastructure cleanup: ListMembers dismissed_reports_count SELECT, reports_test reason fixture, members_test isolation, qdrantAvailable 401 skip | CO-033b | **CLOSED** — test infra |
+| dogfood-pipeline.test.ts step 1: canonical body signer overhaul (4 hash fields aligned with chain's 9-field canonical body) | CO-033b | **CLOSED** — dogfood pipeline drift |
+| DECISIONS.md D-4.2 + D-9.4 Implementation Clarifications subsections (per-keyword gate, lifetime counters, power-law-not-softmax, boost window arithmetic, matched-keyword tracking) | DMO-006, DMO-007 | **CLOSED** — spec codification |
+
+### In Scope (Sprint 32, remaining)
+
+| Item | Reference | Severity | Status |
+|------|-----------|----------|--------|
+| Chain fast-epoch primitive (configurable `WEVIBE_EPOCH_DURATION_SECONDS`) + empirical replay harness + sprint contract measurement (`chain.gap ≥ 75pp vs sim Steady-State, |Δ| ≤ 5pp`) | CO-034 | CRITICAL | **In flight** |
+
+### Sprint Contract
+
+The Sprint 32 empirical contract is:
+
+- `chain.gap ≥ 75pp` against the sim Steady-State scenario (badRate=0.12, tpDeny=0.55, fpDeny=0.04, qPerEpoch=15, qSize=3, servePer=3, initMem=100, maxKw=7).
+- `|chain.gap − sim.gap| ≤ 5pp` for the same scenario.
+
+The sim baseline is the QS3b combined model (D-4.2 Earned Trust + D-9.4 probabilistic exploration) at 79.5pp per `wevibe-sim/ranking-fix.js`. CO-034 measures the chain against this baseline.
+
+**Status until CO-034 lands:** Sprint dependency closure is complete (all ingress wiring lives and the chain accepts matched_keywords end-to-end). Sprint contract validation is in flight.
+
+---
+
 ## Summary
 
 | Severity | Open Count | Items |
 |----------|------------|-------|
-| CRITICAL | 0 | (GAP-CHAIN-1 closed by CO-009) |
+| CRITICAL | 0 | — (Sprint 32 closure: GAP-CHAIN-1 + GAP-RETRIEVAL-1 closed permanently) |
 | MAJOR | 2 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **9** | |
+| **Total OPEN** | **7** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---

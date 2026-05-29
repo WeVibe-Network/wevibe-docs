@@ -52,6 +52,16 @@ DECISIONS.md D-14.21, R-PROTO-REGEN.
 |---------|--------|--------|
 | Ollama | Metal GPU on macOS; no Metal in Linux containers | PERMANENT |
 
+### Empirical Replay Mode (CO-034, in flight)
+
+A second compose mode for empirical replay against sim Steady-State will land in CO-034:
+
+- **Overlay file:** `wevibe-server/docker-compose.fast.yml` — overrides chain epoch duration via `WEVIBE_EPOCH_DURATION_SECONDS` (default 2s) so 300 epochs complete in ~10 minutes instead of multi-day at production duration.
+- **Activation:** `docker compose -f docker-compose.yml -f docker-compose.fast.yml up -d` via the `dogfood-fast` Makefile target in `wevibe-meta`.
+- **Production mode:** unchanged. Production deployments leave `WEVIBE_EPOCH_DURATION_SECONDS` unset; the chain default applies.
+
+Used by the empirical replay harness at `wevibe-meta/scripts/empirical_replay/` (CO-034) to measure the Sprint 32 contract: `chain.gap ≥ 75pp vs sim Steady-State, |Δ| ≤ 5pp`.
+
 ### Chain Broadcast (CO-258)
 
 Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uvibe)`. Retry on transient state-load errors. The primary path is relay-forwarded delegate-signed Category B traffic; CO-023 also wires synchronous `RegisterOrgOnChain` from `CreateOrg`, so org creation performs a hub-originated chain registration call in the same request lifecycle.
@@ -109,7 +119,7 @@ POST   /v1/orgs/{orgID}/moderation/{submissionHash}/vote
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/approve
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/deny
 POST   /v1/orgs/{orgID}/moderation/batch-submit                          # Hub-internal queue; NOT chain
-POST   /v1/orgs/{orgID}/serves
+POST   /v1/orgs/{orgID}/serves                                           # Record serve event (CO-033a: matched_keywords required, non-empty, validates 400 on empty per D-4.2 ingress)
 POST   /v1/orgs/{orgID}/denials              # Record denial event (CO-225); increments
                                              # optimistic pending_denial_count per
                                              # D-2026-05-25-A (load-bearing for query
