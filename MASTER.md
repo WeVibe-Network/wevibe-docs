@@ -402,13 +402,13 @@ Contributors extract technical insights from their coding sessions and submit th
 6. Results: "Your session produced 7 memories!"
 7. Each memory shown as a card:
    ☑ Checkbox for selection
-   - Insight text (the core learning, 1-2 specific sentences)
-   - Context (environment, versions, conditions)
-   - Avoid warnings (what NOT to do and why)
-   - Tech stack tags (auto-detected)
-   - Memory type (correct_implementation or negative_signal)
-   - Preference confidence flag (if elevated)
-   - Sanitization findings (if any flagged characters detected)
+- Insight text (the core learning, 1-2 specific sentences)
+    - Context (environment, versions, conditions)
+    - Implement field (what TO do and how — required, describes the correct pattern)
+    - DND field (do-not-do — what NOT to do and why, can be null)
+    - Tech stack tags (auto-detected)
+    - Preference confidence flag (if elevated)
+    - Sanitization findings (if any flagged characters detected)
 8. User reviews, selects which to submit
     → "Select All" / "Select None" shortcuts
 9. For each selected memory, contributor sees a destination org dropdown.
@@ -542,13 +542,13 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
    d. Returns cfrag + capsule + umbralCiphertext per memory
    e. Deducts 1 query credit
 6. wevibe-mcp:
-   a. For each memory: calls sidecar decrypt-reencrypted
-      (capsule + cfrag + ciphertext + receiving_sk + delegating_pk) → plaintext
-   b. Applies risk appetite filter: if set to `lowest`, keeps only `negative_signal` memories; if `neutral`, keeps both types
-   c. Checks local blacklist — skips any previously denied memories
-   d. Runs wevibe-guard security scan on plaintext
-   e. Flagged memories → redacted, not injected
-   f. Clean memories returned to plugin
+    a. For each memory: calls sidecar decrypt-reencrypted
+       (capsule + cfrag + ciphertext + receiving_sk + delegating_pk) → plaintext
+    b. Applies risk appetite filter at the field level: if set to `lowest`, keeps only memories with a non-null `dnd` field (DNDs only); if `neutral`, keeps all memories (implement + DND)
+    c. Checks local blacklist — skips any previously denied memories
+    d. Runs wevibe-guard security scan on plaintext
+    e. Flagged memories → redacted, not injected
+    f. Clean memories returned to plugin
 7. Plugin shows developer approval UI with current risk appetite setting visible (e.g., "WeVibe (risk: lowest) found 2 memories..."):
    "WeVibe found 3 memories relevant to your current task:"
    [Memory 1 preview] ☑
@@ -688,7 +688,7 @@ When the plugin fails to start or loses connection, a fallback chain activates:
 | Hub | `POST /v1/orgs/{orgID}/reports/{reportID}/commit` | Leader chain commitment (wallet-signed) |
 | Chain | `MsgSubmitServeBatch`, `MsgSubmitDenialBatch`, `MsgReportMemory` | Batch attestations (via hub relay) |
 | wevibe-guard | Scan API | Recall-time security scanning |
-| wevibe-mcp | `wevibe_set_risk_appetite` tool | Read/write current risk appetite (`lowest` = negative_signal only, `neutral` = both) |
+| wevibe-mcp | `wevibe_set_risk_appetite` tool | Read/write current risk appetite (`lowest` = DND-only filter, `neutral` = all memories) |
 | Local | `~/.wevibe/plugin-config.json` | Risk appetite persistence (shared by wevibe-mcp and plugin) |
 
 ### UX Flow: Risk Appetite Configuration
@@ -704,8 +704,8 @@ Two ways to change the consumer risk appetite setting:
    → Agent calls wevibe_set_risk_appetite MCP tool
    → Setting persisted to ~/.wevibe/plugin-config.json
 
-Default: "neutral" (both correct_implementation and negative_signal memories surfaced)
-When "lowest": only negative_signal memories are shown in approval UI
+Default: "neutral" (all memories surfaced: implement + dnd)
+When "lowest": only memories with a non-null `dnd` field are shown in approval UI
 
 ---
 
@@ -1275,6 +1275,48 @@ Chain modules (`x/emissions`, `x/bandwidth`, `x/reputation`, `x/org`) have defau
 - Set sane solo-dogfood values (1 validator, 1 org, 1 contributor)
 - Document parameter choices and rationale
 - Walter approval on economic parameters (payout rates, tier thresholds, emission schedule)
+
+**Partial progress (CO-040):** emission pool is now seeded at genesis and reputation is active at genesis (see GAP-S32-EMISSION-GENESIS). Full economic-parameter finalization (the 32-year emission schedule + contributor attribution) is locked and scheduled under GAP-S32-TOKENOMICS.
+
+---
+
+### GAP-S32-EMISSION-GENESIS: Emission Pool + Reputation Genesis Activation
+
+**Participant:** Validator, Leader, Contributor
+**Milestone:** Sprint 32
+**Status:** CLOSED (CO-040, pending commit/manager approval)
+
+The emissions epoch hook logged "no emission pool found" every epoch and never minted, because no pool was seeded at genesis; and reputation launched inactive (DefaultGenesis returned Active:false) despite DefaultParams.Active=true (GAP-REP-1).
+
+**Resolution:** CO-040 implemented `module.HasGenesis` for `x/emissions` and `x/reputation` (DECISIONS D-S32-HASGENESIS-CUSTOM-MODULES), seeds `app_state.emissions = {}` and `app_state.reputation = {"active": true}` in `init-chain.sh`, and the modules' InitGenesis fill the pool (from DefaultParams) and activate reputation (DECISIONS D-S32-EMISSION-POOL-GENESIS, D-S32-REPUTATION-DEFAULTGENESIS-ACTIVE). Verified on the live fast stack: "emission pool set" / "daily emission minted" each epoch; IsActive query returns true. CO-040 also hardened both epoch hooks to never return errors on recoverable conditions (DECISIONS D-S32-EPOCH-HOOK-RESILIENCE).
+
+---
+
+### GAP-S32-CACHEKV: Epoch-End Iteration Fails Under Cache-Wrapped Store (root cause of "zero decay")
+
+**Participant:** Validator, Leader, Contributor (decay/economic loops)
+**Milestone:** Sprint 32
+**Severity:** CRITICAL
+**Status:** OPEN (diagnosed in CO-040; fix scoped to CO-041 Task A)
+
+The Sprint-31 "zero decay" symptom is caused by the keepers' `iter.Error()`-as-failure pattern. Under the cache-wrapped KV store used in BeginBlock / epoch hooks, `cosmossdk.io/store cacheMergeIterator.Error()` returns non-nil at NORMAL end-of-iteration. So `ApplyEpochDecay`, `CheckEpochExpiry`, `getAllOrgsWithMemories`, and emissions `GetAllOrgs` all error every epoch and epoch-end idle decay never runs. The defect spans 24 sites across 10 keeper files in 4 modules (emissions, memory, org, reputation). It was invisible to unit tests because they iterate a direct IAVL store (returns nil at end), and was masked until CO-040 seeded the emission pool (which advanced the emissions hook past its previous early return).
+
+**Impact:** memory decay, expiry, and merkle-root computation do not run on the live chain; the only observed decay comes from the event-time serve/denial path. The 75pp decoupling contract cannot pass until fixed.
+
+**Resolution requires (CO-041 Task A, DECISIONS D-S32-CACHEKV-ITER):** remove the post-loop `iter.Error()` checks (rely on `Valid()` termination); adopt collect-then-mutate for iterate-and-modify paths (`ApplyEpochDecay`, `CheckEpochExpiry`); add a cachekv-wrapped regression test that fails pre-fix and passes post-fix.
+
+---
+
+### GAP-S32-TOKENOMICS: 32-Year Emission Schedule + Contributor Attribution
+
+**Participant:** Validator, Leader, Contributor
+**Milestone:** Sprint 32
+**Severity:** MAJOR
+**Status:** OPEN (locked design; implementation scheduled CO-041; originally "CO-040b")
+
+The flat `daily_mint` placeholder must be replaced by the locked 32-year schedule: 1B VIBE total, 10% foundation + 1% validator at genesis, 570M validator pool + 320M contributor pool emitted over 11,680 epochs, 10M VIBE/yr contributor cap, global rollover. Contributor address must be persisted through memory state (`contributor_address` on pending + committed), serve attribution must derive the contributor from the stored memory, and emissions must distribute to distinct qualifying contributors network-wide per epoch.
+
+**Resolution requires (CO-041, DECISIONS D-S32-TOKENOMICS-LOCKED, D-S32-CONTRIBUTOR-ATTRIBUTION):** proto changes (emissions params + pool fields, memory contributor_address), emissions keeper overhaul, memory contributor-by-epoch query, serve attribution rewire, init-chain.sh allocations, genesis re-plumbing. Depends on GAP-S32-CACHEKV landing first (the contributor distribution adds a network-wide approved-memory iteration). Empirically gated by the 300-epoch seed-42 contract (chain.gap ≥ 75pp AND |Δ gap| ≤ 5pp).
 
 ---
 

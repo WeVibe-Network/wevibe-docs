@@ -567,25 +567,42 @@ The bootstrap grace period (D-4.2) is measured in **chain epochs**, not rotation
 
 ## 5. Memory Types & Extraction
 
-### D-5.1: Two Memory Types Only
+### D-5.1: Single Memory Type with Internal Do/DND Distinction
 
-**Decision:** Memories carry one of two types: `correct_implementation` or `negative_signal`. There is no "preference" type.
+**Decision:** Memories carry one type: `memory` (the only type). Within each memory, two fields quantify the content:
+- `implement` (required) — what TO do and how, describes the correct pattern
+- `dnd` (optional, can be null) — what NOT to do and why
 
-**Why:** Type proliferation creates ambiguity at extraction and moderation time. The preference-vs-fact distinction was considered as a third type and rejected for six reasons:
+The `dnd` field being null or non-null is the signal used for consumer-side risk appetite filtering. Memories with a non-null `dnd` field are DNDs (do-not-do warnings); memories with a null `dnd` field are pure implementations.
 
-1. **Decay model breakage.** The Earned Trust decay model (D-4.2) treats serves as positive signal and denials as negative signal, with discrimination driven by `denial_rate`. If "preference" were a third type, denials on preferences would mean "I disagree" — not "this is wrong" — which corrupts the keyword weight signal entirely. The decay model depends on denials representing factual inaccuracy, not opinion divergence.
+**Why single type with internal DND flag (replaces D-5.1 "Two Memory Types Only"):**
 
-2. **wevibe-guard scanning limitations.** The guard was designed to detect credential leakage, injection patterns, and homoglyph attacks. It cannot meaningfully scan soft/opinion content for threats it wasn't built to detect. Classifying preferences as a separate type would require the guard to make judgments about opinion vs fact — a task beyond its threat model.
+The previous design had two memory types at the protocol level: `correct_implementation` and `negative_signal`. This was wrong — it created a false dichotomy where every memory had to be classified as one or the other, when in reality a single memory can contain both positive guidance (what to do) and negative warnings (what not to do).
 
-3. **Keyword classification breakdown.** Soft terms like "we prefer functional style" or "I like error-first callbacks" don't map cleanly to vocabulary keywords. Forcing a type label on content that doesn't naturally decompose into topic keywords creates false precision in retrieval matching.
+1. **Knowledge is not mutually exclusive.** A memory about PostgreSQL connection pooling naturally contains both "set `max_connections` to match your PgBouncer pool size" (implement) AND "do not set `max_connections` above 100 on t2.micro or you will exhaust RAM" (dnd). Forcing this into a single type forced contributors to choose which aspect to emphasize, discarding the other.
 
-4. **Moderation burden.** Preferences are the highest-friction category for moderators because right/wrong judgment simply doesn't apply. Auto-classifying as a third type would push this friction onto moderators who would need to constantly override the classification.
+2. **Risk appetite filtering works at the field level, not the type level.** The consumer's `risk_appetite` setting (`lowest` = DND-only, `neutral` = all) filters on the presence of a non-null `dnd` field — a more granular and semantically correct filter than binary type membership. A memory can be both; the consumer chooses which aspect to see.
 
-5. **False-positive rate.** Preference detection has a 15-30% false-positive rate. Auto-classifying as a type would cause too many valid factual memories to be miscategorized as opinion.
+3. **Extraction produces cleaner output.** When the LLM knows it should emit both `implement` and `dnd` as independent fields within a single memory, it produces more complete guidance. The old model forced a binary choice that diluted both types.
 
-6. **The flag is sufficient.** The continuous `preference_confidence` score (D-5.2) handles this signal without requiring a third type. Moderators see the flag and decide whether to approve — the system never auto-rejects based on it.
+4. **Moderation is simpler.** Moderators review one type (`memory`) rather than classifying into one of two types. The `dnd` field's presence is a signal, not a type classification decision.
 
-Memory type is stored on-chain (chain is authority) and the moderator can override at approval time.
+5. **Chain state is simpler.** One `MemoryType` enum with one variant. No type proliferation risk. The `dnd` field lives inside the encrypted blob — the chain stores the blob, not its internal field structure.
+
+**Memory content schema (inside encrypted blob):**
+```json
+{
+  "implement": "string (required) — what to do and how",
+  "dnd": "string (optional, can be null) — what not to do and why",
+  "context": "string — environment, versions, conditions",
+  "stack": ["technology1", "technology2"],
+  "preference_confidence": 0.0-1.0
+}
+```
+
+**Risk appetite filtering logic:**
+- `lowest` → only memories where `dnd !== null` (DND warnings only)
+- `neutral` → all memories regardless of `dnd` value
 
 ---
 
@@ -698,7 +715,7 @@ Findings are stored on the submission record as `sanitization_findings`. The sca
 
 **Decision:** `required_approvals` (1–10) is stored on the hub and enforced by hub logic. The chain only sees the final approved memory commitment.
 
-**Why:** Operational decisions like quorum thresholds change as orgs scale. Storing them on-chain would require governance transactions for every adjustment. The hub enforces the threshold; the chain records the outcome (approved memory + moderator pubkey). The chain doesn't need to validate the vote count — it trusts the hub's approval signature.
+**Why:** Operational decisions like quorum thresholds change as orgs scale. Storing them on-chain would require governance transactions for every adjustment. The hub enforces the threshold; the chain records the outcome (approved memory + moderator pubkey). The chain doesn't validate the vote count — it trusts the **leader's on-chain transaction signature** as the approval authority (the leader wallet is the chain authority per D-1.3 and D-S32-CO044-KEY-SEPARATION, submitted via the delegate/authz relay), NOT the hub's key. (Pre-CO-044 dogfood, the hub key signed approvals directly; that global-authority shortcut is removed by D-S32-CO044-KEY-SEPARATION.)
 
 Note: Changes to `required_approvals` require wallet signature (D-1.3) because the threshold is security-critical.
 
@@ -1777,9 +1794,13 @@ The fix (D-S29-CHAIN-RESTART-FOUNDATION, CO-005d) writes a sentinel marker to ev
 
 ---
 
-### D-S29-HUB-SEQUENCE-RACE
+### D-S29-HUB-SEQUENCE-RACE [SUPERSEDED by D-S32-CO044-PER-ORG-BROADCAST]
 
 **Decision:** wevibe-hub's broadcast.go cross-checks queried account sequence against a local post-broadcast cache (max-of-two). Without this, successive broadcasts within one CometBFT block window race and the second is rejected with sequence mismatch. Known limitation: max-of-two doesn't handle rejected broadcasts; proper fix is in-flight counter pattern (documented in code). Discovered via CO-005d dogfood; fixed in CO-005d Stage 9.
+
+**Superseded:** CO-044 replaces the single shared `submitter` account (the root cause this hack
+worked around) with a per-org signer registry, each org with its own account and sequence. The
+max-of-two cache is removed. See D-S32-CO044-PER-ORG-BROADCAST.
 
 ---
 
@@ -1883,7 +1904,7 @@ Moderators are already accountable through D-6.4 (their pubkey is recorded on ev
 wevibe.submit_memory.v1
 contributor_pubkey:<hex>
 epoch_id:<int>
-memory_type:<correct_implementation|negative_signal>
+memory_type:memory
 org_id:<string>
 submission_hash:<hex>
 ```
@@ -1895,7 +1916,7 @@ wevibe.submit_memory.v1
 ciphertext_hash:<hex>
 contributor_pubkey:<hex>
 epoch_id:<int>
-memory_type:<correct_implementation|negative_signal>
+memory_type:memory
 org_id:<string>
 plaintext_hash:<hex>
 salt:<hex>
@@ -2000,6 +2021,27 @@ DMO-028 locked the ZK pathway. CO-028 spike validated and then unblocked walking
 
 ---
 
+### D-S32-CO044-APPROVEMEM-SOFTFAIL — Contributor sig check soft-fails in batch approval
+
+**Decision:** The contributor signature verification inside `ApproveMemory` (chain keeper) returns
+success without committing the individual memory when the signature is invalid. The memory stays
+in `pending` state. The batch tx (up to 500 memories per D-6.6) is NOT rolled back.
+
+**Why soft-fail:** Approvals commit as atomic multi-message batches. A hard error on one bad
+contributor sig would roll back all 499 other valid approvals in the same tx. The hub pre-verifies
+contributor signatures at submit time (D-VR-5, D-VR-6), so an on-chain sig failure means genuine
+corruption between hub and chain (tampering, relay corruption, bug) — not normal operation.
+
+**Detection:** The leader can detect a dropped memory by comparing batch count vs committed count.
+A future CO may add a chain event (`EventApprovalSigFailed`) so the hub watcher can surface the
+drop as a leader notification. The silently-dropped memory remains in `pending` state and can be
+re-submitted.
+
+**Why not hard-error:** The cost (499 good approvals rolled back) exceeds the benefit (immediate
+error signal) given that the hub pre-verification makes this path fire only on genuine faults.
+
+---
+
 ## 17. Sprint 30 Deferred Decisions
 
 ### D-2026-05-25-B: Leader Activity Aggregation — Deferred
@@ -2018,6 +2060,248 @@ DMO-028 locked the ZK pathway. CO-028 spike validated and then unblocked walking
 - Per-leader RPC-queryable activity aggregation is deferred to a future sprint.
 - This deferral is intentional to avoid rework before the leader action taxonomy is locked.
 - BlockResults (hub reads from CometBFT block events) already provides raw `committing_leader_pubkey` data; the deferred scope is the query/API surface and formal action definition.
+
+---
+
+## 18. Sprint 32 Decisions: Memory Decay Activation + Tokenomics
+
+This section records decisions from Sprint 32 ("Memory Decay: Earned Trust + Probabilistic Retrieval"). CO-040 delivered genesis activation + epoch-hook resilience and, in doing so, surfaced the true root cause of the Sprint-31 "zero decay" symptom (D-S32-CACHEKV-ITER). The tokenomics overhaul and the cachekv fix are rolled into CO-041.
+
+### D-S32-EMISSION-POOL-GENESIS
+
+**Decision:** The emissions module seeds an `EmissionPool` at chain genesis. The pool is derived from `emissions/types.DefaultParams()` via `DefaultEmissionPool()` (single source of truth), and `init-chain.sh` makes the genesis key present by seeding `app_state.emissions = {}` (the module's `InitGenesis` fills the pool from `DefaultParams` when none is supplied). Implemented in CO-040.
+
+**Why:** Before CO-040 no pool was written at genesis, so the emissions epoch hook logged "no emission pool found" every epoch and never minted. The previous design assumed a module `DefaultGenesis` would auto-seed it, but `wevibed init` builds genesis.json from `app.ModuleBasics` (encoding.go), which contains ONLY the SDK modules — the custom WeVibe modules are absent, so their `app_state` keys never appeared and `ModuleManager.InitGenesis` skipped any module whose genesis data is nil. Seeding the key in `init-chain.sh` plus implementing `module.HasGenesis` (D-S32-HASGENESIS-CUSTOM-MODULES) is the load-bearing combination.
+
+---
+
+### D-S32-HASGENESIS-CUSTOM-MODULES
+
+**Decision:** Custom WeVibe modules that require genesis state implement `cosmos-sdk/types/module.HasGenesis` (the legacy stateful genesis interface): `DefaultGenesis(codec.JSONCodec)`, `ValidateGenesis(...)`, `InitGenesis(sdk.Context, codec.JSONCodec, json.RawMessage)`, `ExportGenesis(...)`. CO-040 wired this for `x/emissions` and `x/reputation`. Both modules were already present in `app.go SetOrderInitGenesis`, so no ordering change was needed. Genesis state for these Go structs is marshaled with `encoding/json` (they are not proto messages); the `codec.JSONCodec` argument is unused.
+
+**Why:** The SDK `ModuleManager.InitGenesis` dispatches on `appmodule.HasGenesis` → `module.HasGenesis` → `module.HasABCIGenesis`. The previous modules implemented only the `appmodule.AppModule` marker, so their genesis path was silently skipped (the root cause noted in app.go's CO-005d comment). `module.HasGenesis` is the minimal correct interface for a non-validator module and is fully dispatched by both `ModuleManager` (via `m.Modules[name]`) and `BasicManager` (via `coreAppModuleBasicAdaptor`, which forwards to `HasGenesisBasics`).
+
+**Known follow-up:** Because `app.ModuleBasics` (encoding.go) does not contain the custom modules, `wevibed init` does not auto-write their default genesis; `init-chain.sh` jq-seeds the keys instead. A future cleanup could add custom-module basics to `ModuleBasics` to make `wevibed init` self-seeding and drop the jq seeds. Not done now (out of CO-040 scope).
+
+---
+
+### D-S32-REPUTATION-DEFAULTGENESIS-ACTIVE
+
+**Decision:** `reputation/types.DefaultGenesis()` returns `Active: true`, and reputation `InitGenesis` persists both the active flag and `DefaultParams()`. Implemented in CO-040 (GAP-REP-1).
+
+**Why:** D-13.5 already set `DefaultParams.Active = true`, but the module's `DefaultGenesis` returned `Active: false`, so the chain launched with reputation inert despite the params claiming otherwise — payouts would silently use tier=0 for everyone. This decision aligns `DefaultGenesis` with `DefaultParams` and D-13.5. Active state is an explicit genesis decision, so `init-chain.sh` seeds `app_state.reputation = {"active": true}` rather than relying on a zero-value default.
+
+---
+
+### D-S32-EPOCH-HOOK-RESILIENCE (R-EPOCH-HOOK-RESILIENCE)
+
+**Decision:** No epoch hook (`AfterEpochEnd`/`BeforeEpochStart`) may return a non-nil error for a recoverable condition. All recoverable failures (missing data, empty iteration, no qualifying contributors) log a warning and return nil. Each step within a hook is independent: a failure in one step must not skip the others (e.g. a `setCurrentEpoch` failure must not prevent `ApplyEpochDecay`). Implemented in CO-040 for `x/memory` and verified for `x/emissions`.
+
+**Why:** The Cosmos SDK epoch dispatcher runs all epoch hooks inside one cached-write batch and discards ALL cached writes for the batch if any hook returns a non-nil error. A recoverable error in one hook would therefore silently roll back unrelated successful work (e.g. `ApplyEpochDecay`'s weight changes) — the mechanism originally suspected for the Sprint-31 "zero decay." The resilience change is also what made the real cause (D-S32-CACHEKV-ITER) visible in logs instead of being silently rolled back.
+
+---
+
+### D-S32-CACHEKV-ITER (R-CACHEKV-ITER) — root cause of "zero decay" [LOAD-BEARING]
+
+**Decision:** Keeper iteration code MUST NOT use the post-loop pattern
+`for iter.Valid() { … }; if err := iter.Error(); err != nil { return err }`, and MUST NOT write to or delete from a store while iterating that same store. The corrected patterns are: (1) rely on the `Valid()` loop to terminate (a genuine parent-store error panics via `assertValid()` inside `Next()/Key()/Value()`); (2) collect-then-mutate for any iterate-and-modify path (gather keys/values, `Close()`, then mutate). New iterations must follow this from the start. Discovered in CO-040; the systemic sweep + fix is scoped to CO-041.
+
+**Why:** `cosmossdk.io/store@v1.1.2 cachekv/internal/mergeiterator.go` defines
+```go
+func (iter *cacheMergeIterator) Error() error {
+    if !iter.Valid() { return errors.New("invalid cacheMergeIterator") }
+    return nil
+}
+```
+On a **cache-wrapped** KV store — which is the store every BeginBlock / epoch-hook / branched-tx path uses — `iter.Error()` returns a NON-NIL error at NORMAL end-of-iteration (the iterator is exhausted, so `!Valid()`). Direct IAVL stores (used by unit tests via `rootmulti`) return nil at end, which is why the entire test suite was green while the live chain failed. The WeVibe keepers added `iter.Error()` failure checks at 24 sites across 10 keeper files (emissions, memory, org, reputation); under the epoch hook this turned every iteration into a false failure:
+```
+INF failed to get orgs error="invalid cacheMergeIterator"
+WRN epoch hook: apply epoch decay failed ... error="iterate approved memories: invalid cacheMergeIterator"
+WRN epoch hook: check epoch expiry failed ... error="iterate validity metadata: invalid cacheMergeIterator"
+```
+So `ApplyEpochDecay` never ran on the live chain; the only decay observed in CO-040's smoke came from the event-time serve/denial path (single-key, no iteration). Additionally, `ApplyEpochDecay` (lifecycle.go) and `CheckEpochExpiry` (validity.go) write/delete while iterating the same prefix, which is independently unsafe on cachekv.
+
+**Why it surfaced in CO-040, not earlier:** the emissions epoch hook previously returned early at "no emission pool found" BEFORE reaching `GetAllOrgs`. Seeding the pool (D-S32-EMISSION-POOL-GENESIS) advanced execution past the mint step and exposed the next broken iteration. The bug is pre-existing; CO-040 made it observable.
+
+**Process lesson:** unit tests over a direct IAVL store do NOT exercise `cacheMergeIterator`. Any test that must validate epoch-hook / BeginBlock iteration behavior MUST wrap the store in `cachekv.NewStore` (regression test mandated in CO-041 Task A).
+
+---
+
+### D-S32-TOKENOMICS-LOCKED — 32-Year Emission Schedule [SCHEDULED: CO-041]
+
+**Decision (locked constants; implementation in CO-041):**
+```
+Total supply:           1,000,000,000 VIBE   (1,000,000,000,000,000 uvibe; 10^6 uvibe per VIBE)
+Foundation genesis:     10%  = 100,000,000 VIBE    (unlocked at genesis)
+Validator genesis:      1%   = 10,000,000 VIBE     (to docker validator)
+Contributor 32yr pool:  1%/yr × 32yr = 320,000,000 VIBE
+Validator 32yr pool:    remainder = 570,000,000 VIBE (emitted over 32 years)
+Contributor emission:   10,000,000 VIBE/year cap, split evenly among qualifying contributors
+Qualifying:             ≥ contributor_qualify_threshold approved memories network-wide per epoch (default 1)
+Rollover:               global bucket — if nobody qualifies the epoch budget rolls forward; the integer
+                        remainder of an even split also carries forward (no token loss)
+Schedule length:        11,680 epochs (32 × 365)
+```
+New emissions params: `total_supply_uvibe`, `validator_emission_pool_uvibe`, `contributor_annual_cap_uvibe`, `schedule_duration_days`, `contributor_qualify_threshold`. New `StoredEmissionPool` fields: `validator_pool_remaining_uvibe`, `contributor_pool_remaining_uvibe`, `contributor_rollover_uvibe`, `start_epoch`, `total_epochs_elapsed`. `DefaultParams()` remains the single source of truth for schedule constants; `init-chain.sh` seeds the full 32-year pool at genesis.
+
+**Why:** This is the real economic model deferred out of CO-040 (originally "CO-040b"). It replaces the flat `daily_mint` placeholder with a validator pool + contributor pool emitted over 32 years, a per-year contributor cap, and a global rollover so unclaimed contributor budget is preserved rather than burned. Per-epoch: validator emission = `validator_pool_remaining / remaining_epochs`; contributor budget = `min(contributor_pool_remaining / remaining_epochs, annual_cap / epochs_per_year)`.
+
+**Cascade (mapped in CO-041):** proto regen → keys.go conversion helpers + `DefaultParams`/`DefaultEmissionPool` → `GetEmissionPool`/`SetEmissionPool`/`InitGenesis`/`ExportGenesis` → epoch emission logic → contributor distribution, which queries memory network-wide by epoch and therefore DEPENDS on the D-S32-CACHEKV-ITER fix landing first.
+
+---
+
+### D-S32-CONTRIBUTOR-ATTRIBUTION — Address Persisted Through Memory State [SCHEDULED: CO-041]
+
+**Decision (implementation in CO-041):** Persist the contributor's address through the memory lifecycle and derive serve attribution from the authoritative stored record:
+- Add `contributor_address` to `StoredPendingCommitment` (field 8) and `StoredMemoryCommitment` (field 23).
+- `SubmitCommitment` persists `msg.contributor_wallet` into pending; `ApproveMemory` copies it into the committed record.
+- Serve attribution: `x/serve` `RecordServe` credits the served memory's `contributor_address` (looked up from `x/memory`) instead of trusting the serve payload's `contributor_wallet`.
+- Add `x/memory` `GetContributorsWithApprovalsInEpoch(ctx, epoch)` (distinct qualifying contributor addresses network-wide) consumed by the emissions contributor distribution.
+
+**Why:** Contributor emissions (D-S32-TOKENOMICS-LOCKED) must credit the real author network-wide, and the serve payload's wallet is consumer-supplied and therefore untrustworthy. The committed memory record is the chain-authoritative source. This closes the attribution gap between "who is paid" and "who actually contributed the served memory."
+
+---
+
+## Sprint 32+ — CO-044: Multi-Org Broadcasting, Least-Privilege Key Separation, Gas Faucet
+
+This section records the locked architecture for hub multi-tenancy and per-org key security.
+It is the canonical end-goal for org key custody and on-chain authority. Where earlier decisions
+described the dogfood single-account / hub-as-global-authority model, those are superseded here.
+
+### D-S32-CO044-KEY-SEPARATION — Two on-chain authorities per org [LOAD-BEARING]
+
+**Decision:** An org has exactly two on-chain signing authorities, with disjoint powers:
+
+1. **Org serving key** — per-org, HUB-HELD. HD-derived from the hub master mnemonic at
+   `m/44'/118'/0'/0/{account_index}`, where `account_index` is a DB-assigned monotonic value from a
+   Postgres sequence (`org_chain_accounts.account_index`, UNIQUE; NEVER hash-derived — collision
+   risk). It signs **serves and denials ONLY** (`MsgSubmitServeBatch`, `MsgSubmitDenialBatch`). It
+   is registered on-chain and is leader-revocable (D-S32-CO044-SERVING-KEY-REVOCATION).
+
+2. **Leader wallet** — held by the leader/org, NOT the hub. Multisig-capable (cosmos k-of-n). It is
+   the on-chain authority for **all org decisions**: `MsgApproveMemory`, `MsgSubmitCommitment`,
+   `MsgReportMemory`, `MsgRegisterOrg`, and org governance (`MsgRotateEpoch`,
+   `MsgTransferLeadership`, member ops, `MsgSetOrgConfig`, `MsgSetRepTiers`, `MsgSetServingKey`).
+   Org-decision txs are SUBMITTED THROUGH the hub's delegate/authz relay (`internal/relay`); the hub
+   relays leader-signed bytes and NEVER signs org decisions with its own key.
+
+**Hub validation only (off-chain, unchanged):** quorum thresholds (`required_approvals`),
+membership/moderator roles, and vote process remain hub-enforced operational state (D-6.3, D-6.4).
+
+**Blast radius (the spine of CO-044):** if the hub is compromised and a per-org serving key is
+stolen, the attacker can do exactly two things: (a) submit serve/denial batches (accepted only when
+the tx signer equals the org's currently-registered serving key), and (b) drain that key's gas.
+The attacker CANNOT approve memories, commit, file reports, register/govern orgs, or act for any
+other org — all of those require the leader wallet, which the hub does not hold.
+
+**Why:** The dogfood hub signed every org's every tx with one global "submitter" key, making the hub
+an implicit global authority and serializing all orgs behind one account sequence
+(D-S29-HUB-SEQUENCE-RACE). Splitting authority (a) eliminates the global-authority blast radius and
+(b) gives each org an independent account/sequence, enabling true multi-org concurrency.
+
+---
+
+### D-S32-CO044-LEADER-DUAL-PATH — Two leader signing paths [EXPLICIT R-ONE-PATH EXCEPTION]
+
+**Decision:** The leader may authorize org-decision txs via EITHER of two paths, both supported
+simultaneously. This is a deliberate, manager-directed exception to R-ONE-PATH for this order:
+
+1. **Delegate path** — the leader's wallet grants cosmos `authz` to a delegate session key; the
+   delegate key signs a `MsgExec`-wrapped org-decision msg with `granter = leader wallet`; the hub
+   relays it (`internal/relay/relay.go`, `Delegate <sig>` scheme, granter-must-match check). For
+   high-volume routine signing (e.g. batch approvals).
+2. **Non-delegate (direct) path** — the leader's wallet signs the org-decision tx directly (no
+   delegate key); the hub relays the signed bytes.
+
+In both paths the leader wallet is the on-chain authority and the hub is pure transport + fee
+relay. The operations enumerated in **D-1.3** (report commitment, leadership transfer, org closure,
+`required_approvals`/`report_vote_threshold` changes) MUST use the direct wallet path — they are too
+consequential for a delegate key. Both paths support a multisig leader wallet natively.
+
+**Why:** Different orgs have different security postures. Routine, high-frequency approvals benefit
+from a delegate session key (no wallet popup per action, D-1.1/D-1.3); consequential or
+security-critical actions, and orgs that decline delegate keys entirely, sign directly with the
+(possibly multisig) wallet. Supporting both is worth the two-path cost; the alternative (forcing one)
+either weakens routine UX or weakens security-critical actions.
+
+---
+
+### D-S32-CO044-SERVING-KEY-REVOCATION — Leader-revocable serving key + accepted residual risk
+
+**Decision:** The org's serving-key address is stored on-chain (`StoredOrg.hub_serving_address`,
+populated from `MsgRegisterOrg.hub_serving_key`) and is rotatable/revocable by the leader via a
+leader-authorized `MsgSetServingKey`. `SubmitServeBatch`/`SubmitDenialBatch` are accepted ONLY if the
+tx signer equals the org's currently-registered serving key.
+
+**Accepted residual risk (documented):** serve/denial CONTENT forged by a live, not-yet-revoked
+serving key — and any token emissions those forged serves trigger before revocation — is NOT
+prevented in this order. There is no per-serve consumer proof and no rollback engine. Containment is
+leader revocation of the serving key.
+
+**Why not rollback / why not per-serve proofs (now):** A forged serve fans out into memory decay
+weight (frozen CO-042 model), reputation, epoch stats, and — at epoch rotation — minted, distributed
+emissions (`x/emissions` `MintDailyEmission`/`DistributePayout`). Tokens minted and withdrawn before
+detection cannot be clawed back, so a serve-attestation rollback cannot restore correctness; a
+cross-module compensation engine is disproportionate and still incomplete. Per-serve consumer proofs
+would prevent forgery cryptographically but touch the consumer/MCP retrieval + nullifier + SDK
+surface; an emissions settle/clawback window would touch the FROZEN CO-042 decay/emissions surface
+(R-DECAY-FROZEN). Both are deferred. Revocation bounds the damage at the right cost.
+
+---
+
+### D-S32-CO044-GAS-FAUCET — Standalone faucet service funds per-org accounts
+
+**Decision:** A new top-level `faucet/` standalone Go service holds one funded chain account and
+exposes `POST /v1/fund { address, amount }` (bank-send uvibe; idempotency + rate limiting; returns
+tx hash) plus a health endpoint, with serialized single-account nonce management. The hub calls it to
+fund a new/low per-org serving account; if the faucet is unavailable the hub operation is a HARD
+ERROR (no fallback). The faucet account is funded from the WeVibe validator account at chain init via
+a validator→faucet bank send in `scripts/init-chain.sh`; the faucet address is deterministic.
+
+**Why:** Per-org accounts (D-S32-CO044-KEY-SEPARATION) must exist and hold gas on-chain before they
+can pay for `RegisterOrg`/serve/denial txs. A faucet is the deterministic way to create+fund them
+without minting from a chain module. The validator holds the 1% genesis allocation
+(D-S32-TOKENOMICS-LOCKED) and forwards uvibe to the faucet.
+
+---
+
+### D-S32-CO044-REGISTERORG-FLOW — Leader signs RegisterOrg after self-funding via faucet
+
+**Decision:** The hub NEVER signs `MsgRegisterOrg` or any other org decision. The org creation
+flow is: (1) leader connects wallet in dashboard, (2) dashboard calls faucet `POST /v1/fund`
+to fund the leader's wallet with gas, (3) dashboard calls hub `POST /v1/orgs` which creates the
+org in PostgreSQL, derives the per-org serving key, funds it via faucet, and returns the
+`hub_serving_key_address`, (4) dashboard builds `MsgRegisterOrg` with the leader's wallet as
+signer and the hub-returned serving key address, (5) leader signs with Keplr/Leap, (6) dashboard
+relays the signed tx through the hub relay endpoint.
+
+**Why no bootstrap exception:** A bootstrap exception ("hub signs RegisterOrg because the leader
+wallet has no gas yet") would make the hub an org-decision signer for one operation, violating
+D-S32-CO044-KEY-SEPARATION. The faucet exists precisely to solve the gas-bootstrapping problem.
+The leader funds their own wallet before signing. One path, no exceptions (R-ONE-PATH).
+
+---
+
+### D-S32-CO044-PER-ORG-BROADCAST — Per-org signer registry [SUPERSEDES D-S29-HUB-SEQUENCE-RACE]
+
+**Decision:** The hub replaces the single `submitter` with a per-org signer registry
+(`map[orgID]*orgSigner`, each holding its own keyring uid, address, account number, next sequence,
+and its OWN mutex). `BroadcastMsgsForOrg(ctx, orgID, msgs)` acquires that org's mutex, ensures the
+account is funded (balance check → faucet top-up; hard error if faucet fails), builds/simulates/signs
+with that org's sequence, broadcasts, increments on success, and resyncs-from-chain + retries once on
+sequence error. Different orgs broadcast in PARALLEL; one org serializes on its own mutex. The serve
+relay worker pool is restored to >1 (safe because the `serveRelayQueued` dedup guarantees one worker
+per org and each worker drives a distinct account).
+
+Serves/denials keep BLOCKING commit (`broadcast_tx_commit`) to preserve the CO-042 decay
+settle-window invariant (drain-pacing relies on relay broadcasts being committed when
+`pending_total` hits 0). Intra-org sync-broadcast pipelining is separately gated and MUST NOT ship
+without a fresh decay-gate validation.
+
+**Why:** The single shared account sequence (D-S29-HUB-SEQUENCE-RACE) made concurrent broadcasts
+collide (`incorrect account sequence`) and forced the relay pool to 1 worker, making multi-org
+hosting impossible. Per-org accounts give each org an independent sequence — the correct fix the
+max-of-two cache only approximated.
 
 ---
 

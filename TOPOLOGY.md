@@ -691,11 +691,52 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 |--------|------------|-----------|-------|---------|
 | x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Merkle root submission |
 | x/bandwidth | x/bandwidth/keeper/ | proto/wevibe/bandwidth/v1/ | keeper + integration | Bandwidth throttling |
-| x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Daily pool, work scores |
+| x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Emission pool, epoch emission, work scores (32-yr schedule scheduled CO-041) |
 | x/memory | x/memory/keeper/ | proto/wevibe/memory/v1/ | keeper + integration | Memory commitments |
 | x/org | x/org/keeper/ | proto/wevibe/org/v1/ | keeper + integration | Org registration, membership |
 | x/reputation | x/reputation/keeper/ | proto/wevibe/reputation/v1/ | keeper | Contributor reputation |
 | x/serve | x/serve/keeper/ | proto/wevibe/serve/v1/ | keeper + integration | Serve attestations |
+
+### Genesis Seeding & Epoch Hooks (Sprint 32 / CO-040)
+
+**module.HasGenesis wiring (CO-040, DECISIONS D-S32-HASGENESIS-CUSTOM-MODULES).**
+`x/emissions` and `x/reputation` implement `cosmos-sdk/types/module.HasGenesis`
+(`DefaultGenesis`/`ValidateGenesis`/`InitGenesis`/`ExportGenesis`) in their
+`module/module.go`. The SDK `ModuleManager.InitGenesis` dispatches this; before
+CO-040 these modules implemented only the `appmodule.AppModule` marker, so their
+genesis path was silently skipped (the cause behind app.go's CO-005d sentinel
+comment). Genesis Go structs are JSON-marshaled (`encoding/json`), not via the codec.
+
+**Genesis seeding path.** `wevibed init` builds genesis.json from
+`app.ModuleBasics` (app/encoding.go), which contains ONLY SDK modules — the custom
+modules are absent, so `ModuleManager.InitGenesis` would skip any module whose
+`app_state` key is nil. Therefore `scripts/init-chain.sh` jq-seeds:
+- `app_state.emissions = {}` → emissions `InitGenesis` derives the pool from
+  `DefaultParams()` (`DefaultEmissionPool()`), so DefaultParams is the single
+  source of truth (DECISIONS D-S32-EMISSION-POOL-GENESIS).
+- `app_state.reputation = {"active": true}` → reputation active at genesis
+  (DECISIONS D-S32-REPUTATION-DEFAULTGENESIS-ACTIVE, reinforcing D-13.5).
+
+**Epoch-hook chain.** The epochs module fires `AfterEpochEnd` for the
+`wevibe_epoch` identifier via MultiEpochHooks: emissions first (mint + payouts),
+then memory (`setCurrentEpoch` → `CheckEpochExpiry` → `ApplyEpochDecay` → merkle
+roots). Both hooks obey **R-EPOCH-HOOK-RESILIENCE** (DECISIONS
+D-S32-EPOCH-HOOK-RESILIENCE): every recoverable failure logs a warning and returns
+nil, because the SDK epoch dispatcher discards the entire cached-write batch if any
+hook returns a non-nil error.
+
+**cachekv iterator correctness (DECISIONS D-S32-CACHEKV-ITER) — LOAD-BEARING.**
+Under the cache-wrapped store used by epoch hooks / BeginBlock,
+`cacheMergeIterator.Error()` returns non-nil at normal end-of-iteration. The legacy
+`for iter.Valid(){…}; if err := iter.Error(); err != nil { return err }` pattern
+(24 sites across emissions/memory/org/reputation keepers) therefore mis-reads
+exhaustion as failure on the live chain — `ApplyEpochDecay`, `CheckEpochExpiry`,
+`getAllOrgsWithMemories`, and emissions `GetAllOrgs` all error every epoch. This was
+the true cause of the Sprint-31 "zero decay" symptom; unit tests missed it because
+`rootmulti`/IAVL iterators return nil at end. The fix (remove post-loop
+`iter.Error()` checks; collect-then-mutate for iterate-and-modify paths; cachekv-
+wrapped regression test) is scoped to CO-041 Task A.
+
 
 ### Module Structure Pattern (all 8 modules follow this)
 

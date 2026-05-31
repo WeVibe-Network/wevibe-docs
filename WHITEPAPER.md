@@ -920,6 +920,28 @@ Single token: **VIBE**. Used for staking, org creation burns, bandwidth allocati
 
 Org leaders can adjust these tiers. Protocol enforces them on-chain.
 
+#### 10.3.1 Emission Schedule (Sprint 32, locked — see DECISIONS D-S32-TOKENOMICS-LOCKED)
+
+Beyond org-funded contributor payouts (above), the protocol mints VIBE on a fixed **32-year schedule** from genesis:
+
+| Allocation | Amount | Notes |
+|---|---|---|
+| Total supply | 1,000,000,000 VIBE | 10^6 uvibe per VIBE |
+| Foundation (genesis) | 10% = 100,000,000 VIBE | unlocked at genesis |
+| Validator (genesis) | 1% = 10,000,000 VIBE | docker validator self-delegation |
+| Validator 32-yr pool | 570,000,000 VIBE | emitted linearly over the schedule |
+| Contributor 32-yr pool | 320,000,000 VIBE | 1%/yr, capped at 10,000,000 VIBE/year |
+
+**Per-epoch emission.** Validator emission = `validator_pool_remaining / remaining_epochs`. Contributor budget = `min(contributor_pool_remaining / remaining_epochs, annual_cap / epochs_per_year)`. The schedule length is 11,680 epochs (32 × 365).
+
+**Qualifying contributors** are those with at least `contributor_qualify_threshold` (default 1) approved memories network-wide in the epoch. The contributor budget is split evenly among them. **Global rollover:** if no one qualifies in an epoch, that epoch's contributor budget rolls forward; the integer remainder of an even split also carries forward, so no VIBE is burned by rounding.
+
+**Genesis seeding.** The emission pool (`validator_pool_remaining_uvibe`, `contributor_pool_remaining_uvibe`, `contributor_rollover_uvibe`, `start_epoch`) is written at chain genesis (DECISIONS D-S32-EMISSION-POOL-GENESIS). Emission and decay both run in the chain's epoch-end hook; correct epoch-end iteration under the cache-wrapped store is governed by DECISIONS D-S32-CACHEKV-ITER.
+
+**Contributor attribution.** Emissions credit the *authoritative* contributor recorded on the committed memory (`contributor_address`), not a consumer-supplied serve payload field. The same address drives serve attribution (DECISIONS D-S32-CONTRIBUTOR-ATTRIBUTION).
+
+> Status: schedule constants and attribution model are locked; implementation lands in CO-041 (the flat `daily_mint` placeholder is replaced by the pool model above).
+
 ### 10.4 Validator Economics
 
 Validators earn standard Cosmos SDK staking rewards for running consensus. Additionally, validators store all encrypted memories as part of chain state — this is not separate "operator work," it's inherent to running a node. No separate storage challenges needed.
