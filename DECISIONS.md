@@ -2349,4 +2349,63 @@ dogfood realization of the same separation, not a contradiction. (Landed: CO-047
 
 ---
 
+### D-S32-CO048-EPOCH-COST — Block production was NOT regressed; the consensus floor is the SDK-default 5s `timeout_commit` [CORRECTED — CO-048 NO-OP; supersedes the original falsified mechanism]
+
+**Decision (corrected by CO-048 measurement):** There is NO epoch-hook block-production regression.
+Block interval is a flat ~5.01s set by the Cosmos SDK's default `timeout_commit = 5s`: cosmos-sdk
+v0.53.5 `server/util.go:252-253` overrides cometbft v0.38.20's 1s default to 5s when the chain leaves
+`TimeoutCommit` at the cometbft default, and `init-chain.sh` does not touch it. Under load (≈800
+memories, 4× HEAVY) the per-epoch `AfterEpochEnd` work is negligible against that floor: x/memory decay
+loop ~4-9ms, merkle ~2-6ms, emissions mint/payouts ~0-3ms, and total app `FinalizeBlock` execution
+~12-31ms — i.e. tens of ms against a 5000ms commit floor.
+
+**The "~15s" was a measurement artifact, not block time (Lesson 9).** It is the empirical-replay
+harness's per-epoch CYCLE wall-clock (`traffic + drainServeRelay + waitEpochAdvance`), which spans
+N blocks × 5s: STEADY ≈3 blocks ≈15s, HEAVY ≈5 blocks ≈25s, BOOTSTRAP ≈2 blocks ≈10s. It is throughput
+pacing at a 5s cadence, not a block-production regression.
+
+**Consequence:** the original entry's mechanism — a "~1s cometbft floor" that the epoch hook inflated to
+~15s via redundant `approved/` keyspace walks plus a 2s fast-stack feedback loop — is FALSIFIED. The
+optimizations it proposed (collapse `approved/` walks, scope the Merkle root, bulk-load per-epoch
+serve/denial data) were ABANDONED under R-MEASURE-FIRST: they optimize a non-bottleneck (~tens of ms)
+and would be churn against a 5s floor (R-LONGEVITY). CO-048 shipped NO code; `wevibe-chain` is pristine
+at `8c92385`. Full verbatim evidence (block intervals, FinalizeBlock exec, hook timings, config) is in
+`wevibe-meta/workspace/reports/CO-048-implementation-report.txt`.
+
+**Still binding (independent of the falsified mechanism):**
+- FORBIDDEN to mask cost by lengthening `WEVIBE_EPOCH_DURATION_SECONDS`, changing `IdleDecaySettleEpochs`
+  (untouched at 5), or bounding / paginating / skipping per-epoch decay or emissions work — all change
+  the decay/gate timeline and a half-settled chain is unacceptable (R-DECAY-FROZEN).
+- IF a sub-5s block target is ever desired, it is a `timeout_commit` CONFIG decision (override
+  `Consensus.TimeoutCommit` in `initCometBFTConfig()`), explicitly weighed against consensus stability —
+  NOT an epoch-hook optimization.
+
+**Why the original was wrong:** it measured the harness per-epoch cycle metric and mislabeled it as the
+block interval, and it missed the SDK's 1s→5s `timeout_commit` override. CO-048's instrumentation
+corrected both. (Scoped: CO-048 — closed NO-OP.)
+
+---
+
+### D-S32-CO048-MEMORY-TYPE-IMPL — Finish the half-applied single-memory-type migration to match D-5.1
+
+**Decision:** Complete the D-5.1 single-memory-type migration end-to-end: (a) collapse the chain
+`memory/v1` proto enum to a single `MEMORY_TYPE_MEMORY` (drop `MEMORY_TYPE_CORRECT_IMPLEMENTATION` and
+`MEMORY_TYPE_NEGATIVE_SIGNAL`), regenerated via `make proto-gen` (R-PROTO-REGEN — Docker, no hand-edit
+of `*.pb.go`); update `x/memory/keeper/msg_server.go` `canonicalMemoryType` / `ValidMemoryType`
+accordingly. (b) Hub `internal/chain/submit.go` maps protocol `"memory"` → `MEMORY_TYPE_MEMORY`
+(removing the stale `CORRECT_IMPLEMENTATION` mapping that surfaced
+`memory_type=MEMORY_TYPE_CORRECT_IMPLEMENTATION` in watcher bookkeeping logs); `query.go` to the single
+type. (c) MCP/plugin perform risk-appetite filtering on the `dnd` FIELD (`lowest` = `dnd != null` only;
+`neutral` = all) — not on a type dichotomy — and extraction emits independent `implement` + `dnd`
+fields; drop the dual `MemoryType` from MCP `types.ts` and dashboard `wevibe-submit.ts`. Canonical
+signing already collapses to `"memory"`, so this changes NO signed bytes and does not touch decay.
+
+**Why:** D-5.1 locked the single-type + internal `dnd` model, but the migration was only half-applied
+(protocol layer + canonicalization migrated; chain enum + hub mapping + MCP filtering still carried the
+obsolete dual-type model). The on-chain `CORRECT_IMPLEMENTATION` label and the MCP's type-level (rather
+than `dnd`-field-level) filtering are the visible symptoms. This closes the gap so the code matches the
+already-locked decision. (Scoped: CO-048; discovered during CO-047 execution.)
+
+---
+
 *End of DECISIONS.md*
