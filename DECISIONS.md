@@ -2305,4 +2305,48 @@ max-of-two cache only approximated.
 
 ---
 
+### D-S32-CO047-SUBSCRIPTION-CREDITS — Credits are a hub-internal subscription gate [SUPERSEDES the per-query deduction in D-3.1 / GAP-O6]
+
+**Decision:** Hub credits are an internal PostgreSQL accounting pool per org (`org_credits.balance`,
+hub-only, never on-chain). The org pool is seeded at creation from `fee_model.monthly_credits`
+(`ProvisionOrgLedger`, recorded as a `subscription_grant` txn) and topped up via `TopUp`. A member is
+admitted by subscribing: `Subscribe(orgID, memberPubkey)` atomically debits `SubscriptionCost` (=10)
+from the org pool, sets `members.membership_active = TRUE`, and records a `subscription` txn;
+insufficient balance → explicit `ErrInsufficientCredits` (HTTP 402), member row kept inactive. Recall
+access for NON-TRIAL members is gated SOLELY on `membership_active`; trial members remain governed by
+the orthogonal trial path (expiry + daily limit). The obsolete per-query `DeductQueryCredit` /
+`QueryCost` path (1 credit per query, from the pre-pivot hub-memory model) is DELETED — there is no
+per-query credit metering.
+
+**Why:** Memories moved from the hub to the chain (the Sprint-28→32 pivot); the consumer no longer
+"pays per query for a hub lookup." Access is a subscription a member buys from their org; the org's
+prepaid credit pool funds admissions. The old per-query deduction seeded balances at 0 and violated
+`CHECK (balance >= 0)` on the first query — it was both the wrong model and a live defect (660
+constraint violations observed pre-fix). Gating on a boolean `membership_active` is the one-path
+expression of "subscribed or not." (Landed: CO-047.)
+
+---
+
+### D-S32-CO047-TWO-KEY-GAS — Two hub-held per-org chain keys in the headless/dogfood model [REFINES D-S32-CO044-KEY-SEPARATION]
+
+**Decision:** Each org has TWO HD-derived chain keys (distinct account indices from the hub master
+mnemonic), BOTH faucet-funded at creation: `org-serving-{orgID}` signs serves/denials
+(`MsgSubmitServeBatch` / `MsgSubmitDenialBatch`; registered on-chain as `HubServingAddress`) and
+`org-leader-{orgID}` signs org decisions (`MsgSubmitCommitment` / `MsgApproveMemory` /
+`MsgRegisterOrg`; registered on-chain as `LeaderWallet`). `org_chain_accounts` is role-keyed
+(PK `(org_id, key_role)`, `key_role IN ('serving','leader')`). The chain already separates the two
+authorities (`requireServingKeySigner` == `GetServingAddress`, `requireLeaderWallet` ==
+`GetLeaderWallet`), so no chain change was needed — the prior conflation (hub passed the serving key
+as BOTH arguments to `RegisterOrgOnChain`) was purely a hub bug.
+
+**Why:** D-S32-CO044-KEY-SEPARATION envisions the leader wallet held OFF-hub (Keplr) signing via
+relay. The headless dogfood/replay harness has no wallet, so in that environment the "leader
+authority" is a second hub-held key — but it remains a DISTINCT, independently-fundable,
+independently-revocable account from the serving key, preserving the blast-radius property (a stolen
+serving key can only submit serve/denial batches + drain its own gas; it cannot approve, commit,
+report, or register). The full off-hub leader wallet remains the production target; this is the
+dogfood realization of the same separation, not a contradiction. (Landed: CO-047.)
+
+---
+
 *End of DECISIONS.md*
