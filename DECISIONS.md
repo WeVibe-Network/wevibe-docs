@@ -1449,6 +1449,8 @@ For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the
 
 ### D-13.4: Social Graph Data On-Chain, Display Layer Separate
 
+> **[CANON CROSS-REFERENCE]** D-SG-2 defines the current social-graph read contract (open-source, forkable RPC display layer over chain data); this entry is retained as Sprint-25 foundation context.
+
 **Decision:** The social graph is split into three layers:
 
 | Layer | Lives In | Contains | Owner |
@@ -2125,6 +2127,8 @@ So `ApplyEpochDecay` never ran on the live chain; the only decay observed in CO-
 
 ### D-S32-TOKENOMICS-LOCKED — 32-Year Emission Schedule [SCHEDULED: CO-041]
 
+> **[CANON CROSS-REFERENCE]** D-ECON-CANON consolidates payout-source and serve/retrieval-exclusion rules; this entry remains the locked schedule constants.
+
 **Decision (locked constants; implementation in CO-041):**
 ```
 Total supply:           1,000,000,000 VIBE   (1,000,000,000,000,000 uvibe; 10^6 uvibe per VIBE)
@@ -2439,6 +2443,79 @@ raising the cap. This is the documented compute ceiling.
 
 **Status:** implemented in the wevibe-server working tree (config.go, retrieval.go, docker-compose.yml);
 **commit pending the full 4-seed × 3-regime matrix passing with these defaults.**
+
+---
+
+## 19. Social Graph Attribution, Economy Canon, and Attestation Roadmap
+
+### D-SG-1: Serve/Retrieval Attribution Is a Social Signal, Not Economic
+
+**Decision:**
+- When a memory is served (retrieved + injected and recorded via the on-chain serve batch), it increments aggregate served counters for BOTH the contributing author and the org.
+- Serve counters are aggregate-only. Individual memories are NOT collectible per-card social objects.
+- Serve/retrieval counts are SOCIAL status/reputation signal only and MUST NEVER drive VIBE payout. The serve-attribution code is RETAINED and reclassified as social (not stripped).
+- Source of truth is the chain (immutable serve/denial batches). The social graph displays chain truth.
+- **Cross-reference:** Supersedes any prior serve/retrieval-based reward economics; see D-SG-3 (badges) and D-ECON-CANON (economy lock below).
+
+---
+
+### D-SG-2: Social Graph Is an Open-Source Display Layer over Chain RPC
+
+**Decision:**
+- The social graph is an OPEN-SOURCE, forkable, self-hostable DISPLAY client. It reads chain state via RPC and renders PUBLIC user profiles. Anyone may host/enhance their own version.
+- Profiles are PUBLIC and show serve counts (contributor + org), reputation, and badges with a PER-ORG breakdown.
+- There is NO cross-org leaderboard/ranking.
+- Layering is explicit: Chain (source of truth) -> RPC (read contract) -> social graph (display). The chain exposes raw counts/inputs; the social graph renders.
+
+---
+
+### D-SG-3: Badges (Gamified Status, No Reward)
+
+**Decision:**
+- Badge families:
+  - **serve-milestone:** your memories served N times.
+  - **rarity-tier:** per-memory keyword supply/demand, computed once at commit and frozen ON-CHAIN (see GAP-RARITY-1).
+  - **contribution-volume:** approved-memory count.
+- Badges are earned PER-ORG (e.g., "Legendary in OrgX"); profile display includes a per-org breakdown. No cross-org leaderboard.
+- Criteria location:
+  - **On-chain:** rarity tier.
+  - **Canonical spec:** serve-milestone and contribution-volume criteria/thresholds, computed by the reference open-source social graph from chain RPC inputs.
+- Canonical-spec thresholds keep badge tiers (e.g., "Legendary") consistent across forked social-graph implementations.
+- Badges are STATUS-ONLY: no VIBE reward, no emissions, and no rep-tier payout coupling.
+
+---
+
+### D-ECON-CANON: Canonical VIBE Economy (Consolidation Lock)
+
+**Decision:**
+- Contributor VIBE payout is CONTRIBUTION-ONLY: paid per APPROVED MEMORY, gated by a NETWORK-set qualification threshold (not org-set).
+- There is NO retrieval/serve-based contributor payout (anti-game).
+- Validators/stakers earn emissions. LEADERS earn NO emissions.
+- Serve/retrieval counts are excluded from ALL VIBE flows (social-only; see D-SG-1).
+- Leader revenue comes from the org demand leg: members pay the org in VIBE for recall access, settling to the org treasury; the leader withdraws revenue (`MsgWithdrawTreasury`).
+- The org's access/payment MODEL is LEADER-CONFIGURED, not protocol-mandated. The leader sets pricing (market-driven) and the access model — including whether/how contributors pay to recall vs are earn-only — via the HUB ACCOUNTING layer (the CO-047 `org_credits` ledger). The protocol does NOT fix a single subscription cadence or price.
+- Subscription pricing is LEADER-SET / market-driven (orgs compete on price vs memory quality).
+- Protocol economic rule on this leg: a SMALL PROTOCOL BURN is taken from org subscription revenue at on-chain settlement; the remainder accrues to the leader treasury. This burn is the deflationary sink that closes the loop.
+- Moderator compensation is LEADER-DISCRETIONARY from the org treasury (`MsgWithdrawTreasury`); there is no protocol-enforced revenue split.
+- CANONICAL CLOSED LOOP: emission -> contributors (contribution-only) + validators/stakers (mint/sell) -> users buy VIBE -> users pay orgs (hub-accounted, leader-set model & price) -> small protocol burn + remainder to org treasury -> leader -> leader pays moderators -> stake/secure -> repeat.
+- IMPLEMENTATION STATUS: DECIDED, not yet built. CO-047 `org_credits` is the hub skeleton (currently non-VIBE, leader-seeded); wiring VIBE subscriptions -> treasury and the protocol burn is a future hub+chain order.
+- Org creation BURNS VIBE (deflationary sink): `x/org` `ComputeBurnPrice` -> `BurnCoins`.
+
+**CODE-REMNANT FLAGS (documentation only):** cleanup targets for a future chain order (NOT changed by this doc pass; verify before acting):
+1. Contributor payout is currently sourced from the ORG TREASURY (`x/emissions/keeper/epoch_hooks.go` ~line 147, `DebitTreasury`), whereas canonical source is the network contributor-emission pool.
+2. Operator/leader emission machinery (`OperatorShare`, `DistributeOperatorRewards`/`MsgDistributeOperatorRewards`, `opreward/`, `ComputeWorkScore`) is dead and contradicts "leaders earn no emissions"; remove in cleanup.
+3. The retrieval term in `WorkScore` (`x/emissions/types/keys.go` ~line 48, `retrievalScore`) must be reclassified social, not economic. The serve-attribution code itself is KEPT, not stripped.
+
+---
+
+### D-ATTEST-ROADMAP: Future Pluggable Attestation (Post-Mainnet Roadmap)
+
+**Decision:**
+- Post-mainnet roadmap: evolve optional whitepaper §3.10 Session Attestation + §3.11 Two-Layer Difficulty Scoring into a PLUGGABLE attestation framework.
+- Separate components plug into the chain to validate session claims (cryptographically OR via API), such as: "user X using LLM model Y took N turns to solve problem Z."
+- How attestation enhances the economic and/or social-graph layers is UNDETERMINED (TBD).
+- Status is POST-MAINNET. Infra is not there yet.
+- This is a MAJOR roadmap item and must remain in canonical docs (do not drop it).
 
 ---
 

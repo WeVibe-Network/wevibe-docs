@@ -1167,6 +1167,85 @@ backend/
       benchmark-adversarial/ ──────────► wevibe-mcp, wevibe-sdk (tests security)
 ```
 
+## Canonical 5-Layer Architecture (Chain → RPC → Social Graph → Economy → Attestation)
+
+This section defines the canonical system layering for public profile display and
+economics. It complements (rather than replacing) the module-level details in
+`## wevibe-chain — Cosmos SDK Appchain` and the runtime auth flow in
+`## Consumer Path (post-CO-260)`.
+
+**Canonical flow:** `Layer 1 Chain` → `Layer 2 RPC` → `Layer 3 Social Graph` →
+`Layer 4 Economic Layer`, with `Layer 5 Future Pluggable Attestation` as a
+post-mainnet extension.
+
+### Layer 1 — Chain (source of truth)
+
+- Immutable state + economics.
+- Canonical on-chain state includes:
+  - memory provenance + author attribution
+  - serve/denial counts as **aggregate counters** for both contributor and org
+    (not per-memory cards)
+  - approved-memory (contribution) counts
+  - org membership + roles
+  - per-memory rarity tier (computed once at commit from keyword
+    supply/demand, then frozen on-chain)
+  - economic state
+- Economics consumes **only** contribution counts + the network threshold;
+  serve counts are never economic inputs.
+
+### Layer 2 — RPC (the read contract)
+
+- Query interface exposing Layer 1 chain state to any client.
+- This is the contract between chain and consumers (notably the social graph).
+- RPC exposes raw counts/inputs for rendering, including serve counts, rarity
+  tier, contribution counts, and roles.
+
+### Layer 3 — Social Graph (display client)
+
+- Open-source, forkable, self-hostable public display client that reads Layer 2
+  RPC.
+- Renders public profiles: serve counts (contributor + org), reputation, and
+  badges.
+- Badge families:
+  - serve-milestone
+  - rarity-tier (from on-chain rarity tier)
+  - contribution-volume
+- Badge scope/behavior:
+  - scoped per-org with profile breakdown
+  - no cross-org leaderboard
+  - serve-milestone + contribution-volume criteria come from a canonical spec
+    applied by the reference social graph so tiers remain consistent across
+    forks
+  - badges are status-only (no reward)
+
+### Layer 4 — Economic Layer
+
+- Contribution-only VIBE payout: per approved memory at the network threshold,
+  paid to contributors.
+- Emissions payout path: validators/stakers.
+- Org-creation burn is a sink.
+- Leader revenue path: org demand leg — members pay the org in VIBE for recall
+  access (hub-accounted, **model & price set by the leader**, market-driven),
+  settling to the org treasury; a **small protocol burn** is taken on
+  subscription revenue at settlement (the loop's deflationary sink), remainder
+  to the leader (`MsgWithdrawTreasury`). Moderator pay is leader-discretionary
+  from treasury. Decided, not yet built. See `DECISIONS.md`
+  `D-ECON-CANON`.
+- Serve counts are deliberately excluded from economics (anti-game).
+- Decision locks: `DECISIONS.md` `D-ECON-CANON` and
+  `D-S32-TOKENOMICS-LOCKED`.
+
+### Layer 5 — Future Pluggable Attestation (post-mainnet roadmap)
+
+- Separate components plug into the chain to validate claims cryptographically
+  or via API session claims (for example: "user X, model Y, N turns, problem
+  Z").
+- This is the planned evolution of whitepaper §3.10 Session Attestation +
+  §3.11 Difficulty Scoring.
+- Enhancement target for the social/economic layers remains TBD.
+- Infrastructure is not yet present; this is a major roadmap item.
+- Decision reference: `DECISIONS.md` `D-ATTEST-ROADMAP`.
+
 ## Consumer Path (post-CO-260)
 
 **Canonical consumer chain (auth layers):**

@@ -6,6 +6,10 @@
 - Access to an WeVibe Network org on an wevibe-chain endpoint (see [self-hosting.md](self-hosting.md) if you are running locally)
 - An MCP-compatible coding agent (Cursor, Windsurf, Claude Code, Windsurf MCP, etc.)
 
+## Alpha product framing (social-first)
+
+WeVibe is social-first: as you contribute useful memories and those memories get served, you build a **public** contributor profile with reputation and badge progress. That social signal is the core hook; memory recall is the bonus that makes your coding agent better. In alpha, profile/badge surfaces are still being rolled out, and rarity-tier badges remain design-stage (GAP-RARITY-1).
+
 ## Step 1: Install wevibe-mcp
 
 ```bash
