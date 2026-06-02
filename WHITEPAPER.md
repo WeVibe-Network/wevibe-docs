@@ -144,16 +144,15 @@ The plugin is installed in the developer's coding environment (OpenCode, Claude 
 │                                          │
 │ Detections: [url: aws.amazon.com]        │
 │                                          │
-│ [✓ Accept + Attribute] [◉ Accept Private]│
-│ [✗ Deny]                                 │
+│ [✓ Accept + Attest] [✗ Deny] [⚑ Report]  │
 └──────────────────────────────────────────┘
 ```
 
-**Accept + Attribute:** Memory is injected into agent context. Serve attribution is queued to chain aggregates (contributor + org) for public profile and badge signals. No direct per-serve payout is implied by this action.
-
-**Accept Private:** Memory is injected into agent context without public serve attribution. Useful for private sessions. Leaders can configure whether private accepts are allowed.
+**Accept + Attest:** Memory is injected into agent context. Serve attribution is queued to chain aggregates (contributor + org) for public profile and badge signals. No direct per-serve payout is implied by this action.
 
 **Deny:** Memory is blocked. The plugin can capture lightweight deny context so curators can improve quality without turning the UX into a courtroom.
+
+**Report:** Memory is blocked and escalated into the org's moderation/accountability path (see Sections 5.5–5.8). Reports are the high-friction accountability primitive; denials are the low-friction ranking signal.
 
 **No plugin installed = no memory injection path.** The MCP server has no direct route to force memory into the agent context without the plugin frontend.
 
@@ -448,7 +447,7 @@ These decisions are final:
 
 **Serve attestations are batched per epoch.** Plugin queues approvals locally. The MCP/plugin path (or hub-serving key path, when configured) submits one batch transaction per user per epoch using the org serve key. Not one tx per click.
 
-**Three-button approval UX.** Plugin offers: [Accept + Attest] (memory injected, serve attestation queued, contributor earns), [Accept Privately] (memory injected, no attestation, no payout — for stealth sessions), [Deny] (memory blocked, feedback logged). Public orgs with payouts may require attestation. Personal/local orgs may allow private accepts.
+**Three-button approval UX.** Plugin offers: [Accept + Attest] (memory injected, serve attestation queued, contributor earns), [Deny] (memory blocked, feedback logged), [Report] (memory blocked and escalated into the org's moderation/accountability path — see Sections 5.5–5.8). Public orgs with payouts may require attestation.
 
 ### 3.10 Session Attestation (Roadmap, Post-Mainnet)
 
@@ -564,9 +563,9 @@ Developer prompts their coding agent
      ├── ACCEPT + ATTEST → inject context
      │                     queue serve attestation (batched per epoch)
      │
-     ├── ACCEPT PRIVATE → inject context only
-     │
      ├── DENIED → block memory and record feedback
+     │
+     ├── REPORTED → block memory and escalate to moderation
      │
      ▼
   Agent continues with or without memory

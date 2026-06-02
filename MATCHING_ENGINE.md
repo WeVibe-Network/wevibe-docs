@@ -276,7 +276,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 2. **Does not handle topic drift.** A memory that was correct under React 17 and is wrong under React 19 still requires human supersession (D-MATCHING-2: moderation similarity flow). Decay catches contradiction at the same point in time; it does not catch deprecation across time.
 
-3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's three-button UX (Accept+Attest, Accept Private, Deny) is the data source. Orgs with `serve_attestation_required = false` and few denials will see slower convergence.
+3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's three-button UX (Accept+Attest, Deny, Report) is the data source. Orgs with `serve_attestation_required = false` and few denials will see slower convergence.
 
 4. **Does not eliminate contested ambiguity.** Probabilistic exploration breaks the ranking-loss death spiral but does not make every query unambiguous. The contested path remains the safety net for near-tied scores.
 
