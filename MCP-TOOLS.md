@@ -12,7 +12,7 @@ Register the current task and surface relevant memories.
 | `task` | string | yes | Current task description |
 | `stack` | string[] | no | Technology stack hints (e.g. `["go", "postgres"]`) |
 
-**Returns:** Relevant memories (up to 3) and detected stack.
+**Returns:** Relevant memories (up to 5) and detected stack.
 
 **When to call:** At the start of a coding session or when switching tasks.
 

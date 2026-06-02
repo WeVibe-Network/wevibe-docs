@@ -79,7 +79,7 @@
 - [ ] **Sybil mitigation** — stake requirement for org creation (minimum VIBE stake to create an org). Minimum member count (e.g., 3) before org qualifies for emissions.
 - [ ] **Spam mitigation** — gas costs on chain submission are the primary defense. Hub-side rate limiting on submit endpoint as secondary.
 - [ ] **Report abuse mitigation** — D-7.6 (sword cuts both ways) is already designed. Verify it works: dismissed report count increments, malicious reporter can be removed.
-- [ ] **Embedding inversion** — Phase 1 mitigations confirmed working (Gaussian noise, API key auth, Qdrant internal-only). Document limitations publicly.
+- [ ] **Embedding inversion** — Gaussian noise is now DISABLED by default (σ=0, D-9.5 — it cost ~20pp recall and had no rationale). Active mitigations: API key auth + Qdrant internal-only. Document limitations publicly.
 
 ### Token Economics
 

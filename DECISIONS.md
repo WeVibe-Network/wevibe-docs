@@ -29,8 +29,6 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 13. [Sprint 25 Architecture: Chain Hardening — Accountability + Social Graph Foundation](#13-sprint-25-architecture-chain-hardening--accountability-social-graph-foundation)
 14. [Sprint 29 Chain Foundation Decisions](#15-sprint-29-chain-foundation-decisions)
 15. [Pattern B Tier 2 Verification Anchor (Current Design)](#16-pattern-b-tier-2-verification-anchor-current-design)
-15. [Sprint 29 Chain Foundation Decisions](#15-sprint-29-chain-foundation-decisions)
-16. [Pattern B Tier 2 Verification Anchor (Current Design)](#16-pattern-b-tier-2-verification-anchor-current-design)
 
 **New decisions in this update:** D-13.1 (Moderator Pubkey Persistence on Memory), D-13.2 (Upheld Report Plaintext + Ciphertext + Capsule Triplet), D-13.3 (Hub-Side Manipulation Alarm via BlockResults), D-13.4 (Social Graph Data On-Chain, Display Layer Separate), D-13.5 (Reputation Active at Genesis, Additive-Only), D-13.6 (Memory State Cleanup — 7-State Lifecycle Locked at Code Level), D-13.7 (Cross-Module Event Wiring), D-13.8 (Reputation as Tiering Signal — total_approved_memories), D-13.9 (Chain Wipe Acceptable Pre-MVP), D-13.12 (Chain Broadcast via Comet RPC), D-13.13 (Chain Pruning + IAVL Dev Settings); updates to D-2.2 (Umbral container) and D-13.10 (only host exception is Ollama).
 
@@ -165,7 +163,7 @@ Aligning PRE identity with the wallet curve enables BIP-32 key derivation (D-1.4
 **Decision:** Under the PRE architecture, the hub plays three active roles:
 - **Re-encryption proxy** — applies kfrags to produce cfrags without seeing plaintext
 - **Authorization authority** — gates all retrieval based on membership and policy
-- **Policy enforcement engine** — rate limits, credit deduction, audit logging
+- **Policy enforcement engine** — rate limits, ~~credit deduction~~ **[per-query credit deduction REMOVED — billing is now a hub-internal subscription gate; see D-S32-CO047-SUBSCRIPTION-CREDITS]**, audit logging
 
 **Why:** Earlier whitepaper language described the hub as a "pure observer" that never signs transactions. PRE fundamentally changes this: re-encryption is an active cryptographic operation that the hub must perform on every retrieval. This is not a regression — it's the mechanism that achieves "hub never sees plaintext" while still enabling efficient access control. The hub's trust assumptions must reflect this expanded role.
 
@@ -898,10 +896,12 @@ The earlier decision to strip keywords from Qdrant for "security" was architectu
 
 ---
 
-### D-9.2: Phase 1 Qdrant Hardening — Noise Injection + API Key Auth
+### D-9.2: Phase 1 Qdrant Hardening — Noise Injection + API Key Auth [NOISE INJECTION SUPERSEDED by D-9.5]
+
+> **[SUPERSEDED IN PART by D-9.5, 2026-06-01]** Stored-vector Gaussian noise injection is **DISABLED** (default σ=0; `retrieval.go:221`). It was inherited Echo code with no rationale and cost ~20pp good-memory recall; D-9.5 removed it. The API-key auth and internal-network mitigations below REMAIN ACTIVE.
 
 **Decision:** Phase 1 mitigations against Qdrant embedding inversion attacks:
-- **Gaussian noise injection (σ=0.1)** at storage time — reduces inversion accuracy ~40% while preserving >95% recall
+- **Gaussian noise injection (σ=0.1)** at storage time — ~~reduces inversion accuracy ~40% while preserving >95% recall~~ **[DISABLED — see D-9.5; default σ=0]**
 - **Qdrant API key authentication** — required on all requests, rotated per epoch
 - **Internal-network deployment** — Qdrant on same host as hub, no external network exposure
 
@@ -1701,10 +1701,6 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 **Note:** The 4 vectors happened to already be correct — regeneration produced byte-identical output. The stale designation in REGEN-PENDING.md was conservative; the vectors were not actually stale.
 
 **Closes:** D-S28-VECTORS-SPRINT29-TICKET.
-
----
-
-## 15. Sprint 29 Chain Foundation Decisions
 
 ---
 

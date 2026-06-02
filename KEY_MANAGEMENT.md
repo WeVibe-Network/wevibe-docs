@@ -1,5 +1,7 @@
 # Key Management
 
+> **[⚠️ ACCURACY FLAG — needs Walter review, 2026-06-02]** The `K_search(e)` "blind token derivation key" referenced below is stale: keywords are stored in **plaintext** on-chain (`KeywordWeight.Keyword`), so no blind-token derivation is in the current path. See the same flag in `SECURITY-MODEL.md`. The `K_enc`/`K_audit` hierarchy is unaffected.
+
 ## Key hierarchy
 
 Every WeVibe org has one root secret: the **org master key** (`K_master`). All other

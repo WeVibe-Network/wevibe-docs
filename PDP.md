@@ -3,6 +3,8 @@
 **Date:** 2026-05-05
 **Sprint:** 22 (complete)
 
+> **[STALE SNAPSHOT — 2026-06-02]** This is a Sprint-22 historical snapshot and is NOT current. Notably, the chain module list below is wrong: the live chain has **7 modules** — `x/attestation`, `x/bandwidth`, `x/emissions`, `x/memory`, `x/org`, `x/reputation`, `x/serve`. The modules `x/serving`, `x/challenge`, `x/receipt`, and `x/operator` **do not exist**. For current state see `SESSIONCONTINUANCE.md`, `MASTER.md`, and `DECISIONS.md`. This file needs a full rewrite or retirement.
+
 ---
 
 ## Current State Summary

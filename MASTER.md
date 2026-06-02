@@ -1353,7 +1353,7 @@ All module state queries (`query auth`, `query gov`, `query upgrade`, `query ban
 
 **Participant:** Validator, Leader, Contributor
 **Milestone:** ALPHA
-**Status:** OPEN
+**Status:** RESOLVED IN CODE — genesis params locked (DECISIONS D-S32-TOKENOMICS-LOCKED) and seeded in `init-chain.sh`; final sign-off gated on the empirical gate matrix (in progress)
 
 Chain modules (`x/emissions`, `x/bandwidth`, `x/reputation`, `x/org`) have default genesis parameters that were never reviewed for solo-dogfood viability. Current defaults may produce:
 
@@ -1391,7 +1391,7 @@ The emissions epoch hook logged "no emission pool found" every epoch and never m
 **Participant:** Validator, Leader, Contributor (decay/economic loops)
 **Milestone:** Sprint 32
 **Severity:** CRITICAL
-**Status:** OPEN (diagnosed in CO-040; fix scoped to CO-041 Task A)
+**Status:** CLOSED (CO-041, committed `8c92385`) — collect-then-mutate + removal of post-loop `iter.Error()` checks landed across the 24 sites; epoch-end idle decay now runs on the live chain
 
 The Sprint-31 "zero decay" symptom is caused by the keepers' `iter.Error()`-as-failure pattern. Under the cache-wrapped KV store used in BeginBlock / epoch hooks, `cosmossdk.io/store cacheMergeIterator.Error()` returns non-nil at NORMAL end-of-iteration. So `ApplyEpochDecay`, `CheckEpochExpiry`, `getAllOrgsWithMemories`, and emissions `GetAllOrgs` all error every epoch and epoch-end idle decay never runs. The defect spans 24 sites across 10 keeper files in 4 modules (emissions, memory, org, reputation). It was invisible to unit tests because they iterate a direct IAVL store (returns nil at end), and was masked until CO-040 seeded the emission pool (which advanced the emissions hook past its previous early return).
 
@@ -1406,7 +1406,7 @@ The Sprint-31 "zero decay" symptom is caused by the keepers' `iter.Error()`-as-f
 **Participant:** Validator, Leader, Contributor
 **Milestone:** Sprint 32
 **Severity:** MAJOR
-**Status:** OPEN (locked design; implementation scheduled CO-041; originally "CO-040b")
+**Status:** CLOSED (CO-041, committed `8c92385`) — 32-year schedule + contributor attribution implemented; on-chain DefaultParams match D-S32-TOKENOMICS-LOCKED; final tokenomics lock gated on the empirical gate matrix (in progress)
 
 The flat `daily_mint` placeholder must be replaced by the locked 32-year schedule: 1B VIBE total, 10% foundation + 1% validator at genesis, 570M validator pool + 320M contributor pool emitted over 11,680 epochs, 10M VIBE/yr contributor cap, global rollover. Contributor address must be persisted through memory state (`contributor_address` on pending + committed), serve attribution must derive the contributor from the stored memory, and emissions must distribute to distinct qualifying contributors network-wide per epoch.
 

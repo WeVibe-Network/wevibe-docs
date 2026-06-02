@@ -443,7 +443,7 @@ func DenySubmission(ctx, pool, orgID, submissionHash, moderatorPubkey, reason) e
 func NewQdrantClient(addr string, apiKey string) (*QdrantClient, error)  // strips http:// prefix, requires apiKey
 func (c *QdrantClient) Close() error
 func (c *QdrantClient) EnsureCollection(ctx, vectorSize) error
-func (c *QdrantClient) UpsertPoint(ctx, entry) error  // injects Gaussian noise (σ=0.1) before storage
+func (c *QdrantClient) UpsertPoint(ctx, entry) error  // stored-vector noise DISABLED by default (σ=0, D-9.5); injectGaussianNoise is a no-op at σ=0
 func (c *QdrantClient) QueryPoints(ctx, orgID, epochs, vector, keywordWeights, embeddingModelID, limit, includeDormant) ([]MemoryResult, bool, error)
 func (c *QdrantClient) CountPoints(ctx) (int64, error)
 
@@ -457,8 +457,8 @@ func UpdateMemoryKeywords(ctx, client, orgID, oldKeywords, newKeyword) error
 func UpdateMemoryState(ctx, client, orgID, memoryCID, lifecycleState) error
 ```
 **Constants:** `EMBED_DIM = 768`, `contestedThreshold = 0.20`
-**Key detail:** `UpsertPoint` applies Gaussian noise (σ=0.1 × L2 norm) before storing vectors. `QueryPoints` performs vector search, then applies keyword-overlap boost, optimistic pending-denial decay, and new-memory boost, then assigns positions with D-9.4 tempered power-law sampling (strict top-1; positions 2..N sampled without replacement).
-**Noise injection:** `injectGaussianNoise(vector, sigma)` — adds calibrated Gaussian noise at storage time only
+**Key detail:** `UpsertPoint` calls `injectGaussianNoise`, but stored-vector noise is **DISABLED by default (σ=0)** per D-9.5 (it was inherited Echo code that cost ~20pp good-memory recall). `QueryPoints` fetches up to `recallDepth` (default 5000) candidates, then applies keyword-overlap boost, optimistic pending-denial decay, and new-memory boost, then assigns positions with D-9.4 tempered power-law sampling (strict top-1; positions 2..N sampled without replacement).
+**Noise injection:** `injectGaussianNoise(vector, sigma)` — present but **inert by default (σ=0, D-9.5)**; configurable via `RETRIEVAL_VECTOR_NOISE_SIGMA`
 **Lifecycle filtering (CO-224):** `ARCHIVED` is always excluded; `DORMANT` is excluded unless `includeDormant=true`
 **Qdrant payload fields:** `cid`, `org_id`, `epoch_id`, `content_flags`, `keyword_weights`, `lifecycle_state`, `memory_type`, `embedding_model_id`, `embedding_schema_version`, `vector_dim`
 **Retrieval env wiring (`cmd/wevibe-hub/main.go` + compose):** `RETRIEVAL_TEMPERATURE`, `RETRIEVAL_NEW_MEM_BOOST_MULT`, `RETRIEVAL_NEW_MEM_BOOST_WINDOW` configure `ProbabilisticRanker`.

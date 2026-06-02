@@ -1,8 +1,10 @@
 # WeVibe Network Validator Setup Runbook
 
+> **[PARTIALLY STALE — 2026-06-02]** The module list and the `x/operator` operator-registration flow below are OUT OF DATE. The live chain has **7 modules**: `x/attestation`, `x/bandwidth`, `x/emissions`, `x/memory`, `x/org`, `x/reputation`, `x/serve`. There is **no `x/operator`, `x/serving`, `x/challenge`, or `x/receipt` module** — the operator-registration section needs rewriting against the real onboarding flow before a validator follows it.
+
 ## Overview
 
-WeVibe Network is a Cosmos SDK-based blockchain with 8 modules: `x/attestation`, `x/org`, `x/serving`, `x/challenge`, `x/emissions`, `x/receipt`, `x/reputation`, and `x/operator`. Validators secure the network by participating in consensus and can register as operators via the `x/operator` module.
+WeVibe Network is a Cosmos SDK-based blockchain with 7 modules: `x/attestation`, `x/bandwidth`, `x/emissions`, `x/memory`, `x/org`, `x/reputation`, and `x/serve`. Validators secure the network by participating in consensus.
 
 ## Prerequisites
 

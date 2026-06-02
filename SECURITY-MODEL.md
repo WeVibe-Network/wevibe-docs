@@ -1,5 +1,7 @@
 # Security Model
 
+> **[⚠️ ACCURACY FLAG — needs Walter review, 2026-06-02]** This document describes a **blind-token** keyword model (`K_search`, `HMAC-SHA256(K_search, keyword)`, "keyword strings stay local") that does **NOT** match the current chain. On-chain, keyword strings are stored **in plaintext** (`wevibe-chain/x/memory/types/state.pb.go` — `KeywordWeight.Keyword string`, persisted in `MemoryCommitment`). The "validators never see keyword strings" claim (line 15) and the `K_search` key-hierarchy entries are therefore stale. This is a threat-model change requiring Walter's sign-off to reconcile — do not treat the blind-token claims below as current.
+
 ## Threat model
 
 WeVibe Network is designed so that even a compromised validator cannot expose memory content without human approval.
