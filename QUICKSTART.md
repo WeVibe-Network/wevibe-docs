@@ -50,16 +50,19 @@ Your org leader will invite you. You'll receive an org ID. Once invited,
 
 > Call `wevibe_orgs` in your agent.
 
-## Step 4: Use the tools
+## Step 4: Run recall + contribution flow
 
-**Session start:**
-> Call `wevibe_context` (or allow auto profiling). wevibe-mcp gathers repo dependencies, open files, and environment hints to pre-filter recall candidates.
+**Session start + recall query:**
+> Once the plugin is installed and you have joined an org, recall runs on the client side without a manual recall tool call. The plugin harvests session context, builds the retrieval query, and sends it to the hub.
 
-**Context retrieval:**
-> Call `wevibe_recall` with a search query such as "redis timeout handling". The plugin will show a Memory Injection Request summarising the memory, contributor pubkey, wallet age, reputation score, and guard findings. Accept to inject, deny to skip.
+**Memory injection request (default gate):**
+> When a relevant memory is found, the plugin shows a Memory Injection Request with the memory plus details (score, matched keywords, wevibe-guard result, contributor stats, and memory stats). Default behavior is **Gated approval**: your agent pauses and waits for your approval before injection.
 
 **Contribution:**
-> Call `wevibe_contribute` with session notes. wevibe-guard scans locally; on success wevibe-sdk encrypts the memory and `wevibe-mcp` submits it to wevibe-chain for moderation.
+> Contribution is manual and dashboard-driven. Open the dashboard, go to **Sessions**, select a coding session, click **Extract Memories**, review the extracted candidates, choose the destination org for each memory, then click **Submit**. Nothing leaves your machine until you submit.
+
+**Consumer settings (2×2):**
+> Content: **Implementations + DNDs** or **DNDs only**. Gate: **Gated approval** or **No gated approval**. Default is **Implementations + DNDs + Gated approval**.
 
 **Feedback:**
 > Call `wevibe_reject` with the memory ID and reason to blacklist a recalled memory for your session and flag it for moderators.

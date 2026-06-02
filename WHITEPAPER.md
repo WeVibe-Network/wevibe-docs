@@ -126,7 +126,7 @@ This curation loop serves both halves of the alpha wedge. It improves recall qua
 
 Every memory must pass through human eyes before it enters an agent's context. This is the product invariant.
 
-The plugin is installed in the developer's coding environment (OpenCode, Claude Code, Cursor, Cline, and similar tools). When the agent asks for context, the plugin retrieves candidate memories from local retrieval, runs wevibe-guard checks, and renders an approval UI:
+The plugin is installed in the developer's coding environment (OpenCode, Claude Code, Cursor, Cline, and similar tools). During a coding session, the plugin harvests local session signals and auto-queries organizational memory through the hub retrieval path; candidate memories are decrypted locally, scanned by wevibe-guard, and shown in an approval UI:
 
 ```
 ┌──────────────────────────────────────────┐
@@ -203,7 +203,7 @@ All roles require epoch-specific encryption keys for content access. The leader 
 
 **Operation.** Members join through leader invitation. Once approved, the leader issues sealed key envelopes containing the epoch keys to the new member. For reviewers and leaders, the envelope also includes SK_mod(e) for the current epoch.
 
-**Contributor onboarding.** Contributors opt in once — they install the plugin, connect the MCP server, and join the org. After that, WeVibe runs invisibly in the background. Sessions are mined for memories automatically. The contributor never needs to actively trigger contributions. The MCP server + plugin path handles extraction and sanitization, then submits encrypted contributions through the hub coordination path to the chain.
+**Contributor onboarding.** Contributors opt in once — they install the plugin, connect the MCP server, and join the org. Contribution is then explicit and dashboard-driven: open `/sessions` → select a session → click **"Extract Memories"** (local extraction only; returns review candidates) → review memories → choose per-memory org destination (D-12.2) → click **"Submit"**. Sessions remain local until submit; nothing leaves the machine without explicit user action.
 
 **Key rotation (epoch advancement).** When a member is removed, the org enters `rotation_pending` state:
 
@@ -230,23 +230,21 @@ Platform-specific plugin gates (OpenCode, Claude Code, Cursor, Cline) register t
 
 ### 2.5 Tool Surface
 
-The plugin registers tools in the coding agent. The local MCP server provides the guard/approval backend, and wevibe-hub provides coordination/accounting plus retrieval. The separation:
+The plugin registers operational tools in the coding agent. Recall query dispatch is automatic in the plugin path (no agent recall tool call), and contribution submission happens in the dashboard flow (no agent contribution tool call). The separation:
 
 **Plugin-registered tools (visible to the agent):**
 
 | Tool | Purpose |
 |------|---------|
-| `wevibe_recall` | Search organizational memory. Plugin calls the MCP server, which requests candidates from wevibe-hub's retrieval path, runs wevibe-guard scan, renders approval UI with contributor reputation, and injects approved memories as `context:` ambient content. On approval, serves are attested on-chain. |
-| `wevibe_contribute` | Record technical learnings. Agent calls this at natural phase transitions. MCP-side extraction produces atomic memories, sanitizes and encrypts them, then submits through the hub coordination path to chain. |
-| `wevibe_reject` | Flag a recalled memory as unhelpful. Adds to local blacklist and reports feedback on-chain for quarantine. |
+| `setup_org` | First-run organization bootstrap when the local stack has no org membership. Guides org creation/join flow and local setup handoff. |
+| `wevibe_status` | Show org membership and runtime status so the user can verify local setup and connectivity. |
+| Consumer-settings tools | Configure the 2×2 consumer matrix: content filter `[Implementations + DNDs]` or `[DNDs only]`, plus injection gate `[Gated approval]` or `[No gated approval]`. Default is `[Implementations + DNDs] + [Gated approval]`. |
 
-**MCP server backend (invisible to the agent):**
+The legacy **risk-appetite** label is retired in favor of the explicit 2×2 content/gate settings above.
 
-The MCP server enforces local guardrails, approval-state handling, and secure context injection. Retrieval candidates come from wevibe-hub's Qdrant-backed serving path. The MCP server returns structured candidate data to the plugin — never directly to the agent.
+**MCP server backend (not directly callable by the agent):**
 
-**Contribution behavior.** The `wevibe_contribute` tool description instructs agents on when to contribute: at natural transition points during sessions, when they discover something non-obvious. Negative knowledge (what NOT to do and why) is especially valuable. In practice, contribution is mostly automatic — the session buffer captures learnings and the extraction pipeline processes them without developer intervention.
-
-**Session buffer safety net.** A session buffer is initialized lazily on the first tool call and records session activity. If the agent does not explicitly contribute during the session, `autoContribute()` fires on session exit. On next session startup, orphaned buffers from crashed sessions are processed.
+The MCP server handles local recall mechanics: query construction from local session signals, local embedding/decryption, guard scanning, and packaging candidate data for the plugin gate UX. It does not auto-submit contributions; contribution submission is explicit in the dashboard `/sessions` flow.
 
 All administrative operations (org creation, member invitation, moderation, epoch rotation, keyword management, recovery) are handled by the separate `wevibe-admin` CLI and hub control-plane workflows.
 
@@ -502,7 +500,7 @@ The local path is responsible for both recall gating and contribution packaging.
 6. Present the human approval gate and inject only approved context.
 
 **Contribution-side responsibilities (local):**
-1. Extract session learnings (manual tool call or auto-contribute path).
+1. Extract session learnings only when the contributor clicks dashboard `/sessions` → **"Extract Memories"** (local candidate generation, no submission yet).
 2. Sanitize, encrypt, and sign submission material.
 3. Submit commitment data to chain (org pays submission bandwidth), then follow moderation/finalization flow.
 
@@ -530,65 +528,84 @@ Member setup is key/bootstrap first, not full-corpus indexing:
 
 After bootstrap, recall runs as request/response against the hub retrieval service. The local machine does not download the org's full memory corpus and build its own vector index. Local state is operational (keys/config + approval/attestation queueing), while authoritative memory storage and vector retrieval remain hub/chain-side.
 
-### 4.4 Retrieval Flow (Plugin-Gated)
+### 4.4 Recall Flow (Auto-Query + Plugin-Gated Injection)
 
 ```
-Developer prompts their coding agent
+Developer works in their coding session
      │
      ▼
-  Agent calls wevibe_recall (registered by plugin)
+  Plugin harvests local session signals
+  (recent prompt/edits/stack; intended alpha model)
      │
      ▼
-  Plugin calls local MCP with query + session context profile
+  Plugin auto-submits recall query via local MCP
+  (no agent recall tool call)
      │
      ▼
   Local MCP/plugin path:
-      1. Build retrieval filters from session context
+      1. Build keyword-weight query params from session signals
       2. Compute query embedding locally via Ollama (`nomic-embed-text`)
-      3. POST vector to hub `/v1/orgs/{org}/query`
+      3. POST query to hub `/v1/orgs/{org}/query`
      │
      ▼
   Hub retrieval path:
-      4. Qdrant vector search over hub-hosted embeddings + keyword metadata
-      5. Return candidate IDs + metadata + matched keywords
+      4. Qdrant vector + keyword-ranked search over hub-hosted embeddings
+      5. Return encrypted candidates + ranking/trust metadata
      │
      ▼
   Local MCP/plugin path:
-      6. Fetch candidate ciphertext from hub storage
-      7. Decrypt locally via Umbral sidecar
-      8. Run wevibe-guard sanitization + policy filters
-      9. Fetch contributor reputation/trust signals from chain
-     10. Render human gate with memory + safety output + trust signals
+      6. Decrypt candidate ciphertext locally via Umbral sidecar
+      7. Run wevibe-guard sanitization + policy checks
+      8. Apply content filter: [Implementations + DNDs] | [DNDs only]
+      9. Render candidate details before injection:
+         - memory text, memory_type, score, matched keywords
+         - wevibe-guard result
+         - contributor stats: account age, contributions, serve count,
+           reports upheld, false reports
+         - memory stats: retrieval count, acceptance count
+         - trust panel
      │
-     ├── ACCEPT + ATTEST → inject context
-     │                     queue serve attestation (batched per epoch)
-     │
-     ├── DENIED → block memory and record feedback
-     │
-     ├── REPORTED → block memory and escalate to moderation
-     │
-     ▼
+      ├── [Gated approval] (default): explicit user action required
+      │      ├── ACCEPT + ATTEST → inject context + attest serve on-chain
+      │      ├── DENIED → block memory and record feedback
+      │      └── REPORTED → block memory and escalate to moderation
+      │
+      └── [No gated approval]: inject directly + attest serve on-chain
+      │
+      ▼
   Agent continues with or without memory
 ```
+
+This is the intended alpha model: plugin-side live-signal harvesting for recall query construction, local decrypt/guard checks, and gated injection by default. The product contract above is fixed; implementation sophistication is still being hardened during alpha.
 
 ### 4.5 Contribution Flow
 
 ```
-Agent calls wevibe_contribute (or autoContribute on session exit)
+Developer opens dashboard `/sessions` and selects a captured local session
      │
      ▼
-  1. Extract candidate memories from local session context
-  2. Run wevibe-guard scan (advisory) and sanitization steps
-  3. Generate fresh DEK, encrypt plaintext, seal to PK_mod(e)
-  4. Contributor signs submission hash/canonical body
-  5. Submit COMMITMENT to chain (hash, org_id, contributor_pubkey, expiry, size)
-     Org pays bandwidth for the commitment transaction.
-  6. Deliver encrypted blob to reviewer via temporary off-chain path
-     (local transfer, P2P, or org-hosted mailbox)
-  7. Return: "WeVibe: captured N learning(s). Pending review."
+  Click **"Extract Memories"**
+     (local extraction only; returns review candidates)
+     │
+     ▼
+  Review/edit candidates and choose per-memory org destination (D-12.2)
+     │
+     ▼
+  Click **"Submit N"** (explicit off-machine send)
+     │
+     ▼
+  Local contribution pipeline:
+    1. Run wevibe-guard scan (advisory) and sanitization steps
+    2. Generate fresh DEK, encrypt plaintext, seal to PK_mod(e)
+    3. Contributor signs submission hash/canonical body
+    4. Submit COMMITMENT to chain (hash, org_id, contributor_pubkey, expiry, size)
+       Org pays bandwidth for the commitment transaction.
+    5. Deliver encrypted blob to reviewer via temporary off-chain path
+       (local transfer, P2P, or org-hosted mailbox)
+    6. Return: "WeVibe: submitted N learning(s). Pending review."
 ```
 
-**Pending memory lifecycle:** Only the commitment is written on-chain initially. The encrypted blob is reviewed out-of-band; approval finalizes chain state, while rejection/expiry deletes the pending commitment and temporary blob.
+**Pending memory lifecycle:** Only the commitment is written on-chain initially. The encrypted blob is reviewed out-of-band; approval finalizes chain state, while rejection/expiry deletes the pending commitment and temporary blob. Sessions stay local unless/until the contributor explicitly submits.
 
 ### 4.6 Reviewer Flow
 
@@ -768,7 +785,7 @@ Because the client is forkable, WeVibe maintains canonical badge criteria in the
 Badges are a first-class social feature with three families:
 
 1. **Serve-milestone badges** — thresholds based on how often a contributor's memories are served.
-2. **Rarity-tier badges** — derived from per-memory keyword supply/demand tiers, computed once at commit and frozen on-chain.
+2. **Rarity-tier badges** — derived from per-memory keyword supply/demand tiers, computed read-time by the social-graph display client in alpha; on-chain freeze is deferred to mainnet (GAP-RARITY-1, D-SG-3).
 3. **Contribution-volume badges** — thresholds based on approved memory contribution volume.
 
 Scoping is per-org, with profile breakdowns instead of a single global ladder. This keeps competition bounded and useful: you can see where someone built reputation, without forcing all contributors into one network-wide leaderboard.
@@ -808,7 +825,7 @@ Organization profiles expose badge state in a per-org breakdown for both contrib
 
 - **Per-org scope:** badges are earned and displayed in org context, then optionally summarized on contributor profiles.
 - **No cross-org leaderboard:** WeVibe does not publish a global rank table.
-- **Canonical criteria for display tiers:** rarity tier is chain-native; serve-milestone and contribution-volume thresholds come from a canonical reference spec used by the reference social graph so labels like "Legendary" remain consistent across forks.
+- **Canonical criteria for display tiers:** in alpha, rarity tier is computed read-time by the reference social-graph display client (D-SG-3), with on-chain freeze deferred to mainnet (GAP-RARITY-1); serve-milestone and contribution-volume thresholds come from a canonical reference spec used by the reference social graph so labels like "Legendary" remain consistent across forks.
 
 This canonical-spec-in-display approach preserves fork freedom while keeping badge semantics legible across the ecosystem.
 
@@ -923,7 +940,7 @@ WeVibe's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a 
 
 ### 10.2 The Four Roles
 
-**Developer (user).** Codes with an LLM. Memories accumulate as exhaust. May consume paid recall access through orgs, but chain mechanics stay abstracted behind plugin/hub UX. Experience: "I code, my memories accumulate, my profile shows what I've solved." WeVibe runs invisibly in the background after initial opt-in.
+**Developer (user).** Codes with an LLM. Sessions stay local by default, and contribution is explicit through the dashboard extraction/review/submit flow. May consume paid recall access through orgs, but chain mechanics stay abstracted behind plugin/hub UX. Experience: "I code, I choose what to contribute, my profile shows what I've solved."
 
 **Org leader (economic operator + curator).** Creates orgs (burns VIBE), curates memories, manages membership, and sets the org's recall-access/payment model (price + policy) via hub accounting. Leader revenue comes from org demand-leg settlement into the org treasury, withdrawn with `MsgWithdrawTreasury`; moderators are paid at leader discretion. **Leaders earn no emissions.**
 

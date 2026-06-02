@@ -571,7 +571,7 @@ The bootstrap grace period (D-4.2) is measured in **chain epochs**, not rotation
 - `implement` (required) — what TO do and how, describes the correct pattern
 - `dnd` (optional, can be null) — what NOT to do and why
 
-The `dnd` field being null or non-null is the signal used for consumer-side risk appetite filtering. Memories with a non-null `dnd` field are DNDs (do-not-do warnings); memories with a null `dnd` field are pure implementations.
+The `dnd` field being null or non-null is the signal used for the consumer content filter (D-11.5). Memories with a non-null `dnd` field are DNDs (do-not-do warnings / negative signals); memories with a null `dnd` field are pure implementations.
 
 **Why single type with internal DND flag (replaces D-5.1 "Two Memory Types Only"):**
 
@@ -579,7 +579,7 @@ The previous design had two memory types at the protocol level: `correct_impleme
 
 1. **Knowledge is not mutually exclusive.** A memory about PostgreSQL connection pooling naturally contains both "set `max_connections` to match your PgBouncer pool size" (implement) AND "do not set `max_connections` above 100 on t2.micro or you will exhaust RAM" (dnd). Forcing this into a single type forced contributors to choose which aspect to emphasize, discarding the other.
 
-2. **Risk appetite filtering works at the field level, not the type level.** The consumer's `risk_appetite` setting (`lowest` = DND-only, `neutral` = all) filters on the presence of a non-null `dnd` field — a more granular and semantically correct filter than binary type membership. A memory can be both; the consumer chooses which aspect to see.
+2. **The content filter works at the field level, not the type level.** The consumer's content filter (`[DNDs only]` vs `[Implementations + DNDs]`, D-11.5) filters on the presence of a non-null `dnd` field — a more granular and semantically correct filter than binary type membership. A memory can be both; the consumer chooses which aspect to see.
 
 3. **Extraction produces cleaner output.** When the LLM knows it should emit both `implement` and `dnd` as independent fields within a single memory, it produces more complete guidance. The old model forced a binary choice that diluted both types.
 
@@ -675,6 +675,34 @@ Findings are stored on the submission record as `sanitization_findings`. The sca
 - One prompt, one source of truth
 - Consistent extraction quality across all submission paths
 - Avoids the dashboard needing to bundle LLM client code
+
+---
+
+### D-5.7: Contribution Is Manual and User-Controlled (Privacy Is the Default)
+
+**Decision:** Memory contribution is **fully manual and dashboard-driven**. Coding sessions are captured/stored **locally only**; **nothing leaves the contributor's machine without an explicit submit action**. The flow: dashboard `/sessions` → select a session → click **"Extract Memories"** (local extraction via wevibe-mcp `extraction.ts`, D-5.6, returns candidates for review — does NOT submit) → review candidates → choose a per-memory org destination (D-12.2) → click **"Submit"**. `/my-submissions` tracks status only.
+
+There is **NO automatic mining**, **NO session buffer that auto-processes**, **NO `autoContribute()`**, and **NO agent-invoked `wevibe_contribute` tool**. Privacy is the default, not a toggle.
+
+**Why:** The contributor must control exactly what knowledge leaves their machine. Automatic/background contribution ("sessions mined automatically", "runs invisibly", `autoContribute()` on session exit) is a **pre-pivot model that is false and is removed** — it inverts the core guarantee of the social-first product. Explicit per-memory review + routing is also what makes multi-org submission (D-12.2) and contributor accountability coherent.
+
+**Code reality (verified 2026-06-02):** the contribution path is already user-driven in code (no `autoContribute`, no session buffer, no agent contribute tool; only an explicit dashboard submit sends off-machine). **Remnants to remove (code, matrix-gated):** the plugin sets `WEVIBE_AUTO_CONTRIBUTE=1` (DEAD — nothing reads it) + documents it in its README; and a dead `auto-contribute-consent` stub in `extraction.ts` is never consumed. Both must be deleted (R-LONGEVITY / R-ONE-PATH).
+
+---
+
+### D-5.8: Recall — Client Auto-Queries, Injection Is Gated
+
+**Decision:** Recall is split: the **query side is automatic**, the **injection side is gated**.
+
+1. **Auto-query (no user/agent action).** The local client harvests session signals to build the retrieval query parameters; the plugin auto-submits the query. There is **NO agent-invoked `wevibe_recall` tool** — the agent does not "pull." The MCP builds the query (keyword-weight extraction + a **local** Ollama embedding, model `nomic-embed-text`, 768-dim) and POSTs `{ org_id, agent_pubkey, keyword_weights[], vector[], embedding_model_id, limit, pre_pubkey }` to the hub `POST /v1/orgs/{org}/query`.
+2. **Hub retrieval.** Qdrant vector search + keyword-boost ranking + pending-denial decay + new-memory boost + power-law sampling. The hub returns **encrypted** candidates (capsule/cfrag/umbral_ciphertext) + trust signals; the MCP fetches ciphertext and **decrypts locally**.
+3. **Gated injection.** Candidates are presented to the consumer with the memory **plus details** before injection: memory text, memory_type, score, matched keywords, wevibe-guard scan result, contributor stats (account age, contributions, serve count, reports upheld, false reports against), memory stats (retrieval/acceptance counts), trust panel. Per the consumer **injection-gate** setting (D-11.5): `[Gated approval]` (DEFAULT) pauses the agent for explicit approval; `[No gated approval]` injects directly. The serve is attested on-chain at injection.
+
+**Content/gate settings:** governed by the 2×2 consumer matrix (D-11.5). Recall low-latency by design.
+
+**Intended vs current — logged gap `GAP-RECALL-HARVEST`:** the **intended** model harvests **live session signals** (recent prompt, edited files, stack) to build the query each time it's needed. **Current code** builds the query only from **project metadata at startup** and fires **once** (the plugin captures `lastPrompt` + edited-file paths via hooks but does NOT use them in the query); `agent_sig` is a literal `"stub"`; and two divergent gate implementations exist (`wevibe-mcp` `server.ts` MCP-elicitation path vs `http-server.ts` `/v1/recall` queue path used by the plugin). These are alpha under-builds tracked for code cleanup (matrix-gated). Forward docs describe the **intended** model, framed as alpha.
+
+**Why:** recall must be frictionless (auto-query, no tool ceremony) but safe (gated injection by default). The agent never silently ingests unreviewed memory unless the consumer opts into `[No gated approval]`.
 
 ---
 
@@ -1231,16 +1259,21 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 
 ---
 
-### D-11.5: Risk Appetite Is Client-Side Filter
+### D-11.5: Consumer Settings — Content Filter + Injection Gate (Client-Side)
 
-**Decision:** Consumer risk appetite (`lowest | neutral`) is enforced client-side in both the plugin AND wevibe-mcp (via separate read implementations of the same `~/.wevibe/plugin-config.json`). The hub does NOT filter by risk appetite — it returns all relevant memories. The filter is applied after retrieval, before the approval UI.
+**Decision:** The term **"risk appetite" is RETIRED.** The consumer has a **2×2 client-side settings matrix**, labeled by the toggles:
+
+- **Content filter:** `[Implementations + DNDs]` | `[DNDs only]`. Filters on the presence of a non-null `dnd` field (D-5.1). `[DNDs only]` surfaces only negative-signal / do-not-do guardrails; `[Implementations + DNDs]` surfaces all memories.
+- **Injection gate:** `[Gated approval]` | `[No gated approval]`. `[Gated approval]` pauses the agent for explicit user approval before a recalled memory is injected (the exclusive pop-up + details, D-5.8); `[No gated approval]` injects directly without per-memory approval.
+
+**Default = `[Implementations + DNDs]` + `[Gated approval]`.** Both settings are enforced **client-side** (plugin + wevibe-mcp); the hub does NOT filter by consumer preference — it returns all relevant memories, and the client applies the content filter and gate after retrieval, before injection.
 
 **Why:**
-- The hub doesn't need to know consumer preferences. Filter logic on the hub would mean every retrieval request includes appetite metadata, hub stores it, hub applies it — coupling the consumer's preference setting to authenticated state.
-- Client-side filtering also means changing the setting is instant (no hub-state round-trip).
-- The duplication of read logic (plugin + wevibe-mcp) is intentional: they're separate runtimes. Reconciling them via a shared library would mean compiling wevibe-mcp's TypeScript into the plugin or making the plugin a child process of wevibe-mcp — both worse than the small duplication of a `getRiskAppetite()` helper.
+- The hub doesn't need to know consumer preferences. Hub-side filtering would couple the preference to authenticated state and force appetite metadata into every retrieval request.
+- Client-side filtering makes changing a setting instant (no hub round-trip).
+- `[Gated approval]` as the default keeps the human-in-the-loop invariant: the agent never silently ingests recalled memory unless the consumer explicitly opts into `[No gated approval]`.
 
-**Accepted tradeoff:** Both the plugin (`wevibe-opencode-plugin/plugins/wevibe-plugin.ts`) and wevibe-mcp (`wevibe-mcp/src/risk-appetite.ts`) implement their own `getRiskAppetite()` function reading `~/.wevibe/plugin-config.json`. This is the intended design, not a bug to fix by extracting shared code.
+**Code mapping (RENAME pending — code change is matrix-gated):** the content filter currently exists as `risk_appetite` (`lowest` = DNDs-only, `neutral` = both) in `wevibe-mcp/src/risk-appetite.ts` + the `set_risk_appetite` MCP tool + the plugin's `getRiskAppetite()` reading `~/.wevibe/plugin-config.json`. The gate currently exists as the `WEVIBE_ALLOW_UNREVIEWED` env flag. Both must be renamed to the toggle labels above, and **the gate DEFAULT must become `[Gated approval]`** — the plugin currently force-sets `WEVIBE_ALLOW_UNREVIEWED=1` (= No-gated), which is the WRONG default and will be corrected. The duplicate read logic across plugin + wevibe-mcp (separate runtimes) remains intentional.
 
 ---
 
@@ -1421,7 +1454,7 @@ For memories exceeding the 4KB plaintext cap, `plaintext_oversized=true` and the
 **Why the full set is stored on-chain:**
 
 - **Cryptographic verifiability against a rogue leader.** Without ciphertext + capsule on-chain, a malicious leader could "uphold" a fabricated report by publishing fake plaintext to discredit a contributor. Storing the full set means anyone can demand the leader prove decryption matches.
-- **ZK anchor closes the contributor+leader collusion gap.** The plaintext_hash alone (without ZK binding) could be poisoned at submit time by a captured contributor signing a decoy hash. The ZK proof at commit time mathematically binds the hash to the ciphertext's actual content, so the decoy attack is no longer viable.
+- **The contributor-signed canonical body closes the contributor+leader collusion gap.** The plaintext_hash alone (without binding) could be poisoned at submit time by a captured contributor signing a decoy hash. The contributor's signature over the joint canonical body (`plaintext_hash`, `salt`, `ciphertext_hash`) binds the hash to the exact ciphertext at submit time, so the decoy attack is no longer viable (see D-VR-1 through D-VR-8). NOTE: this rationale was previously stated in terms of a ZK proof; ZK/SP1 is removed (D-VR-8) — the binding is now the contributor signature, not a zero-knowledge proof.
 - **4KB cap is economically considered.** Upheld reports are rare and consequential — paying 10-40× normal approval gas is acceptable. 4KB covers ~95% of memories based on typical extraction outputs.
 - **Oversized fallback preserves the property.** For large memories, the on-chain hash is evidence of deletion. Anyone with the off-chain plaintext can verify against it via standard sha256.
 
