@@ -2408,4 +2408,42 @@ already-locked decision. (Scoped: CO-048; discovered during CO-047 execution.)
 
 ---
 
+### D-9.5: Retrieval Fidelity — Remove Inherited Vector Noise + Scale Recall Depth (2026-06-01, Walter-approved)
+
+**Decision (hub-side only — NO decay/chain change, R-DECAY-FROZEN untouched):**
+1. **Stored-vector Gaussian noise is OFF by default (`σ = 0`).** The hub previously injected
+   `N(0, 0.1·‖v‖)` into every memory embedding at upsert (`wevibe-hub/internal/retrieval/retrieval.go`
+   `injectGaussianNoise`). This was **inherited verbatim from the Echo migration (commit MO-003)** with
+   no rationale, no config knob, and no DECISIONS basis. It asymmetrically corrupted recall (stored side
+   noised, query side clean).
+2. **Vector recall depth scales with the org, capped at 5000** (was a fixed `30`). The vector DB returns
+   `min(recallDepth, active)`, so below the cap the engine effectively ranks *all* of an org's active
+   memories; the cap is the compute safety valve.
+
+Both are env-configurable (`RETRIEVAL_VECTOR_NOISE_SIGMA`, `RETRIEVAL_RECALL_DEPTH`); defaults now `0` / `5000`.
+
+**Why (empirical — measure-first, R-26):** Earned-Trust decay was proven equal to the canonical sim, yet the
+live chain false-archived ~25% of good memories in the easy "steady" regime (gate-cell1: good-survival 0.7528,
+gap 75.28pp vs sim 95.45pp; Δ −20.17pp, FAILING the |Δgap|≤5pp tokenomics-match). Diagnosis (firsthand chart of
+retrieval.go) localized the loss to recall fidelity, NOT decay. The measure-first cell (steady/seed42/300ep,
+σ=0 + depth=5000, all else identical) closed it: **good-survival 0.9438, gap 94.38pp, Δ −1.07pp → PASS.**
+~95% of the 20pp (19.10pp) was these two fixable knobs; only ~1.07pp residual is the irreducible
+"embedding-cosine ≠ exact-keyword-set-overlap" effect (to be modeled by the calibrated sim, see sim purpose).
+D-9.4 probabilistic exploration + new-mem boost is already implemented on this path and is NOT the gap source.
+
+**COMPUTE CAVEAT (do not forget — the scale at which this punishes us):** per-query cost is ~linear in the
+number of candidates examined (vector-DB payload deserialization + keyword scoring + sort + probabilistic
+sample, all ∝ recall depth), multiplied by query frequency. At alpha scale (hundreds to a few thousand active
+memories/org) this is negligible — dominated by block production, not search (proven: steady ~100 and heavy
+~1,900 memories both ~15s/epoch). **It begins to punish us when an org's ACTIVE memory count reaches the tens
+of thousands**, where per-query latency + memory dominate. The `5000` cap covers every closed-alpha org and the
+brutal heavy gate cell (~1,900). **Before any org approaches ~5,000 active memories we MUST instrument query
+latency vs active-set size and likely move to a two-stage approximate-prefilter → rerank** rather than simply
+raising the cap. This is the documented compute ceiling.
+
+**Status:** implemented in the wevibe-server working tree (config.go, retrieval.go, docker-compose.yml);
+**commit pending the full 4-seed × 3-regime matrix passing with these defaults.**
+
+---
+
 *End of DECISIONS.md*
