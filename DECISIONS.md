@@ -2483,6 +2483,35 @@ raising the cap. This is the documented compute ceiling.
 - Canonical-spec thresholds keep badge tiers (e.g., "Legendary") consistent across forked social-graph implementations.
 - Badges are STATUS-ONLY: no VIBE reward, no emissions, and no rep-tier payout coupling.
 
+**ALPHA / PUBLIC-TESTNET SPEC (`⚠ PROVISIONAL-ALPHA` — RETUNE BEFORE MAINNET):**
+
+Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so badges are actually earnable. Mainnet volume will be orders of magnitude higher; EVERY number below must be revisited before mainnet. Status-only, per-org, no cross-org leaderboard (D-SG-2).
+
+- **Computation model (alpha):** ALL THREE families are computed READ-TIME by the reference open-source social-graph display client from chain RPC inputs (per D-SG-2 "display client over RPC"). This SUPERSEDES, for alpha, the earlier "rarity tier frozen on-chain at commit" — on-chain freeze of rarity is deferred to a mainnet refinement (GAP-RARITY-1). No on-chain badge entity exists today (rarity exists only as a numeric `rarity_multiplier` in emissions `WorkScore`).
+
+- **Serve-milestone (per org)** — from `GetContributorProfile.serve_count` (per-org serves of the contributor's memories):
+  | Tier | Serves |
+  |---|---|
+  | Bronze | 10 |
+  | Silver | 50 |
+  | Gold | 250 |
+  | Platinum | 1,000 |
+
+- **Contribution-volume (per org)** — from `GetContributorProfile.memory_count` (approved memories):
+  | Tier | Approved memories |
+  |---|---|
+  | Contributor | 1 |
+  | Builder | 10 |
+  | Maintainer | 25 |
+  | Pillar | 100 |
+
+- **Rarity-tier (per org)** — per-memory; a contributor's rarity badge = their highest-rarity memory in the org. Simplified alpha supply/demand rule (full per-keyword transform is the mainnet GAP-RARITY-1 refinement): for each keyword `k` on a memory, `supply_k` = # approved memories in the org carrying `k`; `demand_k` = total serves on memories carrying `k`. A memory qualifies on keyword `k` only if `supply_k ≤ 3` AND `demand_k ≥ 10`. Tier set by `demand_k`:
+  | Tier | demand_k (serves), with supply_k ≤ 3 |
+  |---|---|
+  | Uncommon | 10 |
+  | Rare | 30 |
+  | Legendary | 100 |
+
 ---
 
 ### D-ECON-CANON: Canonical VIBE Economy (Consolidation Lock)
