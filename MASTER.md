@@ -1123,6 +1123,35 @@ Every memory in the system moves through a defined lifecycle. The state machine 
 
 ---
 
+## Cross-Cutting: Chain Incident Response & Rollback Posture
+
+This section records what recovery and incident-response capability the chain actually has today, established by a direct read of `wevibe-chain` (app wiring + all seven custom modules + command surface) on 2026-06-01. It is the reference answer to "if the chain is hacked, can we roll it back?" and the inventory of the chain's largest attack surfaces. The concrete, fixable defects are tracked as `GAP-SEC-*` gaps in the gap log below.
+
+### Is there a rollback / undo-hack mechanism embedded in the chain?
+
+**No. There is no application-level rollback, clawback, freeze, pause, or "undo-hack" mechanism.** No custom module implements an emergency halt, fund clawback, or state-reversal path, and **`x/circuit` is NOT wired** into the app (confirmed absent from `wevibe-chain/app/app.go`). The only recovery levers are the generic Cosmos SDK / CometBFT mechanisms, none of which is an automated safety net:
+
+| Mechanism | What it actually does | Limitations |
+|-----------|----------------------|-------------|
+| **`wevibed rollback` CLI** (provided implicitly by `server.AddCommands(...)`, `cmd/wevibed/cmd/root.go:105`) | Rolls back **one block** of CometBFT + app state on a *single node* | Built to recover from an apphash mismatch, **not** to reverse a hack. Rewinding finalized history requires ≥2/3 of validators to coordinate a manual restart — a social/operational action, not embedded automation. |
+| **State export → relaunch** (`ExportAppStateAndValidators`, `app/export.go`; `appExport`/genesis path) | Dumps app state at a height so a *new* chain can boot from an edited genesis | The classic "hard fork to patch a hack" route. Fully manual, requires a new chain-id and validator coordination. Not embedded automation. |
+| **`x/upgrade`** (`app/upgrades/v2`) | Governance swaps in a patched binary at a height | Deploys *code*; **does not rewind state.** Cannot undo a theft. |
+
+**Consequence:** if a message handler is being actively exploited, the only available responses are a coordinated binary upgrade/halt or an export-and-relaunch fork — both slow, social, and after-the-fact. Wiring `x/circuit` (tracked as `GAP-SEC-3`) is the most realistic fast brake and is currently missing.
+
+### Biggest attack vectors (inventory)
+
+1. **App-specific authorization gaps in the custom modules** — the highest-signal surface, because the standard SDK modules are battle-tested but the WeVibe modules are bespoke. Two confirmed live defects: an unauthorized `x/org` `AddMember` privilege-escalation path (`GAP-SEC-1`, CRITICAL) and a missing authority check on `x/emissions` `DistributeOperatorRewards` (`GAP-SEC-2`, MAJOR).
+2. **Validator / governance centralization** — `genesis.json` is a single-validator bootstrap (`chain_id: wevibe-1`, `pub_key_types: ed25519`). The `gov` module address is the `authority` for every `UpdateParams` and for `MsgMintDailyEmission`. In an alpha with few validators, whoever controls >2/3 voting power (or the genesis validator key) effectively controls params, emissions, and upgrades — and, with no circuit breaker and no rollback, there is no fast brake if those keys are compromised. **Validator-key compromise / a small validator set is the single largest systemic risk** (tracked under `GAP-SEC-3` for the missing brake; decentralization itself is a pre-mainnet operational requirement, see also `GAP-CHAIN-7`).
+3. **Standard consensus-layer vectors** — long-range/equivocation (handled by evidence params `max_age_num_blocks: 100000`), P2P/mempool DoS. Note `SECURITY.md` explicitly places single-client DoS out of scope.
+
+### What is already well-defended (do not regress)
+
+- **Serving-key theft is contained by design.** `x/serve` `requireServingKeySigner` (`x/serve/keeper/msg_server.go:32`) restricts a stolen hub serving key to submitting serve/denial batches and burning its own gas — nothing else (D-S32-CO044 key separation).
+- **The memory pipeline is the hardened path.** `x/memory` gates commit/approve/report on `requireLeaderWallet` (signer must equal the org's registered leader wallet, `x/memory/keeper/msg_server.go:33`) **plus** ed25519 contributor-signature verification and ciphertext/content-hash binding (`msg_server.go:97-148`). This is the model the `x/org` module should follow. Critically, the `GAP-SEC-1` `AddMember` escalation does **not** grant the leader-wallet authority, so it cannot forge memory commitments/approvals — but it does reach treasury, serving-key, and leadership operations.
+
+---
+
 Open gaps only. Resolved gaps have been removed (history lives in implementation reports). Architectural decisions and rationale live in `DECISIONS.md`.
 
 ## Severity Classifications
@@ -1137,6 +1166,38 @@ Open gaps only. Resolved gaps have been removed (history lives in implementation
 ---
 
 ## CRITICAL
+
+### GAP-SEC-1: Unauthorized `x/org` `AddMember` → Org Takeover + Treasury Drain
+
+**Participant:** Leader (victim), all orgs
+**Milestone:** ALPHA (pre-mainnet blocker)
+**Severity:** CRITICAL
+**Status:** OPEN (found 2026-06-01 by direct chain read)
+
+`MsgAddMember` has **no authorization check whatsoever**, allowing any account to add itself as a `leader` of any existing org and then exercise every leader-gated operation.
+
+**Mechanism:**
+- The handler `x/org/keeper/msg_server.go:45` (`AddMember`) calls `keeper.AddMember` **without passing the signer**.
+- The keeper `x/org/keeper/keeper.go:257` (`AddMember`) only checks for a duplicate member key — there is no leader/admin/moderator gate.
+- `MsgAddMember.ValidateBasic` (`x/org/types/msgs.go:34`) requires `Role` to be non-empty but **does not restrict its value** (any string, including `"leader"`, is accepted).
+- Authorization for privileged org operations is `IsLeader` (`x/org/keeper/keeper.go:356`), which simply returns `member.Role == "leader"`. There is no single-leader invariant — an org can hold multiple `leader` members.
+
+**Exploit:** any account submits `MsgAddMember{OrgId: <victim>, Pubkey: <attacker_addr>, Role: "leader"}`, becoming a co-leader of the victim org. It then passes the `IsLeader` gate on:
+- `WithdrawTreasury` (`msg_server.go:143`) → **drains the org treasury** to any recipient,
+- `SetServingKey` → hijacks serve/denial batch submission authority,
+- `SetRepTiers`, `SetOrgConfig`, `TransferLeadership`, `CloseOrg`, `GrantTrialAllowance`.
+
+The legitimate leader is not notified, since a second `leader` member is added silently.
+
+**Containment:** the escalation does **not** grant the org's registered leader-wallet authority (`GetLeaderWallet`), so it cannot forge memory commitments/approvals — `x/memory` `requireLeaderWallet` (`x/memory/keeper/msg_server.go:33`) still rejects it. But treasury, serving-key, config, and leadership operations are all reachable.
+
+**Impact:** direct fund theft (treasury drain) and full administrative takeover of any org by an unauthenticated third party. There is no on-chain rollback or clawback to recover stolen funds (see Cross-Cutting: Chain Incident Response & Rollback Posture).
+
+**Resolution requires:**
+- Gate `AddMember` on an authorized signer (org leader, or leader+moderator per the org's policy) — verified against the authenticated `msg.Signer`, mirroring `x/memory`'s `requireLeaderWallet` / `x/serve`'s `requireServingKeySigner` pattern.
+- Restrict the set of assignable roles in `MsgAddMember.ValidateBasic` (reject `leader`; leadership transfer must go through `TransferLeadership`).
+- Enforce a single-leader invariant in the keeper (reject adding a second `leader`).
+- Add chain integration tests: non-leader `AddMember` is rejected; `AddMember` cannot set role `leader`; treasury cannot be drained via an injected leader.
 
 ### GAP-T2: Migration System Required Before Public Testnet
 
@@ -1174,6 +1235,39 @@ wevibe-mcp now exposes first-class HTTP API at 127.0.0.1:4450 with four endpoint
 ---
 
 ## MAJOR
+
+### GAP-SEC-2: `x/emissions` `DistributeOperatorRewards` Missing Authority Check
+
+**Participant:** Validator, Contributor, Leader (reward accounting integrity)
+**Milestone:** ALPHA
+**Severity:** MAJOR
+**Status:** OPEN (found 2026-06-01 by direct chain read)
+
+Unlike its sibling handlers `MintDailyEmission` and `UpdateParams` (both of which enforce `msg.Authority == keeper.authority`), `DistributeOperatorRewards` (`x/emissions/keeper/msg_server.go:40`) performs **no authority check and no `ValidateBasic`**. Its proto signer is a free `signer` field (`proto/wevibe/emissions/v1/tx.proto`), so any account can invoke it. It writes arbitrary amounts into the operator-reward ledger (`opRewardKey` + the stored `DailyEmission.OperatorRewards` map, `x/emissions/keeper/keeper.go:498`).
+
+**On-chain blast radius (today):** limited. `x/emissions` holds **no BankKeeper** — actual payouts run in `x/emissions/keeper/epoch_hooks.go` via `ProcessOrgPayouts` → `DebitTreasury`, keyed on memory contributions and reputation tiers, **not** on `opRewardKey`. So on-chain the defect corrupts reward accounting and the value surfaced by the `GetOperatorReward` gRPC query (telemetry poisoning), and allows an unbounded-size write (no batch cap → cheap state bloat).
+
+**Escalation risk:** if any off-chain consumer (hub, dashboard, payout job) pays operators by reading the `GetOperatorReward` query, this becomes direct theft. The inconsistency with the two sibling handlers strongly indicates the missing check is an oversight, not a design choice.
+
+**Resolution requires:**
+- Add `if msg.Authority != m.keeper.authority { return nil, types.ErrUnauthorized }` and a `msg.ValidateBasic()` call to `DistributeOperatorRewards`, matching `MintDailyEmission` / `UpdateParams`. (If the message is intended to be authority-gated, change the proto signer field from `signer` to `authority` and regenerate via Docker `make proto-gen`, never hand-edited `.pb.go` — R-19.)
+- Bound the rewards map size.
+- Add a chain test asserting a non-authority signer is rejected.
+
+### GAP-SEC-3: No On-Chain Emergency Brake (`x/circuit` Not Wired)
+
+**Participant:** Validator, all on-chain participants
+**Milestone:** ALPHA (pre-mainnet)
+**Severity:** MAJOR
+**Status:** OPEN (found 2026-06-01 by direct chain read)
+
+The chain has **no fast incident-response lever**. There is no application-level pause/freeze/clawback, and `x/circuit` is **not wired** into the app (confirmed absent from `wevibe-chain/app/app.go`). Combined with the absence of any rollback mechanism (see Cross-Cutting: Chain Incident Response & Rollback Posture), the only responses to an active exploit are a coordinated binary upgrade/halt or an export-and-relaunch fork — both slow and social.
+
+**Impact:** an exploited message route (e.g. `GAP-SEC-1`) cannot be disabled in place; there is no way for governance to surgically pause a single compromised handler while a fix ships. Recovery from a theft is a hard social fork with no automated undo.
+
+**Resolution requires:**
+- Wire `cosmossdk.io/x/circuit` (keeper + module + store key + gov-authority) so governance (and a designated circuit-break admin) can disable specific message routes in an emergency. Document the break/reset procedure in the validator ops runbook (`GAP-CHAIN-7`).
+- Decentralize the validator set and harden/secure the gov-authority key before mainnet — the gov address controls emissions, params, and upgrades with no on-chain undo (see Cross-Cutting: Chain Incident Response & Rollback Posture, attack vector #2).
 
 ### GAP-M6: Notification System Does Not Exist
 
@@ -1552,6 +1646,51 @@ The following chain features have proto definitions and working keeper logic but
 | Asymmetric gating | `x/emissions` | Validator |
 | Bandwidth state visibility | `x/bandwidth` | Leader, all members |
 
+### GAP-RARITY-1: Memory Rarity Tier Gamification (Concept Never Specced — DO NOT LOSE AGAIN)
+
+**Participant:** Contributor (primary), Leader/Consumer (secondary)
+**Status:** OPEN — concept exists in product intent but was NEVER written into a spec; rediscovered 2026-06-01 and recorded here so it stops getting lost. Needs a Walter-authored design before any implementation.
+
+**The intended feature (as Walter describes it):** a rarity-tier classification that *gamifies a contributor's memories* — e.g. **common / (uncommon) / rare / epic / legendary** (final tier names TBD) — surfaced to contributors as a reward/status signal and (likely) feeding a reward multiplier. This is a CONTRIBUTOR-FACING gamification of memory *content value*.
+
+**Why this gap exists (the "lost in documentation" finding):** an exhaustive read-only gather (2026-06-01, report `wevibe-meta/workspace/reports/gather-memory-rarity-report.txt`) found the tier vocabulary (`common`/`uncommon`/`rare`/`epic`/`legendary`/`mythic`/`gamif*`) has **ZERO occurrences** in WeVibe docs or source — it was never specced. It has been repeatedly conflated with THREE different, real things that are NOT this feature:
+1. **`RarityMultiplier` (operator work-score) — IMPLEMENTED, but unrelated.** `wevibe-chain/x/emissions/keeper/keeper.go:859-875` `ComputeRarityMultiplier` = `1.0 + (totalOperators/activeOperators − 1.0)*0.5`, capped at `RarityMultiplierCap`. This scores how *rare an OPERATOR's serving availability* is — nothing to do with memory content value.
+2. **`rep-tier` (reputation payout tiers) — different concept.** Contributor payout tiers keyed on `total_approved_memories` (WHITEPAPER.md:912; DECISIONS.md:862, 1536). Reward-by-reputation, not reward-by-memory-rarity.
+3. **The "rarity/demand feature" named-but-deferred in `CO-047.md:874-882`** ("THIS IS NOT PART OF CO-047 … rarity/demand feature, separate CO") — named as future work, never given a tier spec.
+
+**Known related discrepancy to resolve when speccing:** `RarityMultiplierCap` default is **"3.0"** in code (`wevibe-chain/x/emissions/types/params.go`) but **"10"** in `wevibe-chain/docs/PARAMETERS.md:466-471`. Reconcile and decide whether memory-rarity rewards reuse/relate to this cap or are an independent mechanism.
+
+**Design direction v0.1 (Walter, 2026-06-01) — "keyword supply/demand rarity" (capture; some math still open):**
+The memory's rarity score is a CONTRIBUTION-VALUE signal derived from the supply/demand of its keywords. Per keyword K on the memory:
+- **DEMAND** = total requests/retrievals for K; **SUPPLY** = number of (active) memories carrying K.
+- **Hot keyword** (many requests, few memories) → **positive (0+)**; **cold keyword** (few retrievals, abundant memories) → **negative (0−)**.
+- The **median keyword score across all keywords defines the NEUTRAL 0 baseline** — a keyword hotter than the median scores positive, colder scores negative.
+- The **memory's overall "submittal score" = the MEDIAN of its keywords' signed scores**, centered at 0: **positive total = rare/valuable** (fills a hot, underserved niche), **negative = abundant/low-demand**, **0 = neutral**. This grades the contribution and maps to the rarity tiers.
+
+**Data dependency:** requires per-keyword **request counts** (demand) and per-keyword **memory counts** (supply). NOTE: `CO-047.md:874-882` forward-gather flagged exactly these as prerequisites ("x/serve keeper per-epoch counters", "x/memory keyword storage", social-graph endpoints, dashboard contributor views) — confirming THIS is the deferred "rarity/demand feature."
+
+**Naming:** must NOT reuse the operator-level `RarityMultiplier`/`RarityMultiplierCap` (emissions work-score). Use a distinct name, e.g. **Memory Contribution Rarity Score**.
+
+**LOCKED (Walter, 2026-06-01):**
+- **Aggregation = MEDIAN of the memory's keyword scores** (resists keyword-stuffing: adding cold filler keywords pulls the median toward neutral, and adding keywords cannot inflate the score). Extra stuffing guard already in the design: **keywords are moderator-assigned from the org vocabulary, not contributor-chosen** (see Contributor UX flow / "Why contributors don't handle keywords").
+- **Static — computed ONCE at submittal (frozen at mint).** **NOT visible to the contributor until the memory is committed on-chain** (no pre-commit preview → cannot be gamed).
+- **NO contributor reward.** The score does NOT touch emissions, `rep-tier` payouts, or the contributor annual cap. It **applies only to the SOCIAL GRAPH** (`wevibe-social-graph`) as a status/gamification signal.
+- **Lives on-chain** ("committed on chain"); the social graph reads it to render the tier/status.
+
+**Manager's provisional per-keyword formula (GUT — Walter said "go with your gut, needs testing"; R-26 tunable):**
+- per-keyword raw heat `h(K) = requests(K) / max(1, active_memcount(K))` (demand per existing memory — high when hot & scarce).
+- per-keyword signed score `s(K) = log( h(K) / median_over_all_keywords(h) )` → 0 at the system median; **+ for hotter-than-median, − for colder**; log keeps it symmetric and tames extremes.
+- memory submittal score `= median_over_the_memory's_keywords( s(K) )`; 0 = neutral.
+(Provisional only — the exact transform + tier thresholds must be calibrated by testing before any implementation.)
+
+**Still open / to calibrate:**
+- Exact per-keyword transform (log-ratio vs z-score vs raw ratio) AND the tier band thresholds (which score ranges = common / (uncommon) / rare / epic / legendary) — by testing.
+- Demand time-window for `requests(K)` (all-time / rolling / per-epoch); confirm SUPPLY = ACTIVE memories only.
+- Precise pipeline stage of "submittal": keywords are assigned during MODERATION (D-6.1), so the score can only be computed once keywords exist — i.e. at the extraction/leader-batch-commit stage, not raw contributor submit. Confirm the exact stage.
+- Social-graph surface: per-contributor aggregate vs per-memory badge vs ranking input.
+
+**Implementation note:** when locked, this is a NEW order; touches per-keyword demand (`requests`) + supply (`memcount`) counters (chain), the commit path (compute+store the frozen score on-chain), and `wevibe-social-graph` (consume+display). Distinct from D-9.x (retrieval) and D-4.2 (decay); must NOT be conflated with the operator `RarityMultiplier`. No emissions coupling.
+
 ### GAP-REP-1: Reputation Module Inactive at Genesis + Empty Contributor Wallet on Serve Path
 
 **Participant:** Contributor
@@ -1709,11 +1848,11 @@ The sim baseline is the QS3b combined model (D-4.2 Earned Trust + D-9.4 probabil
 
 | Severity | Open Count | Items |
 |----------|------------|-------|
-| CRITICAL | 0 | — (Sprint 32 closure: GAP-CHAIN-1 + GAP-RETRIEVAL-1 closed permanently) |
-| MAJOR | 2 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch) |
+| CRITICAL | 1 | GAP-SEC-1 (unauthorized `x/org` AddMember → org takeover + treasury drain) |
+| MAJOR | 4 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-SEC-2 (emissions DistributeOperatorRewards missing authority check), GAP-SEC-3 (no on-chain emergency brake / x/circuit not wired) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **7** | |
+| **Total OPEN** | **10** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---
