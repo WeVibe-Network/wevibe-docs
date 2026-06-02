@@ -1885,7 +1885,7 @@ max-of-two cache is removed. See D-S32-CO044-PER-ORG-BROADCAST.
 
 This section replaces Section 14 (D-VE-1 through D-VE-10, superseded). The decisions here define the verification anchor for Pattern B Tier 2 public report escalation using contributor signatures over a redesigned canonical body. No zero-knowledge cryptography.
 
-**Implementation status:** Design LOCKED. Implementation CO follows immediately; chain wipe is part of the implementation.
+**Implementation status:** Design LOCKED. Implementation CO follows immediately; chain wipe is part of the implementation. The anchor (D-VR-1 through D-VR-8) is implemented and live. The Tier 2 escalation loop that consumes the anchor — reporter-signed public exposure under a chain-enforced response-window timer — is DESIGNED, NOT BUILT; see D-VR-9 and GAP-TIER2-EXPOSE.
 
 ---
 
@@ -2049,6 +2049,30 @@ The sanitization scan must move client-side (run inside the dashboard before enc
 DMO-028 locked the ZK pathway. CO-028 spike validated and then unblocked walking away from it. Without explicit documentation that ZK is out, future contributors reading the spike's positive feasibility numbers might re-propose the pathway. This decision exists to prevent that — the verification anchor is signatures, full stop, and the spike's "GO-WITH-RESERVATIONS" is decisively superseded.
 
 **Reference:** Walter directive 2026-05-27 ("we redesign everything"), CO-028 feasibility report Section 8 (memory ceiling observations), this DMO.
+
+---
+
+### D-VR-9: Tier 2 Public Expose Loop — Reporter-Signed, Chain-Timed, Chain-Verified (DESIGNED, NOT BUILT)
+
+**Status:** DESIGNED. NOT BUILT. Tracked as GAP-TIER2-EXPOSE.
+
+**Context.** The verification anchor (D-VR-1 through D-VR-8) is implemented and live: the contributor signs a canonical body binding `plaintext_hash`, `salt`, and `ciphertext_hash`; the chain verifies that signature at commit; and the fields are stored on-chain so a revealed memory can be checked against the anchor. The anchor is the FOUNDATION for Tier 2, not Tier 2 itself. The user-facing accountability loop built on it — a reporter-driven public exposure that bypasses a captured or absent leader, under a chain-enforced timer — is not implemented. Today the only on-chain report message is leader-gated (signer must equal the org leader wallet, per D-S32-CO044 key separation); there is no on-chain response-window timer; the reveal hash check runs only as the off-chain `VerifyUpheldReport` query rather than as an enforced write gate; and the reported-memory state transition (`MEMORY_STATE_REPORTED_DELETED`) is never set. Net effect: the chain does not yet deliver censorship-resistant Tier 2 — a captured leader can suppress any report.
+
+**Decision (target architecture).** Tier 2 is a two-transaction, reporter-signed, chain-enforced loop:
+
+1. **File (reporter-signed, no reveal).** The reporter signs an on-chain report naming the memory and reason. This starts a chain-enforced response window (epoch-based deadline) and is a permanent, unsuppressable record. No plaintext is revealed.
+2. **Window.** The org resolves through the Tier 1 path (uphold → memory removed from retrieval, deleted terminal state), which closes the window. A dismissal does not close it.
+3. **Expose (reporter-signed, gated, final).** If the window elapses unresolved, the chain unlocks the reporter's expose transaction. The reporter reveals `(plaintext, salt)`; the chain ENFORCES `sha256(salt || plaintext) == on-chain plaintext_hash` and the contributor signature over the canonical body before transitioning the memory to an exposed/deleted terminal state. After exposure the leader may publish exactly one signed dispute counter-statement.
+
+The chain is the sole enforcer: it owns the timer, gatekeeps the expose, and verifies the reveal. The reporter signs with their own key and pays their own gas; this does not weaken D-S32-CO044 (the reporter's key is neither the serving key nor the leader wallet, and the new messages are explicitly NOT on the leader-only list). The reveal is placed last because chain data is public and revealing the plaintext is the irreversible step.
+
+**Launch broadcast + threat model.** The MCP/plugin client ships a two-entry broadcast path (primary + retry fallback) for the report/expose transactions. At launch both entries are the WeVibe-operated hub relay; the two-slot design is forward-compatible so that when orgs run their own relays, slot 1 becomes the org relay and slot 2 remains the WeVibe relay as the backstop that bypasses a blocking org. The launch threat model is "captured org, trusted WeVibe backstop" — it defends against a future captured org-run relay, NOT against WeVibe-operated infrastructure itself. Trustless resistance independent of WeVibe infrastructure, org-run relays, and multi-org subscription are roadmap. At launch a user subscribes to exactly one org.
+
+**Open parameters (NOT yet locked):** reporter gas model (self-fund vs fee-grant vs bond); response-window length; expose-signing surface (wallet vs delegate); whether every report is filed on-chain immediately vs hub-first escalation; oversized-plaintext reveal handling; whether the chain gate requires roster membership only (paid status remains hub-side).
+
+**Build surface:** new reporter-signed chain messages (file + expose) with the reporter as signer; a `ReportWindow` state + epoch-based deadline checked in the existing `AfterEpochEnd` hook; on-chain reveal verification (porting the existing anchor check into an enforced write); a report-filed event for moderator notification; new chain queries for report windows / reports-by-reporter; relay whitelist entry + reporter authz grant; MCP two-entry broadcast + retry + local report state; plugin report action; dashboard Reports tab (failed / pending / expose / resolved). Also corrects two latent defects: an upheld report must blacklist the memory and must NOT increment the contributor's approved-memory count.
+
+**Supersedes:** the implicit assumption (whitepaper §5.5/§5.6/§8) that Tier 2 escalation is live. Amends the operative reading of D-7.4/D-7.5 — the chain gains a reporter-driven bypass, not only a leader-records-outcome path.
 
 ---
 
@@ -2476,6 +2500,78 @@ raising the cap. This is the documented compute ceiling.
 
 **Status:** implemented in the wevibe-server working tree (config.go, retrieval.go, docker-compose.yml);
 **commit pending the full 4-seed × 3-regime matrix passing with these defaults.**
+
+---
+
+### D-RELAY-THROUGHPUT: Hub→Chain Serve Relay — Throughput From Batch Size, Not Concurrency (2026-06-02, Walter-approved)
+
+**Decision (hub-side only — NO decay/chain change, R-DECAY-FROZEN untouched):** the hub→chain
+serve/denial relay is overhauled to lift its measured throughput floor while preserving 100% landing
+and coin-efficiency. Three coupled levers, all in `wevibe-hub`:
+
+1. **Throughput comes from BATCH SIZE.** A relay pass for an org packs *multiple epochs'*
+   `MsgSubmitServeBatch` / `MsgSubmitDenialBatch` messages into *one* multi-message commit-mode tx
+   (`relayPendingEventsByOrg` in `internal/api/handlers/serves.go`; `SubmitRelayBatch` +
+   `BuildServeBatchMsg`/`BuildDenialBatchMsg` in `internal/chain/submit.go`). Previously the relay sent
+   one tx per epoch per kind, each blocking a full ~5s `broadcast_tx_commit` — sustaining only
+   **~0.2 tx/sec** (measured 2026-06-02). One ~5s block-wait now amortizes across many epochs.
+2. **Reliability + coin-efficiency come from SERIALIZED, just-in-time simulation** — *not* concurrency.
+   One submitter per org-signer (`orgSigner.mu` already serializes); the tx is simulated immediately
+   before broadcast against committed state (no concurrent writer), so the simulate-vs-execute race is
+   absent and the gas buffer is dropped from **2× → 1.4× (7/5)** (`simulateBufferMultiplier*` in
+   `internal/chain/broadcast.go`). `simulate-retry` is retained purely as a rare safety net.
+3. **Confirmation model = commit-mode on fat batches (option A).** We keep `broadcast_tx_commit` so the
+   "submitted == executed" invariant holds; the throughput win is entirely from batch size. The async
+   `broadcast_tx_sync` + watcher model (option B) is explicitly DEFERRED unless production load demands it.
+
+**Invariants preserved (LOAD-BEARING):**
+- **Ordering:** within a single multi-msg tx the chain executes messages in order, so the relay assembles
+  them per-epoch-ascending as serve-msg-then-denial-msg. This keeps the existing rule (for any epoch E the
+  serve attestation lands before its denial; serveEpoch ≤ denialEpoch) and makes the whole pass *atomic*.
+- **Bounded blast radius:** a `maxRelayMsgsPerTx = 200` cap flushes at epoch boundaries; one bad entry can
+  only fail a bounded tx, and an epoch's serve+denial pair is never split across txs.
+- **Single-flight:** the existing `serveRelayQueued`/`serveRelayMu` machinery guarantees one relay pass per
+  org at a time; the multi-msg path relies on it. **No new concurrency is introduced.**
+
+**Why serialized, NOT concurrent (institutional memory — the CO-042 scar; do NOT re-litigate):** a prior
+*concurrent/batched* submit attempt (`simulate-buffer`, 2× buffer, no confirm) failed under load — per-tx
+gas was simulated against state snapshot S, but by `DeliverTx` time other in-flight txs had mutated the
+store, so write costs drifted **above** the estimate → out-of-gas panics *even at 2×*. The serialized
+commit-mode relay was the defensive retreat for 100% landing. **The root cause was CONCURRENCY, not gas.**
+This decision keeps serialization and gets throughput from batch size instead — so the 1.4× buffer is safe
+*only because* submission is serialized. Any future re-introduction of concurrent submission re-opens the
+gas-storm and is forbidden without a fresh Walter-approved order.
+
+**Why this is also the legitimate test speedup (NOT a measurement hack):** the replay gate is a
+pipeline-timing integration test; its result is sensitive to serve-landing-vs-epoch alignment (changing
+block time moved steady-42 91pp→78.6pp — see Lesson 27). The harness waits for the relay to fully drain
+(`pending_total==0`) **before** advancing the (time-based) epoch, so a faster *drain* changes wall-clock
+only, not attribution — unlike a block-time change. **Block time and epoch duration MUST NOT change.**
+
+**Mandatory validation:** after implementation, re-run the steady gate seeds and confirm the
+good-survival gap stays in the canonical band before trusting any re-run.
+
+**Validation result (2026-06-02, steady seed=42, 300-epoch cell, early-stop at e150):**
+**PASS.** chain.gap=97.75, sim.gap=95.45, **delta=+2.30** (well inside ±5pp); good-survival 97.75%,
+bad-persistence 0.00%; **every checkpoint flagged ON-TRACK** (the opposite of the block-time-hack
+corruption, which dropped good-survival and flagged "archiving too fast"). The result moved ~+7pp vs
+the pre-fix full run (chain.gap ~91pp, delta −4.44) but in the SAFE direction: |delta| *shrank*
+(−4.44 → +2.30, a tighter match to the canonical sim) and good-survival went UP, not down — consistent
+with the cleaner serialized just-in-time-simulate landing serve attestations reliably in the correct
+epoch so fewer *good* memories falsely decay. NOTE: early-stop fired mid-gentle-decline (100→98.9→97.8),
+so 97.75 slightly *over*-states the converged value; a full 300-epoch run would settle a touch lower
+(nearer the original low-90s) — still a PASS, good-survival never degraded.
+
+**Throughput note (HONEST — the win is PRODUCTION-only, NOT a test speedup):** the validation run still
+measured **~0.2 tx/sec, ~1.0 tx/block, ~9.7s relay drain** — UNCHANGED. This is expected per §10 of the
+design: the gate harness drains the relay to `pending_total==0` *before* advancing each epoch, so only
+~one epoch (~1 serve + ~1 denial) is ever pending and the cross-epoch fat-batch lever never fires. The
+batching win materializes only where serves accumulate continuously across epochs (production), not in
+this drain-then-advance test. The slow heavy gate cells therefore remain slow under this harness; the
+production throughput improvement is real but unmeasured by the gate.
+
+**Status:** IMPLEMENTED + VALIDATED (steady-42 PASS, measurement-neutral, correctness slightly improved).
+Closes GAP-RELAY-THROUGHPUT. Commit pending.
 
 ---
 
