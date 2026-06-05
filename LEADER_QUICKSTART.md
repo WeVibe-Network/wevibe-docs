@@ -9,7 +9,7 @@ This guide covers org creation and administration. For member setup, see
 - Node.js 20+
 - wevibe-mcp installed: `npm install -g wevibe-mcp` or run via `npx wevibe-mcp`
 - Ollama running locally for auto-extraction and embeddings (optional but recommended)
-- Access to an wevibe-chain endpoint (local or remote) with funds to burn the org registration fee
+- Access to a wevibe-chain endpoint (local or remote), with VIBE in your own wallet to acquire an org slot — org capacity is a scarce, capped set of slots acquired by auction, and you sign the registration from your own wallet (DECISIONS.md `D-ECON-STORAGE-MARKET`, `D-S32-CO044-REGISTERORG-FLOW`)
 - A secure place to store your recovery phrase (paper, hardware vault, or password manager)
 
 ## Ollama Setup (Optional — Required for Auto-Extraction)
@@ -67,8 +67,10 @@ your OS keychain. Your Ed25519 public key is your permanent leader identity for 
 ```
 > Call wevibe_create_org with:
   - org_name: "Your Org Name"
-  - domain: "yourorg.example.com"
+  - domain: "React, Next.js, TypeScript"   # your domain of EXPERTISE / specialization — NOT a DNS host
 ```
+
+Creation acquires an org **slot** at the current auction price (ascending while the slot cap fills, or a descending Dutch-resale price for a freed slot) and is signed from your own wallet. The resulting `org_id` is a permanent slot identifier, independent of your wallet — it survives a future leadership transfer or resale.
 
 After creation, wevibe-mcp (via wevibe-sdk) will display a **24-word recovery phrase**.
 This is the only copy. It encodes your org master key (`K_master`).

@@ -189,21 +189,21 @@ Each participant holds an Ed25519 keypair (with associated X25519 key for encryp
 
 | Role | Permissions | Appointed By |
 |------|------------|-------------|
-| Leader | Full org control, roster management, epoch rotation, key custody, reviewer appointment, keyword taxonomy management, rep-tier payout configuration, bandwidth allocation management | Self (org creator) |
+| Leader | Full org control, roster management, epoch rotation, key custody, reviewer appointment, keyword taxonomy management, slot/rent/treasury management | Self (slot acquisition) |
 | Reviewer | Review pending memories, approve/deny, decrypt pending submissions via SK_mod(e) | Leader |
-| Member | Submit memories (within rep-tier bandwidth), retrieve approved content, view own pending submissions | Leader (via invitation) |
+| Member | Submit memories (within per-epoch bandwidth caps), retrieve approved content, view own pending submissions | Leader (via invitation) |
 
 All roles require epoch-specific encryption keys for content access. The leader distributes these keys to approved members through sealed envelope key exchange (Section 3.4).
 
 ### 2.3 Organization Lifecycle
 
-**Creation.** The leader burns VIBE to create an org (dynamic pricing — see Section 10.3). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). The chain allocates bandwidth to the org based on VIBE burned.
+**Creation.** Org capacity is a scarce, capped set of registry-allocated **slots** (hard cap, governance-set: 32 alpha / 320 testnet / 3200 mainnet). The leader acquires a slot — by ascending-price primary while the cap fills, or by descending (Dutch) resale once a slot is freed — and signs `MsgRegisterOrg` from their **own wallet** (the hub never signs it); acquisition proceeds are burned. The `org_id` is the permanent slot identifier, independent of the leader (it survives leadership transfer/resale). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). See DECISIONS.md `D-ECON-STORAGE-MARKET` (decided; build in progress).
 
 **First-run detection.** When the MCP plugin/server starts and discovers no org membership, it surfaces an actionable message to the agent, prompting guided setup.
 
 **Operation.** Members join through leader invitation. Once approved, the leader issues sealed key envelopes containing the epoch keys to the new member. For reviewers and leaders, the envelope also includes SK_mod(e) for the current epoch.
 
-**Contributor onboarding.** Contributors opt in once — they install the plugin, connect the MCP server, and join the org. Contribution is then explicit and dashboard-driven: open `/sessions` → select a session → click **"Extract Memories"** (local extraction only; returns review candidates) → review memories → choose per-memory org destination (D-12.2) → click **"Submit"**. Sessions remain local until submit; nothing leaves the machine without explicit user action.
+**Contributor onboarding (wallet-free).** A contributor creates an account in seconds with a **passkey** (Face ID / fingerprint) — no wallet, no seed phrase (DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY`). They install the plugin, connect the MCP server, and request to join the org; once a leader approves, they contribute and recall on that passkey identity alone (the hub keys members by pubkey; a wallet address is optional and attached only later). Contribution is explicit and dashboard-driven: open `/sessions` → select a session → click **"Extract Memories"** (local extraction only; returns review candidates) → review memories → choose per-memory org destination (D-12.2) → click **"Submit"**. Sessions remain local until submit; nothing leaves the machine without explicit user action. A Cosmos wallet is an optional later upgrade, needed only to **claim accrued VIBE rewards** or pay a mainnet per-memory fee; rewards accrue to a claim-later balance until then. (The org **leader**, by contrast, does need a wallet at creation — to acquire and bond the org slot.)
 
 **Key rotation (epoch advancement).** When a member is removed, the org enters `rotation_pending` state:
 
@@ -670,29 +670,33 @@ The contributor cannot substitute ciphertext between submit and chain commit bec
 
 Reports against a served memory have two tiers. Most reports never escalate. The escalation tier exists precisely for the cases where the first tier is captured.
 
-**Tier 1 — Private report.** The consumer reports through the plugin. The report enters the org's moderation queue. Reviewers vote; if upheld, the leader commits a chain message that removes the memory and writes the deletion to the chain record. This is the normal, efficient path for honest orgs and represents the overwhelming majority of report volume. Tier 1 is paid-member-only.
+**What ships today vs. near-term.** The cryptographic foundation for both tiers — the contributor-signed verification anchor of §5.4 — ships today: every committed memory is bound to its contributor, and anyone can verify a revealed memory against the on-chain anchor. Tier 1 private moderation ships today. The Tier 2 public on-chain escalation described below — the reporter-signed escalation transaction and its chain-enforced response window — is the designed near-term accountability layer built on that anchor; it is specified here as the target model, not as a shipped capability.
 
-**Tier 2 — Public on-chain escalation.** When a Tier 1 report is dismissed (including dismissed-as-malicious) or stalls past a configurable timeout, the original reporter may escalate to a public on-chain report. The reporter signs the escalation message from their own wallet and pays the gas. The on-chain transaction publishes:
+**Tier 1 — Private report.** The consumer reports through the plugin. The report enters the org's moderation queue. Reviewers vote; if upheld, the leader commits a chain message that removes the memory from retrieval and writes the deletion to the chain record. This is the normal, efficient path for honest orgs and represents the overwhelming majority of report volume. Tier 1 is paid-member-only.
+
+**Tier 2 — Public on-chain escalation (designed).** When a Tier 1 report is dismissed (including dismissed-as-malicious) or stalls past the response window, the original reporter can escalate to a public on-chain report. The chain — not the org — is the enforcer: it runs the response-window timer, gatekeeps the escalation, and verifies the reveal at runtime. The reporter signs the escalation from their own wallet and pays the gas; the client broadcasts it through its relay path with a WeVibe-operated relay as the fallback backstop, so that a captured org-run relay cannot silently suppress it. The on-chain escalation publishes:
 
 - The memory hash and a reference to its on-chain ciphertext + capsule
 - The reporter's reveal of the plaintext (the memory becomes publicly readable)
 - A reference to the contributor-signed plaintext hash (§5.4) for cryptographic verification
 - The contributor's pubkey, the leader's pubkey, the org ID, and the original commit block height
 - The reporter's signed reason text
-- A reference to the dismissed Tier 1 report
+- A reference to the dismissed or unaddressed Tier 1 report
 
-The memory is now publicly archived on the chain with full provenance. Anyone can verify every cryptographic claim independently using the contributor-signed hash; only the judgment — "this is malicious because…" — requires human evaluation. The block explorer renders the published transaction including the revealed plaintext, the reporter's reason, and all provenance fields.
+Before the memory is exposed, the chain verifies that the revealed plaintext matches the contributor-signed anchor. The memory is then publicly archived on the chain with full provenance. Anyone can verify every cryptographic claim independently using the contributor-signed hash; only the judgment — "this is malicious because…" — requires human evaluation. The block explorer renders the published transaction including the revealed plaintext, the reporter's reason, and all provenance fields.
 
 **Eligibility and one-shot rule.** Only the original Tier 1 reporter may escalate to Tier 2 for that specific memory. One escalation per Tier 1 report. There is no re-publishing after dismissal, no infinite escalation loops. The escalation route is strictly a one-shot recourse mechanism, not a new attack surface.
 
-### 5.6 Org Response and the One-Reply Rule
+### 5.6 Org Response Window and the Expose Gate (designed)
 
-When a Tier 2 report lands, the org's leader has a fixed response window (network-governed; the default at this writing is 30 days) to respond on-chain with exactly one of two actions, each signed by the leader's wallet:
+In the designed Tier 2 model the chain sits between the report and the reveal as the enforcer, and the steps are deliberately ordered:
 
-- **Acknowledge.** No reason required — acknowledgment is the action. The memory is removed from local retrieval and transitions to a deleted terminal state. Functionally equivalent to a Tier 1 upheld outcome.
-- **Dispute.** A leader-signed counter-statement is published on-chain, explaining why the report is unfounded. The memory returns to the served state. The dispute is permanent and public, visible at the same block-explorer URL as the original report.
+1. **Filing (no reveal).** The reporter files the report on-chain — naming the memory and the reason — which starts a network-governed response window and creates a permanent, unsuppressable record that a report was filed. The plaintext is not yet revealed.
+2. **Org's window to act.** During the window the org can resolve the report through the Tier 1 path: the leader acknowledges and upholds it, removing the memory from retrieval and transitioning it to a deleted terminal state — functionally a Tier 1 upheld outcome. A genuine resolution closes the window and no public exposure occurs. A dismissal does not close the window.
+3. **Expose (gated, final).** If the window elapses without the org resolving the report, the chain unlocks the reporter's public-expose action. Only then is the plaintext revealed on-chain, and the chain verifies the reveal against the contributor-signed anchor (§5.4) before the memory becomes publicly readable. The org's inaction cannot indefinitely stall the record.
+4. **Dispute.** Once a memory has been publicly exposed, the leader may publish exactly one leader-signed counter-statement on-chain explaining why the report is unfounded. The dispute is permanent and public, visible at the same block-explorer URL as the report. One response, no revisions — the single-reply rule forces a deliberate, final answer.
 
-The leader gets exactly one response. No revisions. The single-reply rule forces a deliberate, final answer.
+This sequencing is deliberate: because all chain data is public, revealing the plaintext is the irreversible step, so it is placed last — after the org has had its governed window to act.
 
 **Silent acquiescence.** If neither action is taken within the response window, the chain marks the report unaddressed. The memory is removed from local retrieval and the "unaddressed" flag is permanent. This mirrors the principle that governs contract law: silence in the face of a public claim is tacit agreement. A leader who does not respond within the window has implicitly accepted the claim's validity. The memory does not return to serving.
 
@@ -710,7 +714,7 @@ WeVibe's own surfaces — the dashboard, discovery pages, reputation profiles �
 
 The chain is the publication mechanism. The block explorer is the viewer. WeVibe provides the reporter a permanent on-chain transaction; the reporter shares the block-explorer URL wherever they choose — a social network, a competitor's community, a blog post, a Discord channel. The court of public opinion happens outside the system. WeVibe gets out of the way.
 
-The reporter's own dashboard view is the one exception: each reporter sees a private list of their own published reports with copy-link buttons. That is ammunition for the reporter to share, nothing more. The leader receives a notification when a report is filed against a memory they committed, plus a response interface clearly labeled with the one-reply rule and the response-window timeout — again, only to the leader.
+The reporter's own dashboard view is the one exception: each reporter sees a private list of their own published reports with copy-link buttons. That is ammunition for the reporter to share, nothing more. In the designed Tier 2 loop the leader receives a notification when a report is filed against a memory they committed, plus a response interface labeled with the response-window timeout and the leader's one-shot response — again, only to the leader.
 
 ### 5.8 Silent Denial as Cheap Negative Signal
 
@@ -831,11 +835,11 @@ This canonical-spec-in-display approach preserves fork freedom while keeping bad
 
 ### 7.3 Leader Interface
 
-Hub-hosted web dashboard (`wevibe-dashboard`): pending review queue, memory browser, historical decisions, member management, org configuration, keyword taxonomy management, recovery status, direct memory authoring, bandwidth usage monitoring, denial-settlement panel, and Tier 2 report response interface.
+Hub-hosted web dashboard (`wevibe-dashboard`): pending review queue, memory browser, historical decisions, member management, org configuration, keyword taxonomy management, recovery status, direct memory authoring, bandwidth usage monitoring, denial-settlement panel, and — as the designed Tier 2 loop lands — a Tier 2 report response interface.
 
 The denial-settlement panel shows the pending-denial count and a single settle button. There is no per-denial review — denials are quantitative signals that the leader settles on-chain at a cadence of their choice (§5.8).
 
-The Tier 2 report response interface appears only when a Tier 2 report has been published against a memory the leader committed. It exposes the one-reply rule (acknowledge or dispute) clearly, the remaining time in the response window, and a copy-link to the on-chain transaction once the response is published.
+In the designed Tier 2 loop, the report response interface surfaces an open report against a memory the leader committed: during the response window it shows the remaining time and the acknowledge/uphold action; after a memory has been publicly exposed it offers the one-shot leader dispute. It links to the on-chain transaction once a response is published.
 
 ### 7.4 Member Interface
 
@@ -890,7 +894,13 @@ Qdrant stores vector + keyword metadata only (not plaintext memory content and n
 ## 9. Security Analysis
 
 ### 9.1 Sybil Resistance
-Invitation-only org membership provides natural Sybil resistance for contribution. Org creation burn provides economic Sybil resistance at the network level.
+
+Free account creation cannot be prevented — a keypair is offline math — so WeVibe does not try to gate identity creation. Instead it makes free identities **inert** and locates the gate where harm can occur (DECISIONS.md `D-SYBIL-MEMBERSHIP-GATED`):
+
+- A membership-less identity can do nothing — no contribution, no recall, no earnings — so an attacker minting identities at scale gains nothing.
+- **Org membership is the scarce, gated resource.** Membership is invitation/approval-only, with the human leader as the bouncer (and the org-slot itself is a hard-capped, auction-burned, forfeitable bond on the leader — `D-ECON-STORAGE-MARKET`).
+- **Reputation is the soft stake** for wallet-free contributors: it is destroyed on removal, so a contributor who built standing and then turns malicious loses it and restarts at zero under a fresh, re-approval-gated identity.
+- **Contributors carry no bond and can never publish unilaterally** — every contribution is leader-gated and committed under the leader's sole signature (§9.7), so the leader's slot is the bond behind all published content. This is why frictionless, wallet-free contribution does not open a Sybil hole: the blast radius of a Sybil contributor is "wasted reviewer time," not "poisoned network," and that is bounded by rate-limits, booting, and cheap join-door friction (cooldowns, invite codes).
 
 ### 9.2 Memory Poisoning
 Defense layers: submission-time wevibe-guard (advisory), OCR sanitization, human review with steganography detection, contributor reputation visible during review, recall-time blacklist, recall-time wevibe-guard, recall-time OCR, artifact extraction with egress enforcement, plugin approval gate with contributor trust signals. Residual risk: semantic payloads, subtly wrong recommendations.
@@ -902,7 +912,7 @@ K_master compromise exposes all epoch-derived content. Mitigation: offline recov
 On-chain data is public (encrypted blobs + plaintext metadata). An observer can see: org sizes, submission frequency, keyword distributions, serve patterns, contributor activity, reputation scores. They cannot see: memory content, decryption keys, member identities beyond pub keys, local blacklist state.
 
 ### 9.5 Network-Level Anti-DDOS
-Protocol-enforced per-org bandwidth caps. Orgs receive submission and storage bandwidth proportional to VIBE burned/staked. Chain rejects submissions exceeding the org's allocation. No org can flood the network regardless of off-chain resources.
+Anti-DDoS uses two complementary mechanisms (DECISIONS.md `D-ECON-STORAGE-MARKET §7`). On testnet — where faucet tokens are free and so carry no economic deterrent — `x/bandwidth` enforces flat per-org per-epoch rate-limit caps; the chain rejects submissions/serves exceeding the cap. On mainnet, the per-memory **storage deposit** (a VIBE cost per committed memory) is the economic anti-spam, and `x/bandwidth` is removed at mainnet launch. (The earlier "bandwidth proportional to VIBE burned/staked" model was never implemented and is dropped.) No org can flood the network regardless of off-chain resources.
 
 ### 9.6 Content Suitability Policy
 
@@ -916,12 +926,12 @@ A single actor wearing multiple hats — leader, every moderator, every contribu
 
 The system's security model is therefore not "prevent capture through internal governance." The system's security model is:
 
-> Make capture economically unsustainable through transparent on-chain accountability, frictionless exit for members, and a public escalation primitive that cannot be suppressed by the captured org.
+> Make capture economically unsustainable through transparent on-chain accountability, frictionless exit for members, and a public escalation primitive designed so that a captured org cannot suppress it.
 
 The three load-bearing properties:
 
 1. **The chain is the unforgeable audit log.** Every consequential action — memory commit, denial settlement, report acknowledgment, dispute publication, member departure — is a signed on-chain transaction. Neither the captured org nor WeVibe-the-protocol nor any platform operator can edit or suppress it after the fact.
-2. **Consumers have an escalation path the org cannot close.** A dismissed Tier 1 report can be republished as a Tier 2 on-chain transaction signed by the reporter, paying gas, revealing plaintext, anchored to a contributor-signed hash that the leader could not poison (§5.4). The captured org cannot prevent it, cannot delete it, and cannot suppress it from anyone who navigates to the block explorer URL.
+2. **Consumers are designed to have an escalation path the org cannot close.** The verification anchor that makes this possible (§5.4) ships today; the reporter-signed Tier 2 escalation and its chain-enforced response window are the near-term accountability layer built on it. In the target model a dismissed or unaddressed Tier 1 report is escalated as a reporter-signed on-chain transaction — paying gas, revealing plaintext only after the response window elapses, anchored to the contributor-signed hash the leader cannot poison (§5.4) — and once published it cannot be edited or deleted. At launch the escalation broadcasts through a WeVibe-operated relay with a second WeVibe relay as the retry backstop; resistance to a captured *org-run* relay arrives when orgs can run their own relays, with the WeVibe relay as the fallback that bypasses a blocking org. Resistance that does not rely on WeVibe-operated infrastructure is a roadmap item.
 3. **Exit is unfakeable.** Members leaving voluntarily is a first-class on-chain event. Sybils can be invited and can file frivolous reports, but they cannot fake people walking away. The voluntary-departure-rate signal on public discovery (§7.1) lets prospective joiners read the most honest possible signal about whether existing members trust the org.
 
 **The leader bears sole signature.** Co-attestation of moderator pubkeys on leader-signed chain transactions is explicitly removed (§5.3). A leader's chain commit binds the leader's wallet only. This concentrates responsibility on the actor who actually signs and prevents implicating moderators in chain-level decisions they did not directly authorize. The trade-off — moderator accountability for individual approvals becomes an org-local rather than chain-public concern — is acceptable because internal moderator vote history cannot defend against a capture scenario anyway, and because making leaders sole signatories sharpens the public attribution of every consequential action.
@@ -940,9 +950,9 @@ WeVibe's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a 
 
 ### 10.2 The Four Roles
 
-**Developer (user).** Codes with an LLM. Sessions stay local by default, and contribution is explicit through the dashboard extraction/review/submit flow. May consume paid recall access through orgs, but chain mechanics stay abstracted behind plugin/hub UX. Experience: "I code, I choose what to contribute, my profile shows what I've solved."
+**Developer (user).** Codes with an LLM. Onboards in seconds with a **passkey** (Face ID / fingerprint) — no wallet or seed phrase required to create an account, join an org, contribute, or recall (DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY`). Sessions stay local by default, and contribution is explicit through the dashboard extraction/review/submit flow. May consume paid recall access through orgs, but chain mechanics stay abstracted behind plugin/hub UX. A wallet is an optional later upgrade — needed only to claim earned VIBE or pay mainnet fees. Experience: "I code, I choose what to contribute, my profile shows what I've solved."
 
-**Org leader (economic operator + curator).** Creates orgs (burns VIBE), curates memories, manages membership, and sets the org's recall-access/payment model (price + policy) via hub accounting. Leader revenue comes from org demand-leg settlement into the org treasury, withdrawn with `MsgWithdrawTreasury`; moderators are paid at leader discretion. **Leaders earn no emissions.**
+**Org leader (economic operator + curator).** Acquires an org slot (auction burn) and signs registration from their own wallet, curates memories, manages membership, and sets the org's recall-access/payment model (price + policy). Leader revenue comes from the **on-chain demand-leg router**: members' VIBE payments are split by the router into a protocol burn (`max(n%, floor)`) and a remainder that settles to the org treasury, withdrawn with `MsgWithdrawTreasury`; moderators are paid at leader discretion. The leader carries ongoing skin-in-the-game via the slot (self-assessed-value rent + forced-sale-in-window) and per-memory storage deposits. **Leaders earn no emissions.**
 
 **Validator.** Stakes VIBE, runs CometBFT consensus, stores all chain state (including encrypted memories), earns validator/staking emissions. Everything deterministic — no subjective judgments. Validators are the storage and availability layer.
 
@@ -950,13 +960,17 @@ WeVibe's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a 
 
 ### 10.3 Token Economics
 
-Single token: **VIBE**. Used for staking, org creation burns, bandwidth allocation, and contributor payouts.
+Single token: **VIBE**. Used for staking, org-slot acquisition (auction burns), per-memory storage deposits, demand-leg router settlement, and contributor payouts.
 
-**Dynamic org pricing.** Org creation costs VIBE with on-chain dynamic pricing (creation pressure pushes price up; time decay pulls it down). Burned, not paid to anyone. Prevents spam-org attacks.
+**Org slots (scarce, capped, auctioned).** Org capacity is a hard-capped set of registry-allocated slots (governance param: 32 alpha / 320 testnet / 3200 mainnet). Primary allocation is an ascending price per subsequent slot until the cap fills; a freed slot (abandoned/closed/lapsed) is re-homed by a descending (Dutch) resale. All acquisition proceeds are burned. The slot `org_id` is permanent and leader-independent. Scarcity + burn is the network-level anti-spam.
 
-**Annual renewal.** Flat rate for continued bandwidth allocation. Non-renewal marks the org dormant — memories persist on-chain but no new submissions are accepted and no new serves are recorded.
+**Self-assessed-value rent (Harberger-style).** A leader posts a self-assessed value V for their slot, pays rent `r × V` per period, and anyone may force-buy the slot at V during a bid window. This keeps slots in productive hands without right-of-first-refusal chilling or grief-bidding. Non-payment/abandonment frees the slot back to Dutch resale and marks the org dormant.
 
-**Bandwidth allocation.** VIBE burned/staked by an org determines its per-epoch submission cap and storage budget. This is the anti-DDOS mechanism and the economic unit that makes the network sustainable.
+**Per-memory storage deposit (a keeper/liveness function, not a participation cost).** Each committed memory carries a small VIBE deposit that decays as storage rent and is keeper-claimable as a deletion bounty when exhausted/abandoned; pruning deletes the ciphertext blob but permanently retains accountability metadata. Its purpose is **storage hygiene and liveness** — it lets keepers **reap dead memories** and reclaim perpetual storage, and it provides the path to prune an org's memories if the **leader goes AWOL** (org abandoned/dormant) so the network is not stuck paying to store orphaned blobs forever. It is explicitly **not** a cost on contributing or a contributor bond (contributors pay nothing — `D-LEADER-SOLE-SIGNER`); the deposit is funded from the org side and prices the real (perpetual storage) externality at the granularity it occurs. A memory under an open report has its deposit frozen (unprunable until resolved). Built for production; parameterized ~0 on testnet (where `x/bandwidth` is the rate-limit guard instead).
+
+**Serve/deny attestation loop (earned trust — no VIBE).** Recall runs through the hub's **serve/deny route**: when a consumer recalls (or rejects) a memory, the hub submits a serve/denial batch to the chain (signed by the org's whitelisted serving key, gas covered by the org-account feegrant). The chain folds those serve/denial events into each memory's **Earned Trust** standing (DECISIONS.md `D-4.2`), so a memory's retrieval weight rises with demonstrated usefulness and decays toward archival when it is denied or never served. This loop is **separate from the storage deposit**: it moves *no* VIBE and is purely the trust/decay signal — the deposit is the storage-liveness lever, the serve/deny loop is the quality lever.
+
+**Demand-leg router.** Members' recall-access payments settle through an on-chain router that burns `max(n%, floor)` and forwards the remainder to the org treasury; `n`/`floor`/`r`/slot-cap are governance params. See DECISIONS.md `D-ECON-STORAGE-MARKET` (decided; build in progress).
 
 **Contributor payouts (contribution-only).** Contributors are paid per **approved memory** from the network contributor-emission budget, gated by a **network-set** qualification threshold. There is no payout per serve/retrieval. Reputation tiers may scale payout-per-approved-memory, but retrieval counts are excluded from VIBE flows.
 
@@ -992,8 +1006,8 @@ Serve/retrieval attribution is **social, not economic** (see §6): serve counts 
 
 Economic demand is the org access leg:
 1. Users buy VIBE and pay orgs for recall access.
-2. Access/payment model and pricing are **leader-set** and hub-accounted (`org_credits`; CO-047 skeleton).
-3. At settlement, a **small protocol burn** is taken from subscription revenue.
+2. Access/payment model and pricing are **leader-set**; payments settle through the **on-chain demand-leg router** (the hub `org_credits` ledger becomes a mirror of chain state, not the source of truth).
+3. The router burns `max(n%, floor)` of each payment (governance params) — the deflationary sink.
 4. The remainder settles to org treasury; leader withdraws via `MsgWithdrawTreasury`.
 5. Leader compensates moderators at discretion from treasury revenue.
 
@@ -1005,18 +1019,20 @@ Leaders earn no emissions, there is no per-serve royalty, and there is no protoc
 
 ### 10.6 On-Chain Modules
 
-Six custom Cosmos SDK modules:
+Seven custom Cosmos SDK modules:
 
-- `x/org` — registration (dynamic burn pricing), renewal, membership, bandwidth quota accounting, treasury accounting hooks, dormancy detection
+- `x/org` — slot registry + acquisition auction (ascending primary, Dutch resale; proceeds burned), self-assessed-value rent + forced-sale-in-window, on-chain demand-leg router (membership payment → burn cut + remainder to treasury), membership, treasury, dormancy/abandonment detection
 - `x/memory` — pending commitment storage (hash + metadata, no blob until approved), approved memory blob storage (encrypted ciphertext as chain state), Merkle root submissions per epoch, pending commitment expiry/removal, quarantine flagging
 - `x/serve` — batched serve attestation recording (per-org pseudonymous serve keys), deduplication (memory_cid + serve_key + epoch), self-serve detection/discounting, contributor cross-org serve count aggregation for social attribution (non-economic)
 - `x/reputation` — per-contributor cross-org aggregated stats (serve count, org breadth, domain tags, rep score, wallet age). Enhanced mode per-org when attestation enabled (difficulty histogram, XP, provenance breakdown).
 - `x/emissions` — validator staking rewards, contributor emission distribution from the network pool, protocol-level emission schedule
-- `x/bandwidth` — per-org submission and storage caps, DDOS protection, bandwidth allocation based on VIBE burned/staked, rate limiting enforcement
+- `x/bandwidth` — per-org per-epoch flat rate-limit caps (DDoS guard). This is the **testnet** anti-spam guard (faucet tokens are free, so economic deposits don't deter there); scheduled for **removal at mainnet launch**, when the per-memory storage deposit takes over the anti-spam role
+
+- `x/attestation` — session-attestation storage (CommitLLM receipts / cloud-provider signatures). Present and wired but DISABLED — `MsgSubmitSessionAttestation` is a no-op/reject until the pluggable attestation infra exists (D-ATTEST-ROADMAP); kept so it can be activated before mainnet.
 
 Standard SDK modules: `x/staking`, `x/auth`, `x/bank`, `x/gov` (wired for on-chain param updates), `x/slashing`, `x/distribution`.
 
-**Modules eliminated from v1.x:** `x/serving` (no separate operator serving sets — validators serve all), `x/challenge` (no storage challenges — consensus IS storage), `x/receipt` (replaced by x/serve), `x/operator` (merged into standard validator staking), `x/attestation` (split into x/memory + x/serve for clean separation of concerns).
+**Modules eliminated from v1.x:** `x/serving` (no separate operator serving sets — validators serve all), `x/challenge` (no storage challenges — consensus IS storage), `x/receipt` (replaced by x/serve), `x/operator` (merged into standard validator staking).
 
 ### 10.7 Node Lifecycle (`wevibed`)
 

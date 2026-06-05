@@ -19,6 +19,8 @@ Every UX flow includes **what** the participant does and **why** that design exi
 
 A single person can hold multiple functional roles simultaneously. A `member` in the hub is both a potential contributor and consumer. A `leader` is implicitly also a moderator, contributor, and consumer. The functional names describe *what they're doing*, not a separate identity.
 
+> **Onboarding & scope (Sprint 32 — `D-IDENTITY-PROGRESSIVE-CUSTODY`, `D-SINGLE-ORG`).** A **New User** creates an account in seconds with a **passkey** (Face ID / fingerprint) — **no wallet, no seed phrase**. With that passkey identity alone they can browse, request to join an org, and (once approved) contribute and recall. A Cosmos wallet is an **optional later upgrade** needed only to claim VIBE rewards / pay mainnet fees. **Alpha scope:** one leader = one org, one member = one org (`D-SINGLE-ORG`), with easy gates to expand to multi-org membership once stable.
+
 ---
 
 ## 1. Validator
@@ -92,15 +94,16 @@ Leaders create organizations, manage membership, configure moderation policy, fu
 ```
 1. User has a Cosmos-compatible wallet (Keplr, Leap, etc.)
 2. Opens WeVibe dashboard → "Create Organization"
-3. Fills in: org name, domain expertise, description
-4. Dashboard generates local delegated keypair
-5. User signs MsgGrant from wallet → grants delegated key permission
-   for WeVibe-specific messages (one-time wallet popup)
-6. Dashboard uses delegated key to sign CreateOrg request
-7. Hub creates org → chain records via MsgRegisterOrg
-8. Leader shown: org ID, epoch keypair (epoch_sk, epoch_pk), setup instructions
+3. Fills in: org name, domain of expertise (e.g. "React, Next.js, TypeScript" — a specialization, NOT a DNS host; D-ORG-DOMAIN-EXPERTISE), description
+4. Dashboard shows the current slot-acquisition price (ascending primary while the org-slot cap fills, or a descending Dutch-resale price for a freed slot)
+5. Dashboard funds the leader's wallet for gas via the faucet (testnet only), derives the per-org serving key, and returns the slot + serving-key address
+6. Dashboard builds MsgRegisterOrg with the LEADER'S OWN WALLET as signer (acquisition burn + serving key); leader signs with Keplr/Leap (one wallet popup). The hub NEVER signs MsgRegisterOrg (D-S32-CO044-REGISTERORG-FLOW).
+7. Dashboard relays the signed tx through the hub relay → chain allocates the slot (permanent, leader-independent org_id) and burns the acquisition price
+8. Leader shown: org ID (the permanent slot id), epoch keypair (epoch_sk, epoch_pk), setup instructions
 9. Recovery phrase MUST be copied offline — cannot be shown again
 ```
+
+**Why slot acquisition + wallet signing:** Org capacity is a scarce capped set of slots acquired by auction (DECISIONS.md D-ECON-STORAGE-MARKET); the leader signs registration from their own wallet so the leader has a real on-chain identity to hold accountable (rent, storage deposits, slot-forfeiture-on-malice). A hub-signed registration would leave no leader to bond or slash.
 
 **Why epoch keypair:** The org is provisioned with an Umbral epoch keypair generated via the Umbral sidecar. The `epoch_sk` is the epoch secret key; the `epoch_pk` is used to encrypt memory DEKs for future PRE retrieval. The leader's recovery phrase is a Shamir 2-of-3 splitting of the `epoch_sk`.
 
@@ -421,7 +424,7 @@ Contributors extract technical insights from their coding sessions and submit th
       - Dashboard encrypts with AES-GCM (generates DEK)
       - DEK sealed to mod pubkey (X25519) for pending submission
       - SHA-256(ciphertext || capsule) = submission_hash
-      - Contributor signs submission_hash with delegated key
+      - Contributor signs submission_hash with their passkey-protected account key (no wallet required — D-IDENTITY-PROGRESSIVE-CUSTODY)
       - POST ciphertext + capsule + signature to hub /v1/orgs/{orgID}/submit
       - Hub-side Unicode sanitization scan runs AFTER ciphertext arrives (non-blocking; findings attach to submission record for moderator review)
     → "5 memories submitted for review!"
@@ -435,6 +438,8 @@ Contributors extract technical insights from their coding sessions and submit th
 **Why client-side encryption:** The hub never sees plaintext. Encryption happens in the browser using Web Crypto API before the data leaves the machine. Only the mod key holder can decrypt pending submissions for moderation. After approval, Umbral encryption is applied for the PRE retrieval path.
 
 **Why contributors don't handle keywords:** Keywords are assigned during moderation by moderators selecting from the org's vocabulary. Contributors submit raw insights only. This prevents keyword drift and keeps vocabulary curated.
+
+**Why no wallet (and no bond) to contribute (`D-IDENTITY-PROGRESSIVE-CUSTODY`, `D-LEADER-SOLE-SIGNER`):** A contributor submits on their passkey identity alone — every submission is then **leader-gated** (mandatory review before commit/serve), so a contributor can never publish unilaterally and never needs their own bond. The accountability sits entirely on the **leader's sole signature + slot**; the worst a malicious/spammy contributor can do is waste reviewer time (bounded by rate-limits, booting, and reputation-burn). There is **no contributor-certification / auto-approve path** — that would re-introduce multi-signer publishing the model deliberately forbids.
 
 ### UX Flow: Signed Canonical Body at Submit Time (Pattern B Tier 2 Anchor)
 
@@ -627,6 +632,8 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 **Why denial vs report:** Denial is the consumer negative-signal path that feeds keyword weight decay over time. Reports are the moderator-reviewed path for memories that are harmful — they require human judgment and can result in immediate deletion + public on-chain record. Denials accumulate gradually; reports resolve decisively.
 
 **Why reports don't auto-blacklist:** A denial is the developer saying "I don't want to see this." That's personal preference — blacklist it locally. A report is the developer saying "this needs investigation." The memory should remain visible to other consumers (and the reporter) until moderators resolve it.
+
+**Designed Tier 2 escalation (reporter-driven, NOT yet built).** The flow above is the Tier 1 path, where the leader commits an upheld report. The censorship-resistant Tier 2 escalation — where a reporter forces a memory onto the public record when the org dismisses or stalls — is designed but NOT built (GAP-TIER2-EXPOSE; DECISIONS.md D-VR-9). In the target model the reporter signs two on-chain transactions: a *file* step that starts a chain-enforced response-window timer (no reveal), and, if the window elapses unresolved, a gated *expose* step that reveals the plaintext and is verified on-chain against the contributor anchor before exposure. The client surfaces this in a Reports tab with per-report state: failed (local broadcast failed → retry), pending (timer running), expose (gated final option), resolved (org acted in time). At launch the report/expose transactions broadcast through a two-entry path whose entries are both the WeVibe-operated relay, forward-compatible to org-run relays with the WeVibe relay as the backstop that bypasses a blocking org. Note: the on-chain hash/signature verification described in step 7 above currently runs as the off-chain `VerifyUpheldReport` query, not as an enforced write gate; making it an enforced gate is part of GAP-TIER2-EXPOSE.
 
 ### UX Flow: Conversational Queries (Optional)
 
@@ -900,12 +907,12 @@ The Social Graph Service (separate Docker container, separate VPS) provides wall
 
 | Module | Purpose | Participant(s) Served |
 |--------|---------|----------------------|
-| `x/org` | Org registration, membership, treasury, config, reputation tiers | Leader, New User |
+| `x/org` | Org slot registry + acquisition auction (ascending primary, Dutch resale), self-assessed-V rent, demand-leg router, membership, treasury, config | Leader, New User |
 | `x/memory` | Memory submission, approval, rejection, lifecycle (keyword weights), relationships, Merkle roots | Contributor, Moderator, Consumer, Leader |
 | `x/serve` | Serve attestation recording, denial attestations, epoch stats, contributor serve counts | Consumer, Contributor, Leader |
 | `x/reputation` | Contributor profile (aggregates + memberships), moderator profile (per-org, per-mod accountability), leader profile (per-org, leadership tenure + chain commits + epoch rotations). Owns StoredContributorProfile + StoredModeratorProfile + StoredLeaderProfile. Queryable via ModeratorProfile, LeaderProfile, UpheldReportsBy{*}, VerifyUpheldReport gRPC queries. | Contributor, Moderator, Leader, Consumer, all participants via RPC |
 | `x/emissions` | Daily mint, operator/validator shares, work scores, bootstrap credits, pay-per-memory payout | Validator, Contributor, Leader |
-| `x/bandwidth` | Per-org per-epoch bandwidth caps for memory submissions and serves | Leader, all members |
+| `x/bandwidth` | Per-org per-epoch flat rate-limit caps (testnet DDoS guard; removed at mainnet launch when the per-memory storage deposit takes over) | Leader, all members |
 | `x/attestation` | Merkle root submission for epoch data availability proofs | Leader (via hub relay) |
 
 ---
@@ -950,29 +957,21 @@ Hub ←(TX confirm)── Chain (authoritative keyword weights)
 
 ## Cross-Cutting: Wallet & Identity Architecture
 
-**Primary identity:** Cosmos-compatible wallet (Keplr, Leap, etc.)
+> ⚠ **REWRITTEN (Sprint 32, `D-IDENTITY-PROGRESSIVE-CUSTODY` / `D-LEADER-SOLE-SIGNER`).** The old "wallet is the primary identity, everything derives from it" model is superseded. Identity is now passkey-first and self-custodial; the wallet is an optional upgrade. See DECISIONS.md.
 
-**Local signing key:** Delegated keypair created at onboarding, stored locally
+**Primary identity:** a **client-held account key created at first run, protected by a passkey** (WebAuthn / Face ID / fingerprint). No wallet and no seed phrase are required to create an account, browse, join an org, or contribute.
 
-**Delegation:** One-time `x/authz MsgGrant` from wallet → delegated key
-- Scoped to WeVibe-specific message types only
-- Time-limited (renewable)
-- Revocable from wallet at any time
+**Custody:** the account key is **encrypted under the passkey** and stored client-side; its ciphertext may be backed up to the hub but **the hub can never read or sign with it** (non-custodial). Syncable passkeys carry the identity across the user's own devices, so it is not tied to one computer. OAuth/email, if used, is only an optional recovery wrap — never custody, never the signing authority.
 
-**Hot wallet pattern:** Delegated key signs all routine operations without wallet popup
+**Two keys, both client-generated:** an **Ed25519 hub-auth identity** (signs the `WeVibe-Signed` header) and a **secp256k1 PRE identity** (Umbral re-encryption). Both are generated locally at first run and retained for life — *not* derived from a wallet (amends D-1.4), so a guest can contribute and recall before any wallet exists.
 
-**Hub auth:** `WeVibe-Signed` header using delegated key
+**Wallet = optional upgrade, LINKED not migrated:** a Cosmos wallet (Keplr/Leap) is added later only when the user wants to **claim accrued VIBE rewards** or pay a mainnet per-memory fee. Linking is a **staged handover** (the wallet becomes the canonical chain authority + funding anchor via `x/authz MsgGrant`; the stable account/history is preserved because the chain is append-only). No "migrate or lose your progress" moment.
 
-**Chain transactions:** Delegated key submits via `x/authz` execution path
+**Hot key pattern (post-upgrade):** once a wallet is linked, a delegated key signs routine chain operations without a wallet popup; security-critical actions still require a wallet signature (D-1.3).
 
-**PRE identity:** BIP-32 derived child key from Cosmos wallet for Umbral encryption
+**What needs a wallet (and nothing else):** claiming rewards + mainnet per-memory fees. Browsing, joining, membership, and contributing all run on the passkey identity alone (the hub keys members by pubkey; `wallet_address` is nullable; the leader does the on-chain commit). Rewards accrue to a claim-later balance until a wallet is linked.
 
-```
-Cosmos wallet key (secp256k1, BIP-32 path m/44'/118'/0'/0/0)
-    ├── Transaction signing (delegated via MsgGrant)
-    └── BIP-32 derived child key ("wevibe-pre-identity/v1")
-            └── PRE encryption identity (Umbral SecretKey)
-```
+**Accountability boundary (`D-LEADER-SOLE-SIGNER`):** contributors are free, unbonded, and **always leader-gated** — every contribution passes mandatory review before it is committed or served. The **leader is the sole on-chain signer and sole bond** (their slot) for all published content. Moderators delegate review *labor*, never the signature. There is **no contributor-certification / auto-approve tier**.
 
 ---
 
@@ -1448,6 +1447,23 @@ Closes: GAP-VR-1, and addresses the previously-orphaned three bugs surfaced by G
 
 ---
 
+### GAP-TIER2-EXPOSE: Tier 2 Public Expose Loop Not Built (Reporter-Signed Escalation + Chain Timer)
+
+**Participant:** Consumer (reporter), Leader, Moderator
+**Milestone:** Post-anchor accountability
+**Severity:** MAJOR
+**Status:** OPEN (DESIGNED, NOT BUILT)
+
+The contributor-signed verification anchor (GAP-VR-1; DECISIONS.md D-VR-1..8) is built and live, but the accountability loop that consumes it is not. There is no reporter-signed on-chain report or expose message (the only report message, `MsgReportMemory`, is leader-gated via `requireLeaderWallet`, `x/memory/keeper/msg_server.go:33`); no chain-enforced response-window timer; the reveal hash check exists only as the off-chain `VerifyUpheldReport` query, not as an enforced write gate; and the reported-memory state transition (`MEMORY_STATE_REPORTED_DELETED`) is never set. Net effect: a captured or absent leader can suppress any report — the censorship-resistant Tier 2 the whitepaper describes does not yet exist.
+
+**Target (DECISIONS.md D-VR-9):** a two-transaction reporter-signed loop — *file* (starts an epoch-based chain timer, no reveal) → org window to uphold → gated *expose* (chain verifies the reveal against the anchor, then transitions the memory). The chain is the sole enforcer of timer, gate, and verification. The reporter signs with their own key + gas (does not weaken D-S32-CO044).
+
+**Launch model:** MCP/plugin ships a two-entry broadcast path; both entries = the WeVibe-operated hub relay at launch; forward-compatible to org-run relays (slot 1) with the WeVibe relay as backstop (slot 2). Threat model = captured org / trusted WeVibe backstop; one org per user; trustless and multi-org are roadmap. Reports tab surfaces per-report state: failed (local retry), pending (timer running), expose (gated final), resolved/upheld.
+
+**Build surface:** new reporter-signed chain messages (file + expose) with the reporter as signer; `ReportWindow` state + epoch-based deadline checked in the existing `AfterEpochEnd` hook; on-chain reveal verification (porting the anchor check into an enforced write); a report-filed event for moderator notification; new chain queries for report windows / reports-by-reporter; relay whitelist entry + reporter authz grant; MCP two-entry broadcast + retry + local report state; plugin report action; dashboard Reports tab. Also fixes two latent defects: an upheld report must blacklist the memory and must not increment the contributor's approved-memory count.
+
+---
+
 ### GAP-PIPELINE-STATUS: Pending Submission Status Constraint Mismatch
 
 **Participant:** Leader, Moderator, Contributor
@@ -1849,10 +1865,10 @@ The sim baseline is the QS3b combined model (D-4.2 Earned Trust + D-9.4 probabil
 | Severity | Open Count | Items |
 |----------|------------|-------|
 | CRITICAL | 1 | GAP-SEC-1 (unauthorized `x/org` AddMember → org takeover + treasury drain) |
-| MAJOR | 4 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-SEC-2 (emissions DistributeOperatorRewards missing authority check), GAP-SEC-3 (no on-chain emergency brake / x/circuit not wired) |
+| MAJOR | 5 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-SEC-2 (emissions DistributeOperatorRewards missing authority check), GAP-SEC-3 (no on-chain emergency brake / x/circuit not wired), GAP-TIER2-EXPOSE (reporter-signed Tier 2 expose loop + chain timer not built) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **10** | |
+| **Total OPEN** | **11** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---

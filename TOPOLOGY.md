@@ -504,6 +504,8 @@ func CreateReceipt(ctx, pool, nodePrivkeyHex, orgID, billingEpoch, accessEpochs,
 **Known issues:** None
 
 #### `internal/verify/sig.go`
+> **FORWARD NOTE (Sprint 32, identity overhaul — DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY`, brief `wevibe-meta/workspace/reports/design-identity-onboarding-migration.md`):** the Ed25519 `WeVibe-Signed` verification below stays, but the identity it authenticates is being reworked. Incoming: identity is a **client-held key created at first run and protected by a passkey (WebAuthn)** — no wallet required to participate; the dashboard moves from its current Keplr-signature-derived Ed25519 identity (`lib/wevibe-auth.ts`) and the plugin/MCP from its random on-device keypair onto a **single shared passkey-wrapped client-key scheme** (the two must mint the same identity). The key's ciphertext may be backed up to the hub but the **hub never holds a usable signing key** (non-custodial). A Cosmos wallet becomes an **optional linked authority** (staged handover, not migration) needed only to claim rewards / pay mainnet fees. Members are keyed by pubkey (`wallet_address` nullable), so wallet-free contribution already works at the hub layer. This section updates as it lands.
+
 **Exports:**
 ```go
 func RequestSignature(pubkeyHex, sigHex string, message []byte) error
@@ -687,9 +689,11 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 
 ### Custom Modules (7)
 
+> **FORWARD NOTE (Sprint 32, storage-market overhaul — DECISIONS.md `D-ECON-STORAGE-MARKET`, brief `wevibe-meta/workspace/reports/design-storage-market-economy.md`):** the file:line details below reflect CURRENT (pre-overhaul) code. Incoming changes: `x/org` → slot registry + acquisition auction + self-assessed-V rent + demand-leg router (replaces `DeriveOrgID`/`DynamicPrice`); `x/memory` → per-memory storage deposit + keeper-prune + report-state transition; `x/emissions` → removal of the org-treasury payout subsystem + WorkScore/operator machinery; `x/bandwidth` memory-cap wired as the testnet DDoS guard (deleted at mainnet); `x/attestation` neutered (disabled-but-wired). This section is updated as those land.
+
 | Module | Keeper Path | Proto Path | Tests | Purpose |
 |--------|------------|-----------|-------|---------|
-| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Merkle root submission |
+| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Session-attestation storage (NOT merkle — merkle roots live in x/memory). Being neutered: disabled/no-op until verification infra (D-ATTEST-ROADMAP) |
 | x/bandwidth | x/bandwidth/keeper/ | proto/wevibe/bandwidth/v1/ | keeper + integration | Bandwidth throttling |
 | x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Emission pool, epoch emission, work scores (32-yr schedule scheduled CO-041) |
 | x/memory | x/memory/keeper/ | proto/wevibe/memory/v1/ | keeper + integration | Memory commitments |
