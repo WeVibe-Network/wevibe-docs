@@ -1,419 +1,353 @@
 # WeVibe Network Validator Setup Runbook
 
-> **[PARTIALLY STALE — 2026-06-02]** The module list and the `x/operator` operator-registration flow below are OUT OF DATE. The live chain has **7 modules**: `x/attestation`, `x/bandwidth`, `x/emissions`, `x/memory`, `x/org`, `x/reputation`, `x/serve`. There is **no `x/operator`, `x/serving`, `x/challenge`, or `x/receipt` module** — the operator-registration section needs rewriting against the real onboarding flow before a validator follows it.
+Last reviewed: Sprint 32 (2026-06)
 
 ## Overview
 
-WeVibe Network is a Cosmos SDK-based blockchain with 7 modules: `x/attestation`, `x/bandwidth`, `x/emissions`, `x/memory`, `x/org`, `x/reputation`, and `x/serve`. Validators secure the network by participating in consensus.
+WeVibe validators are standard CometBFT/Cosmos SDK validators. The chain currently wires these custom modules:
+
+- `x/org`
+- `x/memory`
+- `x/serve`
+- `x/emissions`
+- `x/bandwidth`
+- `x/reputation`
+- `x/attestation` (wired, currently disabled at message execution)
+
+There is **no** `x/operator`, `x/serving`, `x/challenge`, or `x/receipt` module. There is no `MsgRegisterOperator` / `register-operator` validator onboarding transaction.
+
+## Validator identity and key management
+
+- **Passkey-first identity applies to users**, not validator operators.
+- Validators use standard Cosmos keyring keys (`wevibed keys ...`) and the standard staking validator lifecycle.
+
+Example key commands:
+
+```bash
+wevibed keys add validator --keyring-backend os --home ~/.wevibed
+wevibed keys list --keyring-backend os --home ~/.wevibed
+```
 
 ## Prerequisites
 
-- **Go**: 1.26.1 (chain requires 1.25.9)
-- **Docker**: 29.1.3+
-- **Docker Compose**: v2+
-- **jq**: For JSON processing in scripts
-- **80GB+ storage**: For chain data
+- **Go**: 1.25.9 (matches `wevibe-chain/go.mod`)
+- **Docker** + **Docker Compose v2** (for local containerized validator)
+- **jq** (required by chain scripts)
+- Persistent storage sized for your environment (80GB+ recommended for long-running nodes)
 
-## Quick Start — Docker Compose
+## Quick start — Docker Compose
 
 ```bash
 cd wevibe-chain
 
-# Build and start the local validator
+# Build and start the local validator container
 make localnet-start
 
-# View logs
+# Follow logs
 make localnet-logs
 
-# Check chain status
+# Check sync info
 curl -s http://localhost:26657/status | jq '.result.sync_info'
 
-# Stop the chain
-make localnet-stop
+# Optional smoke test
+./scripts/smoke-test.sh
 
-# Reset chain data
+# Stop or reset
+make localnet-stop
 make localnet-reset
 ```
 
-## Quick Start — Native Binary
+## Quick start — Native binary
+
+`scripts/init-chain.sh` defaults `WEVIBED_HOME` to `/root/.wevibed`, so set it explicitly for local native runs.
 
 ```bash
-# Build the binary
-make build
+cd wevibe-chain
+mkdir -p build
+go build -o ./build/wevibed ./cmd/wevibed
 
-# Initialize the chain (creates ~/.wevibed)
-CHAIN_ID=wevibe-local-1 MONIKER=my-validator WEVIBED_BINARY=./build/wevibe-chain ./scripts/init-chain.sh start
-
-# In another terminal, check status
-curl -s http://localhost:26657/status
+CHAIN_ID=wevibe-local-1 \
+MONIKER=my-validator \
+WEVIBED_BINARY=./build/wevibed \
+WEVIBED_HOME="$HOME/.wevibed" \
+./scripts/init-chain.sh start
 ```
 
-## Genesis Configuration
-
-Chain ID: `wevibe-local-1` | Denom: `uvibe`
-
-### Accounts
-
-| Account | Balance | Purpose |
-|---------|---------|---------|
-| `validator` | 1000000000uvibe | Initial genesis account |
-| `validator` (gentx) | 500000000uvibe | Self-delegation for validator |
-
-### Genesis Initialization Flow (`init-chain.sh`)
-
-1. `wevibed init <moniker> --chain-id wevibe-local-1 --home ~/.wevibed`
-2. Patch `config.toml`: change `laddr` from `127.0.0.1:26657` to `0.0.0.0:26657`
-3. `wevibed keys add validator --keyring-backend test --home ~/.wevibed`
-4. `wevibed genesis add-genesis-account <validator_addr> 1000000000uvibe`
-5. `wevibed genesis gentx validator 500000000uvibe --chain-id wevibe-local-1`
-6. Patch gentx if `delegator_address` is empty
-7. `wevibed genesis collect-gentxs --home ~/.wevibed`
-8. Configure `wevibe_epoch` (60s for local, 86400s for production)
-9. Configure governance params (deposit, voting periods)
-10. Disable `x/mint` inflation (emissions module handles supply)
-11. Validate genesis
-
-### Key Files
-
-- Genesis: `~/.wevibed/config/genesis.json`
-- Gentx: `~/.wevibed/config/gentx/*.json`
-- Config: `~/.wevibed/config/config.toml`
-- Priv validator: `~/.wevibed/config/priv_validator_key.json`
-
-## Operator Registration
-
-The `x/operator` module uses `MsgRegisterOperator` with these fields:
-
-```
-operator_address  - bech32 address
-operator_id      - unique identifier
-cons_pub_key     - consensus public key (tendermint pubkey)
-bond_amount      - Coin in uvibe
-```
-
-### Register via CLI
+In another terminal:
 
 ```bash
-wevibed tx operator register-operator \
-  --operator-address <address> \
-  --operator-id <unique-id> \
-  --cons-pub-key <tendermint-pubkey> \
-  --bond-amount 1000000uvibe \
-  --keyring-backend test \
-  --chain-id wevibe-local-1
+curl -s http://localhost:26657/status | jq '.result.sync_info'
 ```
 
-### Query Operators
+## Genesis configuration (`scripts/init-chain.sh`)
+
+Chain ID: `wevibe-local-1`  
+Denom: `uvibe`
+
+### Genesis accounts seeded by script
+
+| Account key | Amount | Purpose |
+|---|---|---|
+| `validator` | `10000000000000uvibe` | Initial validator account |
+| `hub-submitter` | `1000000000uvibe` | Hub submitter account (local dev mnemonic) |
+| `foundation` | `100000000000000uvibe` | Foundation treasury allocation |
+| `faucet` | `1000000000000uvibe` | Local faucet account |
+
+Validator gentx self-delegation: `1000000000000uvibe`.
+
+### Initialization flow performed by script
+
+1. `wevibed init <moniker> --chain-id ... --home ...`
+2. Opens RPC/API/gRPC listeners in `config.toml` and `app.toml` (`26657`, `1317`, `9090`).
+3. Creates validator key and seeds genesis accounts.
+4. Generates and collects validator gentx.
+5. Adds `wevibe_epoch` to genesis (default `60s`, override with `WEVIBE_EPOCH_DURATION_SECONDS`).
+6. Sets local governance params (`min_deposit=10000000uvibe`, `max_deposit_period=172800s`, `voting_period=172800s`).
+7. Disables `x/mint` inflation (supply handled by `x/emissions`).
+8. Seeds `app_state.emissions` and `app_state.reputation`.
+9. Validates genesis.
+
+## Joining the validator set (standard staking flow)
+
+There is no WeVibe-specific operator registration transaction. Use standard staking commands.
+
+### New chain genesis validator
+
+Use `wevibed genesis gentx ...` and `wevibed genesis collect-gentxs ...` (already handled by `scripts/init-chain.sh` for local setup).
+
+### Existing running network validator
+
+1. Create an operator key:
 
 ```bash
-# Via gRPC gateway (port 9090)
-curl -s http://localhost:9090/wevibe.operator.v1.Query/GetOperator
+wevibed keys add validator --keyring-backend os --home ~/.wevibed
+```
 
-# Via REST (port 1317)
-curl -s http://localhost:1317/wevibe/operator/v1/operators
+2. Get validator consensus pubkey:
+
+```bash
+wevibed comet show-validator --home ~/.wevibed
+```
+
+3. Create `validator.json` (format expected by `tx staking create-validator`):
+
+```json
+{
+  "pubkey": {"@type":"/cosmos.crypto.ed25519.PubKey","key":"<base64-consensus-pubkey>"},
+  "amount": "1000000uvibe",
+  "moniker": "my-validator",
+  "identity": "",
+  "website": "",
+  "security": "",
+  "details": "",
+  "commission-rate": "0.10",
+  "commission-max-rate": "0.20",
+  "commission-max-change-rate": "0.01",
+  "min-self-delegation": "1"
+}
+```
+
+4. Submit create-validator tx:
+
+```bash
+wevibed tx staking create-validator ./validator.json \
+  --from validator \
+  --chain-id <network-chain-id> \
+  --keyring-backend os \
+  --home ~/.wevibed
+```
+
+5. Verify validator appears:
+
+```bash
+VALOPER=$(wevibed keys show validator --bech val --address --keyring-backend os --home ~/.wevibed)
+wevibed query staking validator "$VALOPER" --home ~/.wevibed
 ```
 
 ## Monitoring
 
-### Health Check
-
 ```bash
+# Node health
 curl -s http://localhost:26657/health
-# Returns {} when healthy
-```
 
-### Key Metrics
-
-```bash
-# Block height
+# Latest block height
 curl -s http://localhost:26657/status | jq '.result.sync_info.latest_block_height'
 
-# Chain ID
+# Chain ID from node status
 curl -s http://localhost:26657/status | jq '.result.node_info.network'
 
-# Peers connected
+# Peer count
 curl -s http://localhost:26657/net_info | jq '.result.n_peers'
 
 # Genesis chain ID
 curl -s http://localhost:26657/genesis | jq '.result.genesis.chain_id'
 ```
 
-### Smoke Test
+Smoke test:
 
 ```bash
 ./scripts/smoke-test.sh
-# Exits 0 on success, 1 on failure
 ```
 
 ## Troubleshooting
 
-### Chain won't start
+### Chain does not start
 
 ```bash
-# Check if data already exists
-ls ~/.wevibed/config/genesis.json
+# Validate genesis for local home
+wevibed genesis validate --home ~/.wevibed
 
-# Reset if corrupted
-make localnet-reset   # Docker
-rm -rf ~/.wevibed       # Native
+# Docker reset
+make localnet-reset
+
+# Native reset (destructive)
+rm -rf ~/.wevibed
 ```
 
-### Node stuck at block height 0
+### Node stuck at height 0
 
 ```bash
-# Check logs for errors
+# Container logs
 make localnet-logs
 
-# Verify genesis is valid
-wevibed genesis validate-genesis --home ~/.wevibed
+# Verify RPC status payload
+curl -s http://localhost:26657/status | jq '.result.sync_info'
 ```
 
 ### RPC not responding
 
 ```bash
-# Verify port is exposed
-curl -s http://localhost:26657/status
+curl -s http://localhost:26657/health
 
-# Check if container is running
-docker ps | grep wevibe-validator
+# If running in Docker
+docker compose ps
 ```
-
-### pprof errors in binary
-
-These are warnings from Cosmos SDK store registration — safe to ignore.
 
 ## Reference
 
 ### Ports
 
 | Port | Service | Protocol |
-|------|---------|----------|
+|---|---|---|
 | 26656 | P2P | CometBFT |
 | 26657 | RPC | CometBFT |
-| 1317 | REST API | Cosmos SDK |
-| 9090 | gRPC | Proto |
+| 1317 | API | Cosmos SDK API |
+| 9090 | gRPC | Cosmos SDK gRPC |
 
-### Directory Structure
+### Directory layout
 
-```
+```text
 ~/.wevibed/
 ├── config/
-│   ├── config.toml          # CometBFT config
-│   ├── genesis.json        # Chain genesis
-│   ├── gentx/              # Validator gentx files
-│   ├── priv_validator_key.json
-│   └── node_key.json
-├── data/
-│   └── (chain data)
-└── wasm/                   # WASM contracts (if any)
+│   ├── app.toml
+│   ├── config.toml
+│   ├── genesis.json
+│   ├── gentx/
+│   ├── node_key.json
+│   └── priv_validator_key.json
+└── data/
+    └── priv_validator_state.json
 ```
 
-### Useful Commands
+### Useful CLI commands
 
 ```bash
-# Build
-make build
+# Build daemon
+go build -o ./build/wevibed ./cmd/wevibed
 
-# Initialize (native)
-wevibed init <moniker> --chain-id wevibe-local-1
+# Genesis operations
+wevibed genesis add-genesis-account <addr> <amount> --home ~/.wevibed
+wevibed genesis gentx validator 1000000000000uvibe --chain-id wevibe-local-1 --home ~/.wevibed
+wevibed genesis collect-gentxs --home ~/.wevibed
+wevibed genesis validate --home ~/.wevibed
 
-# Keys
-wevibed keys list --keyring-backend test
-wevibed keys add validator --keyring-backend test
-
-# Genesis
-wevibed genesis add-genesis-account <addr> 1000000000uvibe
-wevibed genesis gentx validator 500000000uvibe --chain-id wevibe-local-1
-wevibed genesis collect-gentxs
-wevibed genesis validate-genesis
-
-# Queries
+# Query operations
 wevibed query block 1
 wevibed query tx <hash>
 wevibed query wait-tx <hash>
+wevibed query staking validators
 
-# Transactions
-wevibed tx broadcast <tx.json>
-wevibed tx sign <tx.json> --keyring-backend test
-
-# Start
+# Start daemon
 wevibed start --home ~/.wevibed
 ```
 
-### HD Key Derivation
+## Upgrading `wevibed`
 
-- **Path**: `m/44'/118'/0'/0/0`
-- **Key name**: `submitter`
-- **Denomination**: `uvibe`
-
-## Upgrading wevibed
-
-### Preparations
-
-1. **Monitor chain height** before upgrade window
-2. **Backup state** before applying upgrade
-3. **Test upgrade** on testnet first
-
-### Manual Upgrade
+1. Backup validator keys/state before replacing binaries.
+2. Build the target binary from the checked-out release source:
 
 ```bash
-# 1. Download new binary
-wget https://github.com/wevibe-network/wevibe-chain/releases/v1.1.0/wevibed
-chmod +x wevibed
-sudo mv wevibed /usr/local/bin/
+cd wevibe-chain
+go build -o ./build/wevibed ./cmd/wevibed
+./build/wevibed version
+```
 
-# 2. Verify version
-wevibed version
+3. Replace the running binary using your process manager (systemd/Cosmovisor/container image), then restart and verify RPC health.
 
-# 3. Stop node
+Example (systemd-managed host):
+
+```bash
+sudo systemctl stop wevibed
+sudo install -m 0755 ./build/wevibed /usr/local/bin/wevibed
+sudo systemctl start wevibed
+curl -s http://localhost:26657/health
+```
+
+## Secure key/state backup
+
+Back up these files securely (offline/encrypted storage):
+
+- `/var/lib/wevibed/config/priv_validator_key.json`
+- `/var/lib/wevibed/data/priv_validator_state.json`
+- `/var/lib/wevibed/config/node_key.json`
+- `/var/lib/wevibed/config/genesis.json`
+
+Example backup commands:
+
+```bash
 sudo systemctl stop wevibed
 
-# 4. Apply upgrade (if usingCosmovisor)
-export DAEMON_NAME=wevibed
-export DAEMON_HOME=/var/lib/wevibed
-cosmovisor run start --home $DAEMON_HOME
+sudo tar -czf /backup/wevibed-config-$(date +%Y%m%d).tar.gz \
+  -C /var/lib/wevibed/config \
+  genesis.json priv_validator_key.json node_key.json
 
-# Or manually restart
+sudo cp /var/lib/wevibed/data/priv_validator_state.json \
+  /backup/priv_validator_state-$(date +%Y%m%d).json
+
 sudo systemctl start wevibed
 ```
 
-### Cosmovisor Setup
+Recovery (example):
 
 ```bash
-# Install Cosmovisor
-go install github.com/cosmos/cosmos-sdk/cosmovisor/cmd/cosmovisor@latest
-
-# Setup directories
-mkdir -p ~/.cosmovisor/genesis/bin
-mkdir -p ~/.cosmovisor/upgrades/v1.1.0/bin
-
-# Link current binary
-ln -s /usr/local/bin/wevibed ~/.cosmovisor/genesis/bin/wevibed
-
-# Enable auto-download
-export DAEMON_ALLOW_DOWNLOAD_BINARIES=true
-```
-
----
-
-## Secure key backup
-
-### Backup Commands
-
-```bash
-# Backup genesis
-cp /var/lib/wevibed/config/genesis.json /backup/genesis-$(date +%Y%m%d).json
-
-# Backup validator state
-tar -czf /backup/priv_validator_state-$(date +%Y%m%d).tar.gz \
-  -C /var/lib/wevibed/data .
-```
-
-### Automated Backup Script
-
-```bash
-#!/bin/bash
-# /usr/local/bin/backup-wevibed.sh
-
-DATE=$(date +%Y%m%d-%H%M)
-BACKUP_DIR=/backup/wevibed
-KEEP_DAYS=7
-
-mkdir -p $BACKUP_DIR
-
-# Stop node
 sudo systemctl stop wevibed
 
-# Backup data
-tar -czf $BACKUP_DIR/wevibed-data-$DATE.tar.gz /var/lib/wevibed/data
+sudo tar -xzf /backup/wevibed-config-YYYYMMDD.tar.gz -C /var/lib/wevibed/config
+sudo cp /backup/priv_validator_state-YYYYMMDD.json /var/lib/wevibed/data/priv_validator_state.json
 
-# Backup genesis
-cp /var/lib/wevibed/config/genesis.json $BACKUP_DIR/genesis-$DATE.json
+wevibed genesis validate /var/lib/wevibed/config/genesis.json
 
-# Start node
-sudo systemctl start wevibed
-
-# Cleanup old backups
-find $BACKUP_DIR -name "*.tar.gz" -mtime +$KEEP_DAYS -delete
-find $BACKUP_DIR -name "genesis-*.json" -mtime +$KEEP_DAYS -delete
-```
-
-### Recovery Procedure
-
-```bash
-# 1. Stop node
-sudo systemctl stop wevibed
-
-# 2. Restore data
-tar -xzf /backup/wevibed-data-YYYYMMDD.tar.gz -C /var/lib/wevibed/data
-
-# 3. Verify
-wevibed genesis validate-genesis /var/lib/wevibed/config/genesis.json
-
-# 4. Start node
 sudo systemctl start wevibed
 ```
-
----
 
 ## Governance participation
 
-### tx gov submit-proposal
-
-Submit a governance proposal.
+Use the standard Cosmos gov CLI surface exposed by `wevibed`:
 
 ```bash
-wevibed tx gov submit-proposal [proposal_type] [proposal_json_or_file] [flags]
+# Submit proposal from JSON file
+wevibed tx gov submit-proposal ./proposal.json --from <key> --chain-id <chain-id>
+
+# Vote
+wevibed tx gov vote <proposal-id> yes --from <key> --chain-id <chain-id>
+
+# Deposit
+wevibed tx gov deposit <proposal-id> <amount> --from <key> --chain-id <chain-id>
+
+# Query proposals and votes
+wevibed query gov proposals
+wevibed query gov proposal <proposal-id>
+wevibed query gov votes <proposal-id>
 ```
 
-### tx gov vote
-
-Vote on a proposal.
-
-```bash
-wevibed tx gov vote [proposal_id] [option] [flags]
-```
-
-**Options:** `yes`, `no`, `abstain`, `no_with_veto`
-
-### tx gov deposit
-
-Deposit to a proposal.
-
-```bash
-wevibed tx gov deposit [proposal_id] [amount] [flags]
-```
-
-### query gov proposals
-
-List proposals.
-
-```bash
-wevibed query gov proposals [flags]
-```
-
-### query gov proposal
-
-Get proposal details.
-
-```bash
-wevibed query gov proposal [proposal_id] [flags]
-```
-
-### query gov deposits
-
-Get proposal deposits.
-
-```bash
-wevibed query gov deposits [proposal_id] [flags]
-```
-
-### query gov votes
-
-Get proposal votes.
-
-```bash
-wevibed query gov votes [proposal_id] [flags]
-```
-
----
+Use `wevibed tx gov --help` and `wevibed query gov --help` for full flag sets.

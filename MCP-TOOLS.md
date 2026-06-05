@@ -1,5 +1,7 @@
 # MCP Tool Reference
 
+Last reviewed: Sprint 32 (2026-06)
+
 WeVibe Network exposes five tools via the Model Context Protocol.
 
 ## `wevibe_context`

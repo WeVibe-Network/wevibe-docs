@@ -1,5 +1,7 @@
 # Leader Quick Start
 
+Last reviewed: Sprint 32 (2026-06)
+
 This guide covers org creation and administration. For member setup, see
 [quickstart.md](quickstart.md). For key management background, see
 [KEY_MANAGEMENT.md](KEY_MANAGEMENT.md).
@@ -38,6 +40,8 @@ Configure environment variables:
 
 Add to your agent's MCP config:
 
+(identical to the MCP config in QUICKSTART.md)
+
 ```json
 {
   "mcpServers": {
@@ -55,12 +59,16 @@ Add to your agent's MCP config:
 
 ## Step 2: Set up your identity
 
+Identity is passkey-first (DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY`): your signing and encryption keys are client-generated and stored in your OS keychain.
+
 ```
 > Call wevibe_setup_identity
 ```
 
 This generates your Ed25519 signing keypair and X25519 encryption keypair, stored in
 your OS keychain. Your Ed25519 public key is your permanent leader identity for the org.
+
+A wallet is still required, but only to acquire and bond the org slot during org creation under the storage-market economy.
 
 ## Step 3: Create your org
 
@@ -75,7 +83,7 @@ Creation acquires an org **slot** at the current auction price (ascending while 
 After creation, wevibe-mcp (via wevibe-sdk) will display a **24-word recovery phrase**.
 This is the only copy. It encodes your org master key (`K_master`).
 
-### ⚠️ Record the recovery phrase now
+### Record the recovery phrase now
 
 Write it down before dismissing the output. If you lose your device without this phrase,
 epoch key re-derivation is not possible and existing memories cannot be decrypted.

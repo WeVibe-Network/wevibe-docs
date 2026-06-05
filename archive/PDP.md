@@ -1,3 +1,5 @@
+> **HISTORICAL — Sprint 22 snapshot (PDP v2.20, 2026-05-05).** Superseded by `SESSIONCONTINUANCE.md`, `MASTER.md`, and `DECISIONS.md`. Retained for historical reference only; do NOT treat as a live spec.
+
 # WeVibe Network — Product Development Plan
 **Version:** 2.20
 **Date:** 2026-05-05

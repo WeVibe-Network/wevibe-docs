@@ -1,3 +1,5 @@
+> **HISTORICAL DECISION RECORD — CO-267 Task E.** AlloyDB Encrypted Vector Search was evaluated and REJECTED (Go SDK gap, AGPL licensing, unproven perf, no epoch-key integration). The current path is Qdrant + the WeVibe epoch-key hierarchy. Retained for historical reference; not a live spec.
+
 # Evaluation: Encrypted Vector Search (CO-267 Task E)
 
 ## Summary

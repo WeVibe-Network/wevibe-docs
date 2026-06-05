@@ -1,22 +1,29 @@
 # Security Model
 
-> **[⚠️ ACCURACY FLAG — needs Walter review, 2026-06-02]** This document describes a **blind-token** keyword model (`K_search`, `HMAC-SHA256(K_search, keyword)`, "keyword strings stay local") that does **NOT** match the current chain. On-chain, keyword strings are stored **in plaintext** (`wevibe-chain/x/memory/types/state.pb.go` — `KeywordWeight.Keyword string`, persisted in `MemoryCommitment`). The "validators never see keyword strings" claim (line 15) and the `K_search` key-hierarchy entries are therefore stale. This is a threat-model change requiring Walter's sign-off to reconcile — do not treat the blind-token claims below as current.
+Last reviewed: Sprint 32 (2026-06)
 
 ## Threat model
 
-WeVibe Network is designed so that even a compromised validator cannot expose memory content without human approval.
+WeVibe Network is designed so that compromised validators and public chain observers cannot decrypt memory content without endpoint key compromise.
 
 **What wevibe-chain validators see:**
 - Ciphertext blobs (opaque)
-- Wrapped DEKs sealed to epoch public keys
+- Wrapped DEKs (pending-review wraps to `PK_mod`; approved-memory wraps to `K_enc(e)`)
+- Plaintext keyword terms and weights (public discovery metadata)
 - Retrieval confidence values, lifecycle state, and timestamps
 - Serve attestations (content hash, org id, serve key, nullifier)
 
 **What validators never see:**
-- Plaintext memory content
-- Keyword strings (blind tokens stay local to the org’s client)
+- Decrypted memory content
+- Org secret material (`K_master`, `K_enc(e)`, `K_audit(e)`, `SK_mod`)
 - Contributor private keys
 - Moderator comments or guard findings
+
+**Custody and signing boundaries:**
+- Identity is passkey-first and self-custodial (`D-IDENTITY-PROGRESSIVE-CUSTODY`). The protocol identity keypair (Ed25519 + X25519/PRE) is client-generated, not wallet-derived.
+- Contributors are wallet-free and unbonded in normal operation. Reputation is the soft stake and is removed when a contributor is removed from an org.
+- The leader is the sole on-chain signer for published content (`D-LEADER-SOLE-SIGNER`) and bears sole bond/accountability for that publication.
+- Moderator review is org-local labor. Moderators do not co-sign chain transactions.
 
 ## Key hierarchy
 
@@ -24,10 +31,11 @@ WeVibe Network is designed so that even a compromised validator cannot expose me
 Org master key (leader-held)
     │
     └── Epoch keys (derived per epoch via HKDF-SHA256)
-            ├── K_enc   — content encryption key
-            ├── K_search — blind token derivation key
-            └── K_audit  — audit log encryption key
+            ├── K_enc(e)   — approved-memory DEK wrapping key
+            └── K_audit(e) — audit log encryption key
 ```
+
+`PK_mod`/`SK_mod` is a separate Umbral moderation keypair used only to decrypt pending submissions for review. It is distinct from the on-chain signing path.
 
 Each epoch has its own key set. Members who leave cannot access future epochs.
 Members who join cannot access epochs before `history_access_from_epoch`.
@@ -48,29 +56,29 @@ Operationally, revocation removes PRE re-encryption capability by deleting the s
 ## Submission flow
 
 ```
-1. Agent writes raw notes.
+1. Contributor (passkey identity; wallet optional later) writes raw notes.
 2. wevibe-guard scans for credentials and prompt injection locally.
 3. If clean:
-   a. Agent generates a fresh DEK.
+   a. Contributor generates a fresh DEK.
    b. Notes encrypted: AES-256-GCM(DEK, notes).
    c. DEK sealed to the moderation public key (`PK_mod`).
    d. Submission hash: SHA-256(ciphertext || wrapped_dek).
-   e. Contributor signs hash with their Ed25519 identity key.
-   f. wevibe-mcp broadcasts `MsgSubmitCommitment` to wevibe-chain.
-4. wevibe-chain stores ciphertext — validators cannot decrypt it.
+   e. Contributor signs the submission canonical body with their Ed25519 identity key.
+   f. Submission enters the leader-gated pending review path (no contributor auto-approve/certification path).
+4. Memory content is committed on-chain only after leader signature.
+5. wevibe-chain stores ciphertext — validators cannot decrypt it.
 ```
 
 ## Moderation flow
 
 ```
-1. Moderator pulls the pending commitment from wevibe-chain using wevibe-sdk.
-2. Moderator decrypts with `SK_mod` for the current epoch and reviews plaintext content.
+1. Moderator pulls the pending submission using wevibe-sdk.
+2. Moderator decrypts with `SK_mod` and reviews plaintext content.
 3. If approved:
-   a. Moderator re-wraps the DEK under `K_enc(epoch)` for retrieval.
-   b. Optionally sets relationships, validity bounds, or archives conflicts.
-   c. Submits `MsgApproveMemory` carrying ciphertext, wrapped DEK, and metadata.
-4. wevibe-chain records the approval, initialises retrieval confidence, and updates lifecycle state.
-5. wevibe-clients sync the approval, rebuild local indexes, and keep blind tokens client-side.
+   a. Moderator re-wraps the DEK under `K_enc(e)` for retrieval and records the review decision.
+   b. Leader (not moderator) signs and submits the publish/approval transaction.
+4. wevibe-chain records the approval, initializes retrieval confidence, and updates lifecycle state.
+5. wevibe-clients sync the approval and rebuild local indexes.
 ```
 
 ## Wire format
@@ -81,4 +89,4 @@ against the Rust implementation in `wevibe-sdk`.
 Key formats:
 - `seal_to_pubkey` output: `ephemeral_pubkey(32) || nonce(12) || ciphertext+tag`
 - `encrypt_symmetric` output: `nonce(12) || ciphertext+tag`
-- Blind token (stored client-side only): `HMAC-SHA256(K_search, keyword)` → lowercase hex
+- Keyword metadata on-chain: plaintext `keyword` + `weight` pairs (public discovery labels)

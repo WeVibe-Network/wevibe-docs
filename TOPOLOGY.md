@@ -693,7 +693,7 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 
 | Module | Keeper Path | Proto Path | Tests | Purpose |
 |--------|------------|-----------|-------|---------|
-| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Session-attestation storage (NOT merkle — merkle roots live in x/memory). Being neutered: disabled/no-op until verification infra (D-ATTEST-ROADMAP) |
+| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Session-attestation storage (NOT merkle — merkle roots live in x/memory). Being neutered: disabled/no-op until verification infra (D-ATTEST-ROADMAP). Optional TEE model-provenance (D-ATTEST-TEE-TIER) is verified OFF-CHAIN first (Phase 0, no chain change); on-chain anchoring here is Phase 1. |
 | x/bandwidth | x/bandwidth/keeper/ | proto/wevibe/bandwidth/v1/ | keeper + integration | Bandwidth throttling |
 | x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Emission pool, epoch emission, work scores (32-yr schedule scheduled CO-041) |
 | x/memory | x/memory/keeper/ | proto/wevibe/memory/v1/ | keeper + integration | Memory commitments |

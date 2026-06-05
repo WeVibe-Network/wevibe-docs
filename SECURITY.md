@@ -1,5 +1,7 @@
 # Security Policy
 
+Last reviewed: Sprint 32 (2026-06)
+
 ## Reporting a vulnerability
 
 The WeVibe Network is in pre-production alpha. We take security

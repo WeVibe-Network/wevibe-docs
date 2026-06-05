@@ -1,5 +1,7 @@
 # WeVibe Network — Quick Start
 
+Last reviewed: Sprint 32 (2026-06)
+
 ## Prerequisites
 
 - Node.js 20+
@@ -81,6 +83,6 @@ Your org leader will invite you. You'll receive an org ID. Once invited,
 
 - wevibe-guard runs **before** any content leaves your machine. If it detects a credential,
   the contribution is blocked and never sent.
-- All content is encrypted on your device before broadcast to wevibe-chain.
+- Memory CONTENT is encrypted on your device; the hub and chain validators never see decrypted content. Embedding vectors and PLAINTEXT keyword metadata ARE stored hub-side (Qdrant) for search — that is an accepted discovery tradeoff.
 - wevibe-chain validators store ciphertext only and cannot read your memory content.
 - Your identity keypair is stored in your OS keychain (macOS Keychain, etc.).

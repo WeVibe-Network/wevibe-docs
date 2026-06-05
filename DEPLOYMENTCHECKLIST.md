@@ -1,5 +1,7 @@
 # Deployment Checklist — WeVibe Network
 
+Last reviewed: Sprint 32 (2026-06)
+
 ## Alpha Dogfood (Single VPS, Leader + Moderator Cohort)
 
 ### Infrastructure
@@ -9,7 +11,7 @@
 - [ ] **TLS via Caddy** — Caddy reverse proxy in front of hub (`:4440`) + dashboard (`:3000`) + social-graph (`:4470`). Auto-TLS via Let's Encrypt. Verify `wevibe-server/wevibe-infra/Caddyfile` covers all public endpoints.
 - [ ] **Firewall rules** — only expose: 443 (HTTPS), 26656 (CometBFT P2P), 26657 (CometBFT RPC). All Docker service ports (4440, 4450, 4470, 3000, 5432, 6333) internal only.
 - [ ] **Docker + Docker Compose installed** on VPS
-- [ ] **All 8 Docker services running** — postgres, qdrant, wevibed, hub, dashboard, umbral-sidecar, wevibe-mcp, social-graph
+- [ ] **All 9 Docker services running** — postgres, qdrant, wevibe-chain, wevibe-umbral, wevibe-social-graph, wevibe-faucet, wevibe-hub, wevibe-mcp, wevibe-dashboard
 - [ ] **Ollama decision** — either: (a) each tester runs Ollama locally for extraction (250MB model download), or (b) run Ollama on VPS without GPU (slower but removes tester friction). Document choice.
 - [ ] **Uptime monitor** — free tier (UptimeRobot or Healthchecks.io) pinging `https://alpha.wevibe.network/health` and alerting Walter
 
@@ -74,7 +76,7 @@
 
 ### Security — Hardened
 
-- [ ] **ARCH-G9 implemented** — BIP-32 key hierarchy separation (PRE identity derived from wallet, not shared). This is a security requirement before public exposure.
+- [ ] **ARCH-G9 implemented** — identity is passkey-first and the PRE key is client-generated (not wallet-derived), per DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY` (amends D-1.4). This is a security requirement before public exposure.
 - [ ] **Rate limiting hardened** — per-wallet, per-org, per-endpoint limits on hub. DDoS protection via Caddy rate limiting or Cloudflare proxy.
 - [ ] **Sybil mitigation** — stake requirement for org creation (minimum VIBE stake to create an org). Minimum member count (e.g., 3) before org qualifies for emissions.
 - [ ] **Spam mitigation** — gas costs on chain submission are the primary defense. Hub-side rate limiting on submit endpoint as secondary.
@@ -86,6 +88,10 @@
 - [ ] **Economics paper published** — total supply (cap or inflationary), emission schedule, validator share, contributor share, treasury share, tier structure, qualification gates. Publicly available at `wevibe.network/economics` or in the docs.
 - [ ] **Faucet service** — automated faucet (web page or Discord bot) that dispenses test VIBE to new wallets. Rate limited (1 request per wallet per 24h).
 - [ ] **Bootstrap credits** — year-one genesis-funded service credits operational. New orgs receive X credits without purchasing.
+- [ ] **Storage-market slot auction live** — org slot auction configured with caps 32 / 320 / 3200 (DECISIONS.md `D-ECON-STORAGE-MARKET`).
+- [ ] **Org purchase split enforced** — org slot purchase routes 50% to burn and 50% to the org account (DECISIONS.md `D-ECON-STORAGE-MARKET`).
+- [ ] **Per-memory storage deposit active** — each committed memory requires a VIBE storage deposit (DECISIONS.md `D-ECON-STORAGE-MARKET`).
+- [ ] **Org-account feegrant configured** — org account feegrant covers serve and deny flows (DECISIONS.md `D-ECON-STORAGE-MARKET`).
 
 ### Data Migration
 

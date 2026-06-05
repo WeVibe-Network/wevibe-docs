@@ -2,6 +2,8 @@
 
 **Scope:** End-to-end retrieval architecture. How a query becomes a ranked, served, decay-affecting result.
 
+**Last reviewed: Sprint 32 (2026-06)**
+
 **Owning decisions:** D-4.1 (KeywordWeight primitive), D-4.2 (Earned Trust decay), D-4.3/D-4.5 (per-event TX), D-9.1 (Qdrant payload), D-9.2 (Qdrant hardening), D-9.3 (enriched ranking), D-9.4 (probabilistic exploration).
 
 ---
@@ -86,7 +88,7 @@ The trust gate uses on-chain per-memory lifetime totals (`serve_count_total`, `d
 - LANDED in CO-033a: hub `serve_events.matched_keywords TEXT[] NOT NULL` persistence (no default — pre-MVP wipe per D-13.9), strict 400-on-empty validator on `POST /v1/serves`, retrieval pass-through threading `MatchedKeywords` through `protocol.MemoryResult`.
 - LANDED in CO-033b: `wevibe-protocol` JS bindings regen (`matchedKeywords` on `ServeEntry`); dashboard `buildServeBatchMsg` and live `handleSubmitBatch` broadcaster (replaces deprecated stub at `chain-submit/page.tsx:212`); MCP forwards `matched_keywords` on `POST /v1/serves` with non-empty validation; plugin threads `matched_keywords` from recall response through `toInject` loop to serve POST; dogfood-pipeline.test.ts step 1 fixture aligned with chain's 9-field canonical body; hub test infrastructure cleanup (`ListMembers` SELECT, reports/members test fixtures, `qdrantAvailable` 401 skip).
 - LANDED in DMO-006 + DMO-007: `DECISIONS.md` D-4.2 + D-9.4 Implementation Clarifications subsections codify the per-keyword gate, lifetime counters, power-law-not-softmax mechanism, boost window arithmetic, and per-serve matched-keyword tracking.
-- IN FLIGHT (CO-034): chain fast-epoch primitive (`WEVIBE_EPOCH_DURATION_SECONDS` env var) + empirical replay harness measuring `chain.gap` against the sim Steady-State scenario. Sprint contract: `chain.gap ≥ 75pp AND |Δ vs sim| ≤ 5pp`.
+- Validation workstream: chain fast-epoch primitive (`WEVIBE_EPOCH_DURATION_SECONDS` env var) + empirical replay harness measuring `chain.gap` against the sim Steady-State scenario. Sprint contract: `chain.gap ≥ 75pp AND |Δ vs sim| ≤ 5pp`.
 - IMPLICATION as of CO-033b landing: every plugin → MCP → hub serve flow now sends `matched_keywords` end-to-end; the chain accepts these submissions. The remaining sprint deliverable is empirical measurement, not wiring.
 
 **Locked parameters (chain-governance changeable):**
@@ -180,7 +182,7 @@ Hub: position 1 = strict top-1
      positions 2..N = tempered power-law sample by score (D-9.4)
         │
         ▼
-Hub: contested check (score gap pos1 vs pos2 < 0.15?)
+Hub: contested check (score gap pos1 vs pos2 < 0.20?)
         │
         ▼
 Hub returns: { results[], contested: bool }
@@ -251,7 +253,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 ## What This Architecture Achieves
 
-**Empirical performance across 9 org scenarios × 7 seeds × 300 epochs:**
+**Simulation output (`wevibe-sim/ranking-fix.js`) across 9 org scenarios × 7 seeds × 300 epochs (not production telemetry):**
 
 | Configuration | Avg Gap (good_surv − bad_persist) | Good Survival | Bad Persistence | False-Archive of Good |
 |---|---|---|---|---|
@@ -274,7 +276,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 1. **Does not replace human moderation.** The chain governs survival; moderators govern admission. Decay cannot replace the quality gate at submission time.
 
-2. **Does not handle topic drift.** A memory that was correct under React 17 and is wrong under React 19 still requires human supersession (D-MATCHING-2: moderation similarity flow). Decay catches contradiction at the same point in time; it does not catch deprecation across time.
+2. **Does not handle topic drift.** A memory that was correct under React 17 and is wrong under React 19 still requires human supersession through moderation similarity review in the approval flow. Decay catches contradiction at the same point in time; it does not catch deprecation across time.
 
 3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's three-button UX (Accept+Attest, Deny, Report) is the data source. Orgs with `serve_attestation_required = false` and few denials will see slower convergence.
 
@@ -292,7 +294,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 - **Probabilistic exploration temperature.** `T = 0.7` was the sweet spot in simulation. Lower T (toward 0.3) approaches deterministic; higher T (toward 1.0) approaches uniform. Monitor production query distribution; tune via hub config without consensus changes.
 
-- **Contested threshold tuning.** Score gap = 0.15 default. If contested rate climbs above 20% in production, the scoring engine (D-9.3) needs work — too many ties signals keywords aren't discriminating enough.
+- **Contested threshold tuning.** Score gap = 0.20 default. If contested rate climbs above 20% in production, the scoring engine (D-9.3) needs work — too many ties signals keywords aren't discriminating enough.
 
 ### Medium term
 

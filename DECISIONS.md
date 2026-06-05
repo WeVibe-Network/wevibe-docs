@@ -2788,4 +2788,74 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 
 ---
 
+## Recall UX & Model-Attested Provenance (Sprint 32 — locked via Walter design dialogue)
+
+> Locked through a Sprint-32 design dialogue covering recall popup-fatigue UX and LLM/model provenance. Status: **DECIDED, design-only — NOT yet built.** The attestation tier is explicitly an OPTIONAL, off-chain, production toggle and is **NOT** wired into `x/attestation` (which stays disabled-but-wired per `D-ATTEST-ROADMAP`). Primitive reference: OpenRouter / Phala / RedPill GPU-TEE confidential inference (Intel TDX + NVIDIA H100 Confidential Computing).
+
+### D-RECALL-GATE-ON-RISK: Risk-triggered injection gate + batched quality signal [EXTENDS D-11.5]
+
+**Context.** At a healthy, mature org a typical coding session can surface on the order of tens of recall candidates. A per-memory blocking approval modal for every candidate causes popup fatigue, which pushes users to blind-accept. Blind-accept is doubly harmful: (a) it turns the human safety gate into theater — a claimed-but-rubber-stamped defense layer is worse than none — and (b) it poisons Earned Trust (D-4.2): serve attestations stop meaning "useful" and degrade into "retrieved and not bothered-with," starving the very signal the decay model depends on.
+
+**Decision.** The injection gate gains a THIRD mode between D-11.5's `[Gated approval]` and `[No gated approval]`:
+1. **`[Gated on risk]`** — auto-inject + attest the safe majority (high-confidence, well-served, trusted-contributor, wevibe-guard-clean memories) with NO modal; a blocking pop-up is raised ONLY when a candidate earns it: a wevibe-guard flag, a new/low-trust contributor, or low confidence. A popup then signals "this one needs your eyes," restoring the gate's honesty and collapsing fatigue.
+2. **The two jobs of the old single modal are SPLIT.** The SAFETY gate (block-before-inject) is reserved for risk-flagged candidates only. The QUALITY signal (attest / deny) moves OFF the critical path into a low-friction **batch review tray** the consumer clears at a natural break (end of task/session). The agent is not interrupted mid-flow to harvest a signal that need not be synchronous.
+3. `[Gated approval]` (always-modal) and `[No gated approval]` (never-modal) remain available; `[Gated on risk]` is the fatigue-aware middle path and the intended default direction.
+4. **Blind-accepting negative signals (DNDs) is permitted** as a safety choice — a "don't do this" guardrail cannot inject malicious code into the agent the way an implementation memory can — BUT wevibe-guard MUST still scan a DND's text (a malicious DND can carry a prompt-injection payload). The scanner is never skipped; only the human modal is.
+
+**Why.** Error costs are asymmetric: a false-accept (injecting a bad memory) is potentially high-cost; a false-reject (skipping a good one) is cheap. Spend the consumer's scarce attention only where false-accept risk is real. This is progressive disclosure (D-FE-VIEW-STATE) applied to the recall gate, and it protects the Earned-Trust signal (D-4.2).
+
+### D-FAVORITE-PINNED-REFERENCE: A "favorite" is a pinned reference, never a local plaintext snapshot
+
+**Decision.** When a consumer "favorites" a memory it is a **pinned reference** — "always re-fetch and rank this high for me," served through the normal live recall path. It is explicitly NOT a persisted local plaintext copy.
+
+**Why.** A local plaintext snapshot would quietly break three subsystems:
+1. **Revocation hole.** The security model assumes decrypted plaintext is local and EPHEMERAL (the hub never persists it). A snapshot is persistent plaintext on disk that survives the user being booted, epoch rotation, or org closure — defeating membership revocation.
+2. **Staleness fork.** If the org later decays/denies/supersedes/deletes the memory (e.g. the advice went wrong after a version bump), a frozen local copy keeps serving the stale, now-wrong version forever. A product whose pitch is "current verified memory vs. stale generic knowledge" must not ship a silent stale-copy mechanism.
+3. **Attribution/decay blind spot.** A favorited memory used constantly would never re-serve through the loop, so the contributor stops earning attribution and the memory looks unused on-chain while it is a workhorse — distorting Earned Trust (D-4.2) and reputation.
+A pinned reference keeps revocation, decay, re-guard, and serve attribution all working.
+
+### D-ATTEST-TEE-TIER: Optional TEE model-attestation as a provenance tier (off-chain, production toggle) [EXTENDS D-ATTEST-ROADMAP]
+
+**Primitive.** OpenRouter / Phala / RedPill GPU-TEE confidential inference exposes, per request, a signature over `H(request) ‖ H(response)` by an enclave-held key, plus an attestation report (Intel TDX + NVIDIA quotes) binding that key to the loaded MODEL MEASUREMENT — a hash of the model code/weights, i.e. the actual checkpoint, not the marketing name. Verifiable with standard tooling against Intel DCAP + NVIDIA's attestation service.
+
+**Decision.** Add `tee-attested` as an OPTIONAL provenance tier — a "Tier 0" above the roadmap's CommitLLM and proxy tiers (`provenance` enum becomes `tee-attested | commitllm | proxy-attested | self-declared | unattested`). Locked properties:
+1. **Optional, opt-in, production toggle — NEVER a contribution gate.** Requiring attested-SOTA would exclude the local/smaller-model users who are WeVibe's core audience (contradicts D-IDENTITY-PROGRESSIVE-CUSTODY and the mission). It is a prior/badge/ranking input only.
+2. **Verification is OFF-CHAIN.** The chain cannot verify TDX/NVIDIA quotes in consensus. An off-chain WeVibe attestation-verifier (or the MCP client) checks the quotes, confirms the measurement, validates per-turn signatures, and emits a compact signed assertion. The RAW bundle is retained off-chain so anyone can RE-VERIFY later — the verifier is a convenience, not a trusted oracle.
+3. **`certified_model` certifies SESSION PROVENANCE, not memory text.** Extraction transforms the session and the human edits before submit, so the tag means "this memory was DERIVED from a session in which model Y produced the work," never "model Y wrote this memory text." A `derivation` flag records `verbatim | edited-after-extraction` (see D-EXTRACTION-MODEL-STANDARD).
+4. **Identity binding is mandatory.** The contributor binds the attested session to their WeVibe pubkey (embed pubkey/nonce in the session so the attested request hash commits to "session belongs to X"; the contributor signs the bundle). Without this, attested sessions are buyable/transferable and the gamification surface is forgeable.
+5. **Turn count is anti-FABRICATION, not anti-PADDING.** Attested N-turns proves N genuine inferences on model Y happened (defeats pasted fake transcripts) but does not prevent padding with junk turns. Because the signature binds content hashes, retain the transcript so padding is visible to the scorer/leader. Treat N as a difficulty-scoring input, never a raw effort score.
+6. **Store the MEASUREMENT, not the name** (checkpoint hash) so "certified Model Y" cannot silently drift as a provider updates weights.
+7. **Per-field graded provenance — no single binary "certified ✓" badge** (avoid false rigor; every surface shows the weakest grade in the chain — see D-GAMIFICATION-PROVENANCE).
+8. **Different privacy posture — disclose it.** Certified mode routes session content through a TEE provider (adds Intel/NVIDIA/Phala to the trust root); it is not the local-only path. The toggle copy must say so.
+9. **Keep it pluggable + re-verifiable; do NOT make it a hard dependency.** A Phala Cloud API vulnerability was disclosed 2026-06-01 and TEEs have side-channel history. Build behind the pluggable adapter D-ATTEST-ROADMAP envisions, with a measurement allowlist (reproducible-build registry) and the retained bundle, so the claim survives the provider's API changing or being compromised. (Same discipline as CO-028's SP1 ZK path: technically achievable, operationally unshippable.)
+10. **Do NOT couple `tee-attested` to VIBE.** Attestation proves the model, not difficulty — paying more for certified-SOTA incentivizes SOTA-laundering trivial work. Prior/badge/ranking input only (consistent with D-ECON-CANON).
+
+**Phasing.** **Phase 0 (now, where built):** off-chain metadata + verifier + retained bundle, surfaced as a production toggle; ZERO chain changes; `x/attestation` stays disabled-but-wired. **Phase 1 (later, only when non-experimental):** anchor `H(bundle)` + provenance enum + measurement on-chain via `x/attestation`, giving the economic/reputation layer a trustless input.
+
+### D-EXTRACTION-MODEL-STANDARD: Standardize (and optionally attest) the extraction model — the controllable half
+
+**Context.** "Weaker models surface weaker memories" has two distinct heads: the PRODUCTION model (did the coding, in the user's suite, not controlled by WeVibe — and per difficulty logic a weak-model/hard-problem session may be the MOST valuable), and the EXTRACTION model (distills the session into the memory, runs in WeVibe's own pipeline — the part WeVibe controls, and where weak models do the most damage).
+
+**Decision.**
+1. **Pin/own the extraction model.** Memory extraction ("Extract Memories", D-12.2) runs through a known, pinned model (or a small pinned set) regardless of the user's coding model — removing weak-extractor variance at the source, with no attestation required.
+2. **Optionally attest extraction** (run it in a TEE per D-ATTEST-TEE-TIER) so EVERY certified memory carries a baseline "extracted by model E" provenance even when the production model is unattested.
+3. **`derivation` flag** is computed by comparing `H(extraction_output)` to `H(submitted)`: `verbatim` if unchanged, `edited-after-extraction` if the human edited it. Surfaced to the leader (and downstream) so a hand-edited memory is never dressed as fully model-derived.
+
+**Why.** The highest-leverage, cheapest standardization win is the half WeVibe controls. Production-model attestation is an optional bonus; extraction standardization is the controllable baseline.
+
+### D-GAMIFICATION-PROVENANCE: "user X / model Y / N turns / problem Z / L negatives" is a per-field graded composite [under D-SG]
+
+**Decision.** The session/contribution gamification claim is NOT one attested fact — it is a composite of fields with DIFFERENT provenance grades, and each field carries its own grade:
+- **user X** — contributor pubkey: native on-chain.
+- **model Y** — TEE attestation measurement: cryptographically attested (attested slice only).
+- **N turns** — count of signed turns: attested-real but not un-padded (D-ATTEST-TEE-TIER §5).
+- **problem Z** — memory keywords/title/session-summary: DESCRIPTIVE/semantic, NOT cryptographically attestable; never presented as "proven."
+- **L negative signals** — denials from the serve/deny loop (D-4.2): native on-chain and LAGGING (zero at publish; accrues later). Surface as a served:denied RATIO / "challenged L times and survived," never a raw scarlet-letter count that discourages contribution.
+
+**Placement.** The composite is SOCIAL/display data → rendered by the social-graph layer (D-SG-1/2/3) reading the chain as source of truth; the hub stays hub-only. It is display/badge-only and MUST NOT drive VIBE (D-ECON-CANON). When two-layer difficulty scoring (WHITEPAPER §3.11) is built, `model Y` + `N turns` + `difficulty(Z)` are its trustworthy inputs — TEE attestation is the missing input that makes difficulty scoring farming-resistant.
+
+**Why.** A single "certified" badge over a composite where only some fields are attested is a lie of omission; per-field grading keeps the surface honest and prevents attested fields from lending false credibility to the unattestable ones.
+
+---
+
 *End of DECISIONS.md*

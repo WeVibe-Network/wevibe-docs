@@ -463,13 +463,17 @@ This is a major roadmap item and the infrastructure is not there yet. It is carr
 
 **Tier 2: Proxy-as-Trust-Layer (Closed-Weight Models).** For closed-weight API models, traffic can route through a WeVibe-controlled session proxy that content-addresses each turn and signs the transcript with WeVibe's key. This is weaker than Tier 1, but provides a practical API-trust path.
 
+**Tier 0: TEE-Attested Confidential Inference (open- or closed-weight).** GPU-TEE confidential inference (e.g. OpenRouter / Phala / RedPill on Intel TDX + NVIDIA H100 Confidential Computing) signs each request/response inside the enclave and ships a remote-attestation quote binding the signing key to the loaded **model measurement** — a hash of the actual checkpoint, not a marketing name. It is the strongest of the three: it covers closed-weight models (unlike Tier 1) without trusting a WeVibe relay (unlike Tier 2), and is recorded as the `tee-attested` provenance grade (DECISIONS `D-ATTEST-TEE-TIER`). Locked constraints: it is **optional, opt-in, and never a contribution gate** (requiring it would exclude the local/smaller-model users WeVibe most serves); verification is **off-chain** (an attestation-verifier checks the Intel DCAP + NVIDIA quotes and emits a re-verifiable assertion — the chain is never asked to verify a TEE quote); a `certified_model` tag certifies **session provenance, not memory text** (a `derivation` flag records whether the submitted memory is verbatim from extraction or edited after); and it is carried as a pluggable adapter, not a hard dependency.
+
+**Standardizing the extraction model (the controllable half).** "Weaker models surface weaker memories" has two heads: the *production* model in the user's coding suite (uncontrolled — and sometimes the most valuable signal, when a weak model solves a hard problem) and the *extraction* model that distills a session into a memory (inside WeVibe's own pipeline). WeVibe standardizes the latter by **pinning the extraction model** (DECISIONS `D-EXTRACTION-MODEL-STANDARD`), removing weak-extractor variance with no attestation required; attesting the production model is the optional bonus on top.
+
 ### 3.11 Two-Layer Difficulty Scoring (Roadmap Consumer, Requires Attestation)
 
 Two-layer difficulty scoring is the evolutionary continuation of the optional design above and a likely early consumer of attested session claims once the pluggable framework exists.
 
 Like attestation, this is post-mainnet roadmap work: the chain-side plumbing and integrations are not yet in place.
 
-How attested difficulty should enhance the economic layer and/or social-graph layer is intentionally **TBD**.
+How attested difficulty should enhance the economic layer and/or social-graph layer is intentionally **TBD**. What attestation does settle is the *trustworthiness of the inputs*: the model and the turn count become cryptographically grounded (DECISIONS `D-ATTEST-TEE-TIER`). The composite claim "user X using model Y took N turns to solve problem Z and drew L negative signals" is therefore rendered as a **per-field graded provenance** object in the social-graph layer — each field labeled by its own grade (attested model/turns, native-on-chain user/denials, descriptive problem tag) — display/badge-only and never coupled to VIBE (DECISIONS `D-GAMIFICATION-PROVENANCE`).
 
 #### Layer 1: Structural Signal (Automated, Cheap)
 Model capability coefficient × turn count × (1 + 0.25 × failed alternatives). Computed from session structure without understanding content.
@@ -565,7 +569,12 @@ Developer works in their coding session
          - memory stats: retrieval count, acceptance count
          - trust panel
      │
-      ├── [Gated approval] (default): explicit user action required
+      ├── [Gated on risk] (default direction, D-RECALL-GATE-ON-RISK):
+      │      auto-inject + attest the safe majority; pop up ONLY for
+      │      guard-flagged / low-trust / low-confidence candidates.
+      │      Quality signal (attest/deny) batched in a review tray.
+      │
+      ├── [Gated approval]: explicit user action required on every candidate
       │      ├── ACCEPT + ATTEST → inject context + attest serve on-chain
       │      ├── DENIED → block memory and record feedback
       │      └── REPORTED → block memory and escalate to moderation
@@ -882,7 +891,9 @@ Qdrant stores vector + keyword metadata only (not plaintext memory content and n
 - **stack_tags** — freeform technology tags
 - **version** — nullable version string
 - **source** — `session` | `doc_import` | `authored`
-- **provenance** — `commitllm` | `proxy-attested` | `unattested`
+- **provenance** — `tee-attested` | `commitllm` | `proxy-attested` | `self-declared` | `unattested` (graded per field; see D-GAMIFICATION-PROVENANCE)
+- **certified_model** — TEE-attested model measurement (checkpoint hash) of the session's production model, if any (D-ATTEST-TEE-TIER); certifies session provenance, not memory text
+- **derivation** — `verbatim` | `edited-after-extraction` (whether the submitted memory matches the pinned-extraction output)
 - **difficulty_grade** — two-layer difficulty score (if attested)
 - **quality_grade** — LLM grading result (if attested)
 - **approved** — boolean moderation state
