@@ -2264,6 +2264,8 @@ an implicit global authority and serializing all orgs behind one account sequenc
 
 ### D-S32-CO044-LEADER-DUAL-PATH — Two leader signing paths [EXPLICIT R-ONE-PATH EXCEPTION]
 
+> **[UPDATE 2026-06-05]** The CO-214 client delegate-key + hub relay implementation described in this historical section is **REMOVED** and superseded by amendment 13 (**D-ECON-STORAGE-MARKET**). Current path: leaders/members sign chain txs wallet-direct (Keplr/Leap + CosmJS `directBroadcast`), and the hub records data only.
+
 **Decision:** The leader may authorize org-decision txs via EITHER of two paths, both supported
 simultaneously. This is a deliberate, manager-directed exception to R-ONE-PATH for this order:
 

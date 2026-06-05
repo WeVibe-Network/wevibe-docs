@@ -64,7 +64,7 @@ Used by the empirical replay harness at `wevibe-meta/scripts/empirical_replay/` 
 
 ### Chain Broadcast (CO-258)
 
-Hub broadcasts via Comet RPC `broadcast_tx_sync` at `tcp://wevibed:26657` (D-13.12). Fees calculated as `ceil(gas × 0.01 uvibe)`. Retry on transient state-load errors. The primary path is relay-forwarded delegate-signed Category B traffic; CO-023 also wires synchronous `RegisterOrgOnChain` from `CreateOrg`, so org creation performs a hub-originated chain registration call in the same request lifecycle.
+Leader/member chain tx broadcast is dashboard wallet-direct (`directBroadcast` to chain RPC). Per DECISIONS amendment 13 (D-ECON-STORAGE-MARKET), the hub does not relay leader-signed txs or expose a delegate-key relay path.
 
 ### Schema Bootstrap
 
@@ -107,7 +107,7 @@ POST   /v1/orgs/{orgID}/members/{pubkey}/pre-key
 GET    /v1/orgs/{orgID}/members/{pubkey}/pre-key
 DELETE /v1/orgs/{orgID}/members/{pubkey}
 POST   /v1/orgs/{orgID}/members/wallet
-POST   /v1/orgs/{orgID}/members/delegate-key
+# POST /v1/orgs/{orgID}/members/delegate-key — REMOVED by DECISIONS amendment 13 (CO-214 delegate-key path retired)
 GET    /v1/orgs/{orgID}/keys/envelope
 POST   /v1/orgs/{orgID}/dashboard/keys
 DELETE /v1/orgs/{orgID}/dashboard/keys/{pubkey}
@@ -143,7 +143,7 @@ POST   /v1/orgs/{orgID}/submissions/{submissionHash}/keywords          # Submit 
 POST   /v1/orgs/{orgID}/submissions/{submissionHash}/keywords/rerun     # Rerun extraction via Ollama (CO-238)
 PUT    /v1/orgs/{orgID}/submissions/{submissionHash}/keywords           # Update keyword set (CO-238)
 DELETE /v1/orgs/{orgID}/submissions/{submissionHash}                     # Remove submission from pipeline (CO-238)
-POST   /v1/relay/broadcast                                               # Delegate-signed relay endpoint (CO-011a.4; top-level, Category B chain ops)
+# POST /v1/relay/broadcast — REMOVED by DECISIONS amendment 13 (hub relay removed; wallet-direct chain writes only)
 GET    /v1/orgs/{orgID}/my-submissions                                   # Contributor-only submission status view (CO-265)
 GET    /v1/orgs/{orgID}/submissions/keywords/pending                     # List pending keyword verification (CO-238)
 GET    /v1/orgs/{orgID}/submissions/keywords/pending-chain               # List ready for chain submit (CO-238)
@@ -248,7 +248,7 @@ func RemoveMember(w, r)     // DELETE — sig verified, leader-only
 func GetKeyEnvelope(w, r)   // GET — reads from key_envelopes table, auth required
 func ListMembers(w, r)      // GET — no auth
 func GetMemberOrgs(w, r)    // GET /v1/members/{pubkey}/orgs — lists all orgs a member belongs to
-func RegisterDelegateKey(w, r) // POST /v1/orgs/{orgID}/members/delegate-key (CO-214)
+// RegisterDelegateKey removed by DECISIONS amendment 13 (CO-214 path retired)
 ```
 **Known issues:** None
 
@@ -337,7 +337,7 @@ func GetRecoveryShare(w, r)    // GET — holder retrieves their share by holder
 **Exports:** `New(grpcURL, chainID, mnemonic) (*Client, error)`, `Close()`, `SubmitterAddress()`
 
 #### `internal/chain/submit.go`
-**Role:** Broadcasts hub→chain relay transactions
+**Role:** Internal hub chain submission helpers for operational flows (not a dashboard delegate relay path)
 **Exports:**
 ```go
 func (c *GrpcClient) SubmitMemoryToChain(ctx, orgID string, mem BatchMemory) (string, error)
@@ -345,7 +345,7 @@ func (c *GrpcClient) SubmitMemoryBatch(ctx, orgID string, memories []BatchMemory
 func (c *GrpcClient) SubmitServeBatch(ctx, orgID string, epoch uint64, entries []ServeEntryInput) (string, error)
 func (c *GrpcClient) SubmitMemoryReport(ctx, orgID string, input ReportMemoryInput, contributorWalletAddress string) (string, error)
 ```
-**Chain→Hub relay pattern (CO-213):** Each submit function now includes reputation increment messages:
+**Chain-side reputation fanout (CO-213):** Each submit function now includes reputation increment messages:
 - `SubmitMemoryToChain` broadcasts `MsgIncrementContribution` with contributor wallet (or pubkey fallback)
 - `SubmitServeBatch` broadcasts `MsgIncrementServe` for each serve entry
 - `SubmitMemoryReport` (ban path) broadcasts `MsgRecordBan` with contributor wallet when provided
@@ -410,10 +410,7 @@ func ListMembers(ctx, pool, orgID) ([]MemberRecord, error)
 func VerifyMemberAccess(ctx, pool, orgID, pubkey, requestedEpoch) (bool, error)
 func IsLeader(ctx, pool, orgID, pubkey) (bool, error)
 func ListOrgsForMember(ctx, pool, pubkey) ([]MemberOrgEntry, error)
-func RegisterDelegateKey(ctx, pool, req) error                                  // CO-214 (CO-011a.4: orgID parameter removed)
-func GetDelegateKey(ctx, pool, delegateAddress) (*protocol.DelegateKeyRecord, error) // CO-214 (CO-011a.4: orgID removed; DelegateKeyRecord no longer carries OrgID)
-func ResolveDelegateToWallet(ctx, pool, delegateAddress) (walletAddress string, err error) // CO-214 (CO-011a.4: orgID dropped from return)
-func RevokeDelegateKey(ctx, pool, walletAddress) error                          // CO-214 (CO-011a.4: orgID parameter removed)
+// Delegate-key member helpers removed by DECISIONS amendment 13 (CO-214 path retired)
 ```
 **Known issues:** None
 
@@ -614,8 +611,7 @@ RecoveryShareEntry       — share_index, holder_pubkey, sealed_share
 RecoveryShareResponse    — org_id, share_index, sealed_share
 RegisterDashboardKeyRequest — pubkey, label, signed_by, signature
 DashboardKeyRecord       — org_id, pubkey, label, registered_by, active, created_at
-RegisterDelegateKeyRequest — wallet_address, delegate_address, delegate_pubkey, grant_tx_hash, grant_expiration, signed_by, signature (CO-214; wire payload unchanged by CO-011a.4)
-DelegateKeyRecord        — wallet_address, delegate_address, delegate_pubkey, grant_tx_hash, grant_expiration, active, created_at (CO-214; `OrgID` field removed by CO-011a.4 per Decision 2026-05-24-H)
+(REMOVED by amendment 13) RegisterDelegateKeyRequest / DelegateKeyRecord (CO-214 delegate-key relay contract retired)
 ```
 
 ---
@@ -637,11 +633,11 @@ credit_transactions   — PK: txn_id (BIGSERIAL). FK: orgs.
 key_envelopes         — PK: (org_id, pubkey). Stores enc/search/mod envelopes per member.
 recovery_shares       — PK: (org_id, share_index). Stores sealed Shamir shares.
 dashboard_keys        — PK: (org_id, pubkey). Authorized dashboard identities per org.
-delegate_keys         — PK: wallet_address. UNIQUE: delegate_address. Global per-wallet mapping (CO-214; schema overhauled by CO-011a.4 per Decision 2026-05-24-H — org_id column and FK to orgs removed)
+# delegate_keys        — REMOVED by DECISIONS amendment 13 (CO-214 delegate-key storage retired)
 org_keywords          — PK: id. UNIQUE: (org_id, keyword). Created via RunMigrations.
 memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERENCES org_keywords.
 ```
-**Indexes:** `idx_orgs_leader`, `idx_orgs_status`, `idx_members_active`, `idx_members_pubkey`, `idx_members_pubkey_active`, `idx_pending_org_status`, `idx_pending_contributor`, `idx_receipts_org_epoch`, `idx_audit_org_epoch`, `idx_credit_txn_org`, `idx_envelopes_org`, `idx_recovery_shares_holder`, `idx_dashboard_keys_pubkey`, `idx_delegate_keys_delegate_address`, `idx_org_keywords_org` (WHERE NOT deprecated), `idx_memory_keywords_keyword`
+**Indexes:** `idx_orgs_leader`, `idx_orgs_status`, `idx_members_active`, `idx_members_pubkey`, `idx_members_pubkey_active`, `idx_pending_org_status`, `idx_pending_contributor`, `idx_receipts_org_epoch`, `idx_audit_org_epoch`, `idx_credit_txn_org`, `idx_envelopes_org`, `idx_recovery_shares_holder`, `idx_dashboard_keys_pubkey`, `idx_org_keywords_org` (WHERE NOT deprecated), `idx_memory_keywords_keyword`
 
 ---
 
@@ -842,12 +838,10 @@ lib/
 ├── types.ts          # TypeScript type definitions
 ├── hub-client.ts     # API client for wevibe-hub (includes getProfile since CO-247)
 ├── wevibe-auth.ts      # WeVibe signed auth utilities
-├── wevibe-signing.ts   # Request signing utilities (includes registerDelegateKeyCanonical since CO-214)
+├── wevibe-signing.ts   # Request signing utilities
 ├── mcp-client.ts     # MCP client for wevibe-mcp
 ├── wallet-connect.ts # Wallet connection (includes getOfflineSigner since CO-214)
-├── delegate-key.ts   # secp256k1 delegate key generation and encrypted storage (CO-214)
-├── chain-client.ts   # CosmJS SigningStargateClient wrapper for MsgGrant/MsgExec (CO-214)
-├── delegation.ts     # Delegation orchestrator: setupDelegation, revokeDelegation (CO-214)
+├── chain-client.ts   # CosmJS direct-broadcast + WeVibe message builders
 ├── org-context.tsx   # Multi-org context provider + useOrgContext hook (CO-247)
 └── settings.ts      # Dashboard settings persistence
 ```
@@ -870,7 +864,7 @@ e2e/
 - `@radix-ui/*` (UI primitives)
 - `tailwindcss` (styling)
 - `@playwright/test` (e2e testing)
-- `@cosmjs/stargate`, `@cosmjs/proto-signing`, `@cosmjs/amino`, `@cosmjs/crypto`, `@cosmjs/encoding`, `cosmjs-types` (CO-214: Cosmos chain signing for delegate key MsgGrant)
+- `@cosmjs/stargate`, `@cosmjs/proto-signing`, `@cosmjs/amino`, `@cosmjs/crypto`, `@cosmjs/encoding`, `cosmjs-types` (Cosmos chain signing + direct broadcast from dashboard)
 
 ---
 
