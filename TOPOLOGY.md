@@ -107,7 +107,6 @@ POST   /v1/orgs/{orgID}/members/{pubkey}/pre-key
 GET    /v1/orgs/{orgID}/members/{pubkey}/pre-key
 DELETE /v1/orgs/{orgID}/members/{pubkey}
 POST   /v1/orgs/{orgID}/members/wallet
-# POST /v1/orgs/{orgID}/members/delegate-key — REMOVED by DECISIONS amendment 13 (CO-214 delegate-key path retired)
 GET    /v1/orgs/{orgID}/keys/envelope
 POST   /v1/orgs/{orgID}/dashboard/keys
 DELETE /v1/orgs/{orgID}/dashboard/keys/{pubkey}
@@ -126,10 +125,8 @@ POST   /v1/orgs/{orgID}/denials              # Record denial event (CO-225); inc
                                              # ranking)
 GET    /v1/orgs/{orgID}/denials/pending-count  # D-2026-05-25-A: leader denial-batch panel
 GET    /v1/orgs/{orgID}/denials/pending        # D-2026-05-25-A: leader-only list,
-                                               # newest-first, capped at 200 rows,
-                                               # includes total_count for batch UI
-# POST /v1/orgs/{orgID}/serves/batch-submit  — DELETED CO-011a.4: dashboard relays MsgSubmitServeBatch
-# POST /v1/orgs/{orgID}/denials/batch-submit — DELETED CO-011a.4: dashboard relays MsgSubmitDenialBatch directly to chain (Category A per D-2026-05-25-A; supersedes the earlier Category B framing)
+                                              # newest-first, capped at 200 rows,
+                                              # includes total_count for batch UI
 POST   /v1/orgs/{orgID}/query
 GET    /v1/orgs/{orgID}/memories
 GET    /v1/orgs/{orgID}/memories/{cid}
@@ -143,13 +140,9 @@ POST   /v1/orgs/{orgID}/submissions/{submissionHash}/keywords          # Submit 
 POST   /v1/orgs/{orgID}/submissions/{submissionHash}/keywords/rerun     # Rerun extraction via Ollama (CO-238)
 PUT    /v1/orgs/{orgID}/submissions/{submissionHash}/keywords           # Update keyword set (CO-238)
 DELETE /v1/orgs/{orgID}/submissions/{submissionHash}                     # Remove submission from pipeline (CO-238)
-# POST /v1/relay/broadcast — REMOVED by DECISIONS amendment 13 (hub relay removed; wallet-direct chain writes only)
 GET    /v1/orgs/{orgID}/my-submissions                                   # Contributor-only submission status view (CO-265)
 GET    /v1/orgs/{orgID}/submissions/keywords/pending                     # List pending keyword verification (CO-238)
 GET    /v1/orgs/{orgID}/submissions/keywords/pending-chain               # List ready for chain submit (CO-238)
-# POST /v1/orgs/{orgID}/submissions/batch-chain-submit — DELETED CO-011a.4: dashboard relays MsgApproveMemory directly
-# POST /v1/orgs/{orgID}/serves/batch-submit            — DELETED CO-011a.4: dashboard relays MsgSubmitServeBatch
-# POST /v1/orgs/{orgID}/denials/batch-submit           — DELETED CO-011a.4: dashboard relays MsgSubmitDenialBatch directly to chain (Category A per D-2026-05-25-A; supersedes earlier Category B framing)
 GET    /v1/orgs/{orgID}/denials/pending-count                            # Leader denial-batch panel count (D-2026-05-25-A)
 GET    /v1/orgs/{orgID}/denials/pending                                  # Leader-only pending list (newest-first, capped at 200, includes total_count)
 GET    /v1/orgs/{orgID}/health
@@ -248,7 +241,6 @@ func RemoveMember(w, r)     // DELETE — sig verified, leader-only
 func GetKeyEnvelope(w, r)   // GET — reads from key_envelopes table, auth required
 func ListMembers(w, r)      // GET — no auth
 func GetMemberOrgs(w, r)    // GET /v1/members/{pubkey}/orgs — lists all orgs a member belongs to
-// RegisterDelegateKey removed by DECISIONS amendment 13 (CO-214 path retired)
 ```
 **Known issues:** None
 
@@ -410,7 +402,6 @@ func ListMembers(ctx, pool, orgID) ([]MemberRecord, error)
 func VerifyMemberAccess(ctx, pool, orgID, pubkey, requestedEpoch) (bool, error)
 func IsLeader(ctx, pool, orgID, pubkey) (bool, error)
 func ListOrgsForMember(ctx, pool, pubkey) ([]MemberOrgEntry, error)
-// Delegate-key member helpers removed by DECISIONS amendment 13 (CO-214 path retired)
 ```
 **Known issues:** None
 
@@ -477,7 +468,7 @@ func GetContributorStats(ctx, pool, chainClient ChainQuerier, orgID, contributor
 - `serve_count`: from chain `serve_count`
 - `account_age_days`: from chain `first_seen_timestamp` if available, else from hub `joined_at`
 - `reports_upheld`/`false_reports_against`: always from hub (hub-only per CO-211)
-**Known issues:** None
+**Known issues:** `GetContributorStats` currently PREFERS a member's linked wallet address over their Ed25519 pubkey when querying chain reputation — this strands pubkey-earned reputation the instant a wallet is linked. Locked fix (DESIGN-LOCKED, `D-REPUTATION-KEYED-BY-PUBKEY`): query by passkey pubkey and become alias-aware (resolve the pubkey→wallet alias post-migration) rather than wallet-preferring.
 
 #### `internal/billing/billing.go`
 **Exports:**
@@ -501,7 +492,7 @@ func CreateReceipt(ctx, pool, nodePrivkeyHex, orgID, billingEpoch, accessEpochs,
 **Known issues:** None
 
 #### `internal/verify/sig.go`
-> **FORWARD NOTE (Sprint 32, identity overhaul — DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY`, brief `wevibe-meta/workspace/reports/design-identity-onboarding-migration.md`):** the Ed25519 `WeVibe-Signed` verification below stays, but the identity it authenticates is being reworked. Incoming: identity is a **client-held key created at first run and protected by a passkey (WebAuthn)** — no wallet required to participate; the dashboard moves from its current Keplr-signature-derived Ed25519 identity (`lib/wevibe-auth.ts`) and the plugin/MCP from its random on-device keypair onto a **single shared passkey-wrapped client-key scheme** (the two must mint the same identity). The key's ciphertext may be backed up to the hub but the **hub never holds a usable signing key** (non-custodial). A Cosmos wallet becomes an **optional linked authority** (staged handover, not migration) needed only to claim rewards / pay mainnet fees. Members are keyed by pubkey (`wallet_address` nullable), so wallet-free contribution already works at the hub layer. This section updates as it lands.
+> **FORWARD NOTE (Sprint 32, identity overhaul — DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY`, brief `wevibe-meta/workspace/reports/design-identity-onboarding-migration.md`):** the Ed25519 `WeVibe-Signed` verification below stays, but the identity it authenticates is being reworked. Incoming: identity is a **client-held key created at first run and protected by a passkey (WebAuthn)** — no wallet required to participate; the dashboard moves from its current Keplr-signature-derived Ed25519 identity (`lib/wevibe-auth.ts`) and the plugin/MCP from its random on-device keypair onto a **single shared passkey-wrapped client-key scheme** (the two must mint the same identity). The key's ciphertext may be backed up to the hub but the **hub never holds a usable signing key** (non-custodial). A Cosmos wallet becomes an **optional linked authority** (staged handover, not migration) needed only to claim rewards / pay mainnet fees. Members are keyed by pubkey (`wallet_address` nullable), so wallet-free contribution already works at the hub layer. This section updates as it lands. Reputation/XP is keyed by the **passkey pubkey**, not the wallet: memory-contribution XP already keys by the contributor pubkey on-chain, and serve XP must be fixed to do the same (`x/serve` currently keys serve XP by the wallet address and skips it when none is linked — a bug against wallet-free participation). Carrying reputation onto a wallet is a deliberate **on-chain, dual-signed alias** (passkey pubkey → wallet address) with an `is_migrated` flag, gated by the contributor's memory-contribution trail — NOT a hub-DB record (DECISIONS.md `D-REPUTATION-KEYED-BY-PUBKEY`, `D-MIGRATION-ONCHAIN-ALIAS`). Privileged roles always have a wallet (`D-LEADER-REQUIRES-WALLET`).
 
 **Exports:**
 ```go
@@ -611,7 +602,6 @@ RecoveryShareEntry       — share_index, holder_pubkey, sealed_share
 RecoveryShareResponse    — org_id, share_index, sealed_share
 RegisterDashboardKeyRequest — pubkey, label, signed_by, signature
 DashboardKeyRecord       — org_id, pubkey, label, registered_by, active, created_at
-(REMOVED by amendment 13) RegisterDelegateKeyRequest / DelegateKeyRecord (CO-214 delegate-key relay contract retired)
 ```
 
 ---
@@ -633,7 +623,6 @@ credit_transactions   — PK: txn_id (BIGSERIAL). FK: orgs.
 key_envelopes         — PK: (org_id, pubkey). Stores enc/search/mod envelopes per member.
 recovery_shares       — PK: (org_id, share_index). Stores sealed Shamir shares.
 dashboard_keys        — PK: (org_id, pubkey). Authorized dashboard identities per org.
-# delegate_keys        — REMOVED by DECISIONS amendment 13 (CO-214 delegate-key storage retired)
 org_keywords          — PK: id. UNIQUE: (org_id, keyword). Created via RunMigrations.
 memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERENCES org_keywords.
 ```

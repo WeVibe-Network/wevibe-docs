@@ -40,10 +40,6 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 
 > ⚠ **SUPERSEDED for onboarding (Sprint 32, `D-IDENTITY-PROGRESSIVE-CUSTODY`).** The wallet is **no longer the primary identity nor a prerequisite to participate.** The primary identity is now a **client-held, passkey-protected account key** created at first run with no wallet. A Cosmos wallet (Keplr/Leap) is an **optional later upgrade**, *linked* as the canonical chain authority + funding anchor via a staged handover — it is not the root every other key derives from. D-1.1 is retained below as historical context for the original alpha design. The economy-binding rationale still holds for users who upgrade; it simply no longer gates entry.
 
-**Decision (HISTORICAL — see banner):** Every user's primary identity is a Cosmos-compatible wallet (Keplr, Leap, etc.). All other keys derive from or are authorized by this wallet.
-
-**Why:** The wallet connects users to the chain economy (emissions, treasury, reputation) and provides the signing key for all authenticated operations. By establishing the wallet as primary identity, every action in the ecosystem has a single root of trust. Without wallet integration, there is no chain identity, no treasury interaction, no emission payouts, and no reputation tracking tied to a real wallet.
-
 ---
 
 ### D-1.2: Delegated Hot Key via `x/authz MsgGrant`
@@ -74,17 +70,6 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 ### D-1.4: PRE Identity Derived from Wallet via BIP-32 (Planned)
 
 > ⚠ **AMENDED (Sprint 32, `D-IDENTITY-PROGRESSIVE-CUSTODY`).** The PRE encryption identity is now **generated client-side at first run** (passkey-protected), NOT derived from the Cosmos wallet — because a guest contributes/recalls before any wallet exists. Wallet-BIP-32 derivation is no longer the source. When a wallet is later linked, the **client-generated PRE key is RETAINED** (no re-key event), so linking a wallet does not invalidate any kfrags. The isolation rationale below still holds (PRE key ≠ signing key); only the derivation source changes.
-
-**Decision (AMENDED — see banner):** The PRE encryption identity (used for Umbral re-encryption decryption) is a BIP-32-derived child key from the Cosmos wallet, with a distinct derivation path from the transaction signing key.
-
-```
-Cosmos wallet key (secp256k1, BIP-32 path m/44'/118'/0'/0/0)
-    ├── Transaction signing (delegated via MsgGrant)
-    └── BIP-32 derived child key ("wevibe-pre-identity/v1")
-            └── PRE encryption identity (Umbral SecretKey)
-```
-
-**Why:** Coupling financial identity (Cosmos wallet) with confidential memory retrieval (PRE encryption) increases blast radius. Standard BIP-32 derivation paths separate the two: compromise of the PRE identity key does not expose the wallet key. This keeps encryption identity tied to the user's chain identity while providing cryptographic isolation between roles.
 
 ---
 
@@ -2804,6 +2789,54 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 **Decision (ROADMAP — not this sprint).** WeVibe's encrypted memory blobs live on the single hub's Qdrant today. The long-term target is to move the blob-storage layer onto a **decentralized storage network** (Walrus-style: blockchain as control plane, staked/slashable storage committee, storage-resource market, availability challenges) so the data plane is as credibly-neutral and forkable as the protocol claims. WeVibe's locked `D-ECON-STORAGE-MARKET` (per-memory deposit, keeper-prune, slot scarcity) is effectively a single-operator, lightweight version of that model. **Pragmatic constraint: integrate an existing DA/storage network behind the unchanged Umbral-KMS overlay — do NOT re-implement an erasure-coding storage protocol.** Orthogonal to the identity sprint; explicitly deferred to post-alpha.
 
 **Why.** A single-hub store is a single point of storage custody and censorship for the very data the whitepaper promises no one can suppress. Decentralizing it closes that gap — but it is large, post-MVP, and best satisfied by integration, not a from-scratch build.
+
+### D-REPUTATION-KEYED-BY-PUBKEY: Reputation is keyed by the passkey pubkey until a deliberate, dual-signed migration
+
+**Decision (DESIGN-LOCKED — NOT yet built).** A contributor's reputation/XP is keyed by their **passkey Ed25519 pubkey**, not by a wallet, and stays that way until the user performs a deliberate migration (`D-MIGRATION-ONCHAIN-ALIAS`). Connecting a wallet does **not**, by itself, move or re-key any reputation. Consequences:
+- **Memory-contribution XP is already keyed by the passkey pubkey on-chain** (`x/memory ApproveMemory → reputationKeeper.IncrementContribution(contributor)`), so wallet-free contributors already earn and display contribution reputation on My Org today.
+- **Serve XP MUST also key by the passkey pubkey.** The current `x/serve` path keys serve XP by `ContributorAddress` (the wallet) and SKIPS it when no wallet is linked, so wallet-free users earn no serve XP — a bug against the wallet-free invariant. The fix keys serve XP by the passkey pubkey (no proto change).
+- **The hub `retrieval/stats.go GetContributorStats` MUST NOT silently prefer a linked wallet address over the pubkey.** Preferring the wallet strands pubkey-earned reputation the instant a user links a wallet; the stats path becomes **alias-aware** (resolve via the migration alias) instead of wallet-preferring.
+
+**Why.** Identity is the passkey (`D-IDENTITY-PROGRESSIVE-CUSTODY`); a wallet is an optional earnings/authority upgrade, not identity. Reputation is the soft stake (`D-SYBIL-MEMBERSHIP-GATED`) and must accrue from the moment of contribution, with no wallet, and must never silently vanish when a wallet is later linked.
+
+### D-MIGRATION-ONCHAIN-ALIAS: Pubkey→wallet reputation migration is an on-chain, dual-signed alias gated by memory contribution
+
+**Decision (DESIGN-LOCKED — NOT yet built).** Moving reputation from a passkey pubkey onto a wallet address is a deliberate, explicit **migration**, modeled as an **on-chain alias** (passkey pubkey → wallet address):
+- **On-chain, not hub-DB.** The alias and its completion flag live on the **chain** (the social-data source of truth, per `D-SG-2` / `D-13.4`). A hub-DB approach is **REJECTED** — the hub recording XP/aliases is an easy gaming surface and reverses the trust boundary.
+- **Hub triggers/records; the chain enforces.** The hub is responsible for recording/relaying the alias, but the migration is **gated by / enforced through memory contribution** — the contributor's memory-contribution signature trail is the closest-to-enforcement anchor proving the pubkey is genuinely theirs.
+- **DUAL-SIGNED (passkey + wallet).** The alias tx MUST be signed by BOTH the passkey identity AND the wallet. This is the security anchor preventing anyone from pointing a wallet at someone else's pubkey to claim their reputation.
+- **Flag name = `is_migrated`** (on-chain): `false` before migration, `true` after.
+- **Append-only.** Pre-migration history keyed to the pubkey is preserved and resolved via the alias after migration (the chain is append-only; nothing is rewritten). Social-graph reputation reads stay keyed by pubkey and resolve via the alias once `is_migrated=true`.
+- There is **no migration flag or ed25519→wallet mapping on chain today** — this is entirely unbuilt. The prior belief that a `migration_completed` flag already existed on chain was false.
+
+**Why.** Reputation must be portable onto the canonical wallet authority when a user upgrades, but only through an explicit, cryptographically anchored act. Dual-signing + memory-contribution gating make rep theft impossible; keeping the alias on-chain keeps the social data on its source of truth and out of a gameable hub table.
+
+### D-IDENTITY-UI-STATE-MACHINE: Dashboard identity rendering derives from {wallet connected?} × {biometric present?} × {is_migrated?} [extends D-FE-VIEW-STATE]
+
+**Decision (DESIGN-LOCKED — NOT yet built).** The dashboard derives identity rendering from three checks: (1) is a wallet connected? (2) is a platform passkey/biometric present (macOS Touch ID / Windows Hello)? (3) `is_migrated`? Rendering:
+- A **non-migrated passkey account WITH a wallet connected is its own state** → **DUAL-RENDER**: show the passkey-keyed reputation AND the wallet together. (The user linked a wallet for earnings but has not migrated their reputation onto it.)
+- Once `is_migrated = true` → render **ONLY the wallet identity** (reputation now resolves to the wallet via the alias).
+- A pre-wallet "dual chain+DB" rendering is NOT needed: reputation is already on-chain by pubkey, so it is chain-only — pubkey-keyed before migration, wallet-keyed (via alias) after.
+
+**Why.** The link-but-not-migrated window is a real, distinct user state that the old binary wallet/no-wallet view-state machine (`D-FE-VIEW-STATE`) cannot express; rendering it explicitly prevents both stranded-rep confusion and premature wallet-only display.
+
+### D-LEADER-REQUIRES-WALLET: Leader/moderator ⟹ has a wallet (hard invariant)
+
+**Decision (HARD INVARIANT — DESIGN-LOCKED).** Any **leader or moderator MUST have a linked wallet** — there is no edge case of a leader or moderator without a wallet, across all accounts. The identity state space is {has wallet?} × {is_migrated?}; **leader/moderator can never occupy the no-wallet quadrant.** Leaders sign and bond with the wallet (`D-LEADER-SOLE-SIGNER`); moderators act within the leader's accountability orbit. Pure contributors and consumers may remain wallet-free indefinitely.
+
+**Why.** The whole accountability model rests on a slot-bonded, wallet-signing leader; a privileged role without a wallet would have no bond and no on-chain signing authority, breaking the invariant that published content is always leader-wallet-signed.
+
+### D-WALLET-SWITCH-LEADER-MISMATCH: Switching the Keplr account is not switching the user; warn only on leader mismatch
+
+**Decision (DESIGN-LOCKED).** Because identity is the passkey (not the wallet), switching the active Keplr account does **not** change who the user is. The dashboard topbar shows the **stored linked `walletAddress`**, not a live Keplr read, so a Keplr switch + reload does not change the displayed user — this is correct behavior, not a bug. The generic "wallet changed" modal is low-stakes and is **REFRAMED to a leader-mismatch warning**: if the active Keplr account ≠ this org's leader wallet, warn that leader txs will fail until the user switches Keplr back. For non-leaders the warning is irrelevant and is not shown.
+
+**Why.** A "your wallet changed, identity updated" framing is actively misleading under passkey identity. The only case where the active Keplr account actually matters is a leader about to sign a tx that will fail against the wrong account — so that is the only case worth a warning.
+
+### D-E2E-BROWSER-PROFILES: Multi-user E2E testing uses separate browser profiles, not Keplr wallet switching
+
+**Decision (DESIGN-LOCKED — testing).** Because a Keplr switch does not change the passkey identity, multi-user end-to-end testing MUST use **separate browser profiles** (each with its own passkey identity, optionally its own wallet), **not** wallet switching within a single browser. The earlier "swap wallet A↔B in one browser" plan cannot work under the passkey-identity model.
+
+**Why.** Each browser profile is one passkey identity = one user; this is the only way to exercise true multi-user flows (contributor → consumer recall, leader → member) given identity is decoupled from the wallet.
 
 ---
 

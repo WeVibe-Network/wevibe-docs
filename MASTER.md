@@ -975,6 +975,18 @@ Hub ←(TX confirm)── Chain (authoritative keyword weights)
 
 **Accountability boundary (`D-LEADER-SOLE-SIGNER`):** contributors are free, unbonded, and **always leader-gated** — every contribution passes mandatory review before it is committed or served. The **leader is the sole on-chain signer and sole bond** (their slot) for all published content. Moderators delegate review *labor*, never the signature. There is **no contributor-certification / auto-approve tier**.
 
+**Reputation is keyed by the passkey identity (not the wallet).** A contributor earns reputation/XP under their passkey pubkey from the moment they contribute — no wallet required. Connecting a wallet (for earnings/authority) does **not** by itself move reputation. Memory-contribution XP already keys by the passkey pubkey; serve XP must do the same.
+
+**Wallet upgrade = LINK, reputation move = a separate, explicit MIGRATION.** Carrying reputation onto a wallet is a deliberate **on-chain, dual-signed alias** (passkey pubkey → wallet address), gated by the contributor's own memory-contribution trail, recorded with an `is_migrated` flag on chain (NOT a hub-DB record). Until migration, reputation stays keyed to the passkey pubkey; after migration it resolves to the wallet via the alias. (DECISIONS.md `D-REPUTATION-KEYED-BY-PUBKEY`, `D-MIGRATION-ONCHAIN-ALIAS`.)
+
+**Identity render state machine.** The dashboard derives identity rendering from three checks — (1) wallet connected? (2) platform passkey/biometric present (Touch ID / Windows Hello)? (3) `is_migrated`? A **non-migrated passkey account WITH a wallet connected is its own state** and DUAL-RENDERS the passkey-keyed reputation alongside the wallet; once `is_migrated = true` it renders ONLY the wallet identity. (`D-IDENTITY-UI-STATE-MACHINE`, extends `D-FE-VIEW-STATE`.)
+
+**Hard invariant: leader/moderator ⟹ has a wallet.** There is no leader or moderator without a linked wallet (they sign/bond with it). Pure contributors and consumers may stay wallet-free indefinitely. (`D-LEADER-REQUIRES-WALLET`.)
+
+**Wallet-switch UX = leader-mismatch warning, not a user switch.** Because identity is the passkey, switching the active Keplr account does not change who the user is; the topbar shows the stored linked wallet, not a live Keplr read. The only meaningful case is a leader whose active Keplr account ≠ the org's leader wallet — warn that leader txs will fail until they switch back. Non-leaders see nothing. (`D-WALLET-SWITCH-LEADER-MISMATCH`.)
+
+**Multi-user E2E testing = separate browser profiles, NOT Keplr wallet switching.** Each browser profile carries one passkey identity (optionally its own wallet); swapping wallets in one browser cannot simulate multiple users under the passkey-identity model. (`D-E2E-BROWSER-PROFILES`.)
+
 ---
 
 ## Cross-Cutting: wevibe-mcp as Local Backend
@@ -1206,6 +1218,8 @@ The legitimate leader is not notified, since a second `leader` member is added s
 **Status:** CLOSED by CO-267 (Sprint 27)
 
 **Resolution:** golang-migrate integrated into hub startup. Migrations at `wevibe-server/db/migrations/` (000001_initial_schema.up/down.sql, 000002_notification_preferences.up/down.sql). Hub startup runs migrations before VerifyConnection. db/README.md documents operator usage. Schema reference copy preserved in schema.sql header. See CO-267 implementation report.
+
+**Update (DESIGN-LOCKED):** the identity→wallet reputation portion of this migration is now specified as an on-chain, dual-signed `is_migrated` alias gated by memory contribution — see DECISIONS.md `D-MIGRATION-ONCHAIN-ALIAS` / `D-REPUTATION-KEYED-BY-PUBKEY` (design-locked, build pending).
 
 ### GAP-T3: wevibe-mcp Containerization
 

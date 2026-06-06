@@ -38,7 +38,7 @@ The cryptographic coverage of v2.2 equals the coverage of v2.1's ZK design for e
 
 Three production bugs that were independent of the verification design but blocking proper Tier 2 verification are also addressed by the v2.2 implementation: WrappedDekEnc is now forwarded to chain (was nil), rotation_buffer signature persistence now requires prior verification (was unverified), and the dashboard's submit path no longer sends plaintext to the hub in cleartext (was an asymmetry with the MCP client).
 
-The chain is wiped. The hub state is wiped. The canonical message tag remains wevibe.submit_memory.v1 — its field set is overhauled in place, not versioned. Pre-MVP, no users, no migration.
+The chain is wiped. The hub state is wiped. The canonical message tag remains wevibe.submit_memory.v1 — its field set is overhauled in place, not versioned.
 
 ---
 
@@ -793,6 +793,8 @@ Serve attribution uses per-org pseudonymous serve keys. Each user has:
 
 `org_serve_key` proves org membership activity and supports deduplication rules without auto-linking all retrieval behavior across orgs. Users can opt in to publicly link selected org activity to a profile.
 
+**Reputation is keyed by the passkey identity, not the wallet.** A contributor earns and accrues reputation under their passkey-derived contributor key from the moment they contribute — no wallet required. A Cosmos wallet is an optional later upgrade for *earnings and authority*, not identity, and linking one does not by itself move any reputation. Carrying reputation onto a wallet is a deliberate, explicit **migration**, modeled as an **on-chain, dual-signed alias** (passkey pubkey → wallet address) that is gated by the contributor's own memory-contribution trail and recorded with an `is_migrated` flag. Until migration, reputation stays keyed to (and is resolved by) the passkey pubkey; after migration it resolves to the wallet via the alias. The chain is append-only, so no prior history is rewritten. (See DECISIONS.md `D-REPUTATION-KEYED-BY-PUBKEY` and `D-MIGRATION-ONCHAIN-ALIAS`.)
+
 ### 6.4 Open-Source Social Graph Client (Forkable, Self-Hostable)
 
 The social graph is an open-source display client over chain RPC. Anyone can fork and self-host it.
@@ -1028,7 +1030,7 @@ The protocol mints VIBE on a fixed **32-year schedule** from genesis:
 
 **Contributor attribution.** Emissions credit the *authoritative* contributor recorded on the committed memory (`contributor_address`), not a consumer-supplied serve payload field. The same address drives serve attribution (DECISIONS D-S32-CONTRIBUTOR-ATTRIBUTION).
 
-> Status (alpha honesty): the schedule constants, per-epoch pool math, qualifier/rollover logic, and contributor attribution are implemented and locked (the flat `daily_mint` placeholder is superseded by the pool model above). **Disbursement is NOT yet wired:** `x/emissions` currently computes and accrues emissions as state, but does not mint or move coins (no `BankKeeper`/`MintCoins` path exists yet). Both payout legs need a withdrawal mechanism that is still to be built: (a) **contributors are paid by the network** — rewards accrue to a claim-later balance and become transferable only once the contributor links a Cosmos wallet, via a mint+claim path that MUST carry a reentrancy guard and a double-claim/duplication guard; (b) the supplemental validator-pool emission is likewise accrual-only today (validators still earn standard Cosmos SDK staking rewards in the interim — §10.4).
+> Status (alpha honesty): the schedule constants, per-epoch pool math, qualifier/rollover logic, and contributor attribution are implemented and locked (the flat `daily_mint` placeholder is superseded by the pool model above). **Disbursement is NOT yet wired:** `x/emissions` currently computes and accrues emissions as state, but does not mint or move coins (no `BankKeeper`/`MintCoins` path exists yet). Both payout legs need a withdrawal mechanism that is still to be built: (a) **contributors are paid by the network** — rewards accrue to a claim-later balance and become transferable only once the contributor links a Cosmos wallet. Linking a wallet enables transfer of accrued rewards but does not move the contributor's reputation; carrying reputation onto the wallet is a separate, explicit, dual-signed on-chain migration (`is_migrated`; see §6.3 and DECISIONS.md `D-MIGRATION-ONCHAIN-ALIAS`). Privileged roles are the exception to wallet-optionality: a leader or moderator always has a linked wallet (`D-LEADER-REQUIRES-WALLET`), since the leader is the sole wallet-signing bond for published content. Transfer then occurs via a mint+claim path that MUST carry a reentrancy guard and a double-claim/duplication guard; (b) the supplemental validator-pool emission is likewise accrual-only today (validators still earn standard Cosmos SDK staking rewards in the interim — §10.4).
 
 ### 10.4 Validator Economics
 
