@@ -697,7 +697,7 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 | x/reputation | x/reputation/keeper/ | proto/wevibe/reputation/v1/ | keeper | Contributor reputation |
 | x/serve | x/serve/keeper/ | proto/wevibe/serve/v1/ | keeper + integration | Serve attestations |
 
-- **Design-only (not yet built):** `x/org` `StoredOrg` gains `hub_endpoint` + leader-signed setter (`MsgSetServingInfo` extending `MsgSetServingKey`, or `MsgSetOrgConfig`); proto updates regenerate via Docker `make proto-gen` (never hand-edit `.pb.go`). Decision: `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
+- **Design-only (not yet built):** `x/org` `StoredOrg` gains `hub_endpoints` (ordered list of 1–3 transport URLs for failover redundancy) + leader-signed setter (`MsgSetServingInfo` extending `MsgSetServingKey`, or `MsgSetOrgConfig`); proto updates regenerate via Docker `make proto-gen` (never hand-edit `.pb.go`). Decision: `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
 
 ### Genesis Seeding & Epoch Hooks (Sprint 32 / CO-040)
 
@@ -1196,14 +1196,14 @@ post-mainnet extension.
     (not per-memory cards)
   - approved-memory (contribution) counts
   - org membership + roles
-  - **(design-only; not yet built)** org directory fields: `hub_endpoint`
-    (network URL) and `hub_serving_address` (serve/deny AUTH key) as distinct
-    values, with leader-signed setter path (`MsgSetServingInfo` extending
-    `MsgSetServingKey`, or `MsgSetOrgConfig`)
+  - **(design-only; not yet built)** org directory fields: `hub_endpoints`
+    (ordered list of 1–3 transport URLs, failover) and `hub_serving_address`
+    (serve/deny AUTH key) as distinct values, with leader-signed setter path
+    (`MsgSetServingInfo` extending `MsgSetServingKey`, or `MsgSetOrgConfig`)
   - per-memory rarity tier (computed once at commit from keyword
     supply/demand, then frozen on-chain)
   - economic state
-- **Design-only (not yet built):** `hub_endpoint` proto/state changes use Docker
+- **Design-only (not yet built):** `hub_endpoints` proto/state changes use Docker
   `make proto-gen` (no hand-edited `.pb.go`). Decision:
   `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
 - Economics consumes **only** contribution counts + the network threshold;
@@ -1216,7 +1216,7 @@ post-mainnet extension.
 - RPC exposes raw counts/inputs for rendering, including serve counts, rarity
   tier, contribution counts, and roles.
 - **Design-only (not yet built):** org-details query is the org directory:
-  consumers/plugins resolve `org_id → hub_endpoint` from chain RPC (no manual
+  consumers/plugins resolve `org_id → hub_endpoints` from chain RPC (no manual
   hub URL configuration). Decision: `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
 - **Design-only (not yet built):** hubs sign responses with the serving key;
   clients verify against on-chain `hub_serving_address`; signature contract is
@@ -1274,10 +1274,10 @@ post-mainnet extension.
 **Canonical consumer chain (auth layers):**
 0. **Design-only (not yet built):** ONCE per session start (biometric-free),
    `plugin` reads cached chain `org_id`s from sidecar, queries chain RPC org
-   details for each `hub_endpoint`, and updates local hub URL + per-org sidecar
-   entry if changed; consumer never configures a URL. Endpoint change emits a
-   one-time passive toast (`D-CHAIN-RESOLVED-HUB-ENDPOINT`,
-   `D-HUB-ENDPOINT-CHANGE-TOAST`).
+   details for each org's `hub_endpoints` (priority-ordered, 1–3, failover), and
+   updates local hub URL + per-org sidecar entry if changed; consumer never
+   configures a URL. Endpoint-list change emits a one-time passive toast
+   (`D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-ENDPOINT-CHANGE-TOAST`).
 1. `plugin` calls local `wevibe-mcp` HTTP API using `Authorization: Bearer <token>` loaded from `~/.wevibe/mcp-session-token` (D-12.5a, CO-260).
 2. `wevibe-mcp` validates the Bearer token, performs canonicalization, and signs outbound hub requests with delegate auth (Option beta / D-12.5).
 3. `wevibe-mcp` calls `wevibe-hub` with WeVibe-Signed delegate authentication.

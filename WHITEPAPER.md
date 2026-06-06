@@ -19,7 +19,7 @@ v2.3 rewrites the opening narrative around the alpha product and current archite
 3. **Org framing is corrected.** Orgs are domain-expert-run memory collections users join. The org is the container; the vibe coder is the protagonist.
 4. **Keyword posture is clarified.** Public plaintext keywords are discovery metadata, treated as a feature (not a privacy alarm).
 5. **Stale architecture claim fixed.** The prior "wevibe-hub eliminated" claim is removed. In alpha, the hub is live and part of the hosted coordination/accounting path alongside chain + local retrieval.
-6. **Zero-config transport + onboarding posture added.** The near-term chain-resolved hub model is now explicit (`hub_endpoint` transport from chain, distinct from `hub_serving_address` auth key; hub-response signing; endpoint-change passive toast; `org_id`-keyed sidecar updates — DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-RESPONSE-SIGNED`, `D-HUB-ENDPOINT-CHANGE-TOAST`, `D-SIDECAR-PLUGIN-OWNS-STATE`), alongside the already-built OpenCode onboarding/lazy-identity/installer/pairing flow (DECISIONS `D-PLUGIN-ONBOARDING-HOOK`).
+6. **Zero-config transport + onboarding posture added.** The near-term chain-resolved hub model is now explicit (`hub_endpoints` — 1–3 transport URLs from chain for failover, distinct from `hub_serving_address` auth key; hub-response signing; endpoint-change passive toast; `org_id`-keyed sidecar updates — DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-RESPONSE-SIGNED`, `D-HUB-ENDPOINT-CHANGE-TOAST`, `D-SIDECAR-PLUGIN-OWNS-STATE`), alongside the already-built OpenCode onboarding/lazy-identity/installer/pairing flow (DECISIONS `D-PLUGIN-ONBOARDING-HOOK`).
 
 ---
 
@@ -198,7 +198,7 @@ All roles require epoch-specific encryption keys for content access. The leader 
 
 ### 2.3 Organization Lifecycle
 
-**Creation.** Org capacity is a scarce, capped set of registry-allocated **slots** (hard cap, governance-set: 32 alpha / 320 testnet / 3200 mainnet). The leader acquires a slot — by ascending-price primary while the cap fills, or by descending (Dutch) resale once a slot is freed — and signs `MsgRegisterOrg` from their **own wallet** (the hub never signs it); acquisition proceeds are burned. The `org_id` is the permanent slot identifier, independent of the leader (it survives leadership transfer/resale). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). See DECISIONS.md `D-ECON-STORAGE-MARKET` (decided; build in progress).
+**Creation.** Org capacity is a scarce, capped set of registry-allocated **slots** (hard cap, governance-set: 32 alpha / 320 testnet / 3200 mainnet). The leader acquires a slot — by ascending-price primary while the cap fills, or by descending (Dutch) resale once a slot is freed — and signs `MsgRegisterOrg` from their **own wallet** (the hub never signs it); the acquisition payment is split 50/50 — half is burned and half capitalizes the org's own on-chain account (DECISIONS.md `D-ECON-STORAGE-MARKET` amendment 9). The `org_id` is the permanent slot identifier, independent of the leader (it survives leadership transfer/resale). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). See DECISIONS.md `D-ECON-STORAGE-MARKET` (decided; build in progress).
 
 **First-run detection.** When the MCP plugin/server starts and discovers no org membership, it surfaces an actionable message to the agent, prompting guided setup.
 
@@ -324,12 +324,12 @@ The `seal_to_pubkey` operation:
 
 Retrieval is hub-based, with plaintext handling kept local in the MCP server + plugin path. The pipeline:
 
-#### Context Profiling (Session Start)
+#### Context Profiling (Session Start) — *designed, partially built*
 
-When a coding session starts, the MCP/plugin profiles the environment — dependencies, directory structure, language, framework versions, current file context. This profile is sent as filter context so the hub can pre-filter candidate memories before vector scoring. A developer working in a Python/Django project should search Python/Django memories, not the entire org corpus.
+The intended model: when a coding session starts, the MCP/plugin profiles the environment — dependencies, directory structure, language, framework versions, current file context — and sends that profile as filter context so the hub can pre-filter candidate memories before vector scoring (a developer working in a Python/Django project should search Python/Django memories, not the entire org corpus). **Today** the plugin collects only a handful of dependency names and folds them into the query text; no structured profile is sent, and the hub runs a plain semantic search over the org corpus, filtered only by org, embedding model, and lifecycle state. The structured profile plus stack pre-filter is a designed extension (DECISIONS.md `GAP-RECALL-HARVEST`), not yet built.
 
 #### Keyword Extraction
-Keywords are extracted by the host agent's LLM at approval time: 10-20 domain-specific keywords with percentage-based weights summing to 100%. Keyword weights are stored as retrieval metadata and used during hub scoring (plaintext keywords remain an accepted metadata tradeoff — see Section 3.7).
+Keywords are extracted by a **pinned local extraction model** (Ollama, e.g. `qwen3:4b`; DECISIONS.md `D-EXTRACTION-MODEL-STANDARD`) in a dedicated extraction step before approval — not the host coding agent, and not at the moment of approval. Each memory gets up to 20 domain-specific keywords with weights normalized to sum to 100%; the hub enforces both the cap and the sum (within a small tolerance) before a memory is accepted. Keyword weights are stored as retrieval metadata and used during hub scoring (plaintext keywords remain an accepted metadata tradeoff — see Section 3.7).
 
 #### Semantic Embedding
 At recall time, the MCP/plugin computes the query embedding locally via Ollama (`nomic-embed-text`) and posts that vector to `wevibe-hub` (`/v1/orgs/{org}/query`). The hub's Qdrant index stores plaintext float32 memory embeddings plus keyword metadata (`cid`, `org`, `keyword_weights`, `lifecycle`, `type`). Qdrant stores no decrypted plaintext memory content and no ciphertext blobs.
@@ -471,7 +471,7 @@ This is a major roadmap item and the infrastructure is not there yet. It is carr
 
 Two-layer difficulty scoring is the evolutionary continuation of the optional design above and a likely early consumer of attested session claims once the pluggable framework exists.
 
-Like attestation, this is post-mainnet roadmap work: the chain-side plumbing and integrations are not yet in place.
+Like attestation, this is post-mainnet roadmap work: the chain-side plumbing and integrations are not yet in place. What exists today is the *storage* for the result, not the scoring: the chain accepts plain `difficulty` and `quality` values (1–10) on an attested-memory record and maintains a simple per-contributor difficulty histogram (`x/reputation`). The Layer-1 structural formula and the Layer-2 grading LLM described below are the unbuilt target that would populate those values automatically.
 
 How attested difficulty should enhance the economic layer and/or social-graph layer is intentionally **TBD**. What attestation does settle is the *trustworthiness of the inputs*: the model and the turn count become cryptographically grounded (DECISIONS `D-ATTEST-TEE-TIER`). The composite claim "user X using model Y took N turns to solve problem Z and drew L negative signals" is therefore rendered as a **per-field graded provenance** object in the social-graph layer — each field labeled by its own grade (attested model/turns, native-on-chain user/denials, descriptive problem tag) — display/badge-only and never coupled to VIBE (DECISIONS `D-GAMIFICATION-PROVENANCE`).
 
@@ -644,11 +644,11 @@ Install/uninstall is zero-config via `wevibe-admin install-opencode` and `wevibe
 
 ### 4.8 Chain-Resolved Hub Endpoints (Zero-Config Transport)
 
-WeVibe keeps one canonical chain as network source of truth, with a public chain RPC as the single stable client anchor (default endpoint, env-overridable for operators). The chain is the org directory. Each org carries a leader-configurable `hub_endpoint` network URL for transport via a leader-signed on-chain setter, distinct from `hub_serving_address`, the Cosmos key that authorizes serve/deny and response authority. Transport and authorization are intentionally separated (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`).
+WeVibe keeps one canonical chain as network source of truth, with a public chain RPC as the single stable client anchor (default endpoint, env-overridable for operators). The chain is the org directory. Each org carries a leader-configurable `hub_endpoints` field — an ordered list of 1–3 network URLs for transport redundancy/failover — set via a leader-signed on-chain setter, distinct from `hub_serving_address`, the Cosmos key that authorizes serve/deny and response authority. Transport and authorization are intentionally separated (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`).
 
-At session start, the plugin resolves per-org endpoint routing from chain RPC once (biometric-free, because org metadata is public), updates local config, and persists per-org sidecar state keyed by globally unique `org_id` so state remains stable across hub migration (DECISIONS `D-SIDECAR-PLUGIN-OWNS-STATE`). In this model, the consumer never hand-configures a hub URL.
+At session start, the plugin resolves per-org endpoint routing from chain RPC once (biometric-free, because org metadata is public), updates local config, and persists per-org sidecar state keyed by globally unique `org_id` so state remains stable across hub migration (DECISIONS `D-SIDECAR-PLUGIN-OWNS-STATE`). The endpoint list is priority-ordered: the plugin uses the first and fails over to the next on connection, health, or signature-verification failure. All endpoints are replicas fronting the org's single on-chain serving identity. In this model, the consumer never hand-configures a hub URL.
 
-Hub transport remains untrusted: hub responses are signed by the org's on-chain serving key and verified by the plugin against `hub_serving_address` (DECISIONS `D-HUB-RESPONSE-SIGNED`). The response-signing contract lives in `wevibe-protocol` so hosted and self-hosted hubs conform to one verification path. If `hub_endpoint` changes, clients auto-switch silently and show a one-time passive toast (DECISIONS `D-HUB-ENDPOINT-CHANGE-TOAST`).
+Hub transport remains untrusted: hub responses are signed by the org's on-chain serving key and verified by the plugin against `hub_serving_address` (DECISIONS `D-HUB-RESPONSE-SIGNED`). The response-signing contract lives in `wevibe-protocol` so hosted and self-hosted hubs conform to one verification path. If the `hub_endpoints` list changes, clients auto-switch silently and show a one-time passive toast (DECISIONS `D-HUB-ENDPOINT-CHANGE-TOAST`).
 
 Why this path: self-hosting remains a first-class leader right, but endpoint operations stay abstracted from end users. Resolving transport from the same chain source of truth preserves one path and avoids creating a second directory service every self-hosted hub would otherwise need to mirror and keep in sync.
 
@@ -907,8 +907,8 @@ Qdrant stores vector + keyword metadata only (not plaintext memory content and n
 - **provenance** — `tee-attested` | `commitllm` | `proxy-attested` | `self-declared` | `unattested` (graded per field; see D-GAMIFICATION-PROVENANCE)
 - **certified_model** — TEE-attested model measurement (checkpoint hash) of the session's production model, if any (D-ATTEST-TEE-TIER); certifies session provenance, not memory text
 - **derivation** — `verbatim` | `edited-after-extraction` (whether the submitted memory matches the pinned-extraction output)
-- **difficulty_grade** — two-layer difficulty score (if attested)
-- **quality_grade** — LLM grading result (if attested)
+- **difficulty** — difficulty value (1–10) on the attested-memory record; feeds the per-contributor difficulty histogram in `x/reputation`. The field and histogram exist today; the two-layer *scoring* that would compute the value automatically (§3.11) is roadmap.
+- **quality** — quality value (1–10) on the attested-memory record (reputation XP = difficulty × quality). The field exists today; the Layer-2 grading LLM that would produce it (§3.11) is roadmap.
 - **approved** — boolean moderation state
 - **is_reported** — an open report currently stands against this memory (designed)
 - **was_reported** — reported at least once; permanent historical flag (designed)
@@ -935,7 +935,7 @@ Defense layers: submission-time wevibe-guard (advisory), OCR sanitization, human
 ### 9.3 Leader Key Compromise
 K_master compromise exposes all epoch-derived content. Mitigation: offline recovery phrase, encrypted vault with Argon2id, threshold recovery.
 
-Separately, hub infrastructure is treated as untrusted transport, not a trust root: endpoint authority comes from leader-signed on-chain `hub_endpoint` updates on the canonical chain (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`), and client verification of hub-signed responses against on-chain `hub_serving_address` is the transport MITM defense (DECISIONS `D-HUB-RESPONSE-SIGNED`).
+Separately, hub infrastructure is treated as untrusted transport, not a trust root: endpoint authority comes from leader-signed on-chain `hub_endpoints` updates on the canonical chain (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`), and client verification of hub-signed responses against on-chain `hub_serving_address` is the transport MITM defense (DECISIONS `D-HUB-RESPONSE-SIGNED`).
 
 ### 9.4 Chain State Observability
 On-chain data is public (encrypted blobs + plaintext metadata). An observer can see: org sizes, submission frequency, keyword distributions, serve patterns, contributor activity, reputation scores. They cannot see: memory content, decryption keys, member identities beyond pub keys, local blacklist state.
@@ -980,7 +980,7 @@ Worst case in this class is degraded/poisoned recall quality for one org, typica
 
 WeVibe's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a rollup — WeVibe requires deterministic finality (CometBFT provides this; rollups have multi-day challenge windows). The chain halts before it forks — safety-over-liveness is correct for memory attestation and storage.
 
-In the near-term org-directory model, chain org state also carries `hub_endpoint` transport URL (set through a leader-signed setter transaction), while `hub_serving_address` remains the serve/deny signing-authorization key; clients resolve transport from chain RPC rather than manual URL config (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-RESPONSE-SIGNED`).
+In the near-term org-directory model, chain org state also carries `hub_endpoints` (an ordered list of 1–3 transport URLs for failover redundancy, set through a leader-signed setter transaction), while `hub_serving_address` remains the serve/deny signing-authorization key; clients resolve transport from chain RPC rather than manual URL config (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-RESPONSE-SIGNED`).
 
 ### 10.2 The Four Roles
 
@@ -996,7 +996,7 @@ In the near-term org-directory model, chain org state also carries `hub_endpoint
 
 Single token: **VIBE**. Used for staking, org-slot acquisition (auction burns), per-memory storage deposits, demand-leg router settlement, and contributor payouts.
 
-**Org slots (scarce, capped, auctioned).** Org capacity is a hard-capped set of registry-allocated slots (governance param: 32 alpha / 320 testnet / 3200 mainnet). Primary allocation is an ascending price per subsequent slot until the cap fills; a freed slot (abandoned/closed/lapsed) is re-homed by a descending (Dutch) resale. All acquisition proceeds are burned. The slot `org_id` is permanent and leader-independent. Scarcity + burn is the network-level anti-spam.
+**Org slots (scarce, capped, auctioned).** Org capacity is a hard-capped set of registry-allocated slots (governance param: 32 alpha / 320 testnet / 3200 mainnet). Primary allocation is an ascending price per subsequent slot until the cap fills (implemented today); a freed slot (abandoned/closed/lapsed) is intended to be re-homed by a descending (Dutch) resale (designed, not yet built — see §10.6). The acquisition payment is split 50/50: half is burned and half capitalizes the org's own on-chain account (DECISIONS.md `D-ECON-STORAGE-MARKET` amendment 9). The slot `org_id` is permanent and leader-independent. Scarcity + the burn is the network-level anti-spam.
 
 **Self-assessed-value rent (Harberger-style).** A leader posts a self-assessed value V for their slot, pays rent `r × V` per period, and anyone may force-buy the slot at V during a bid window. This keeps slots in productive hands without right-of-first-refusal chilling or grief-bidding. Non-payment/abandonment frees the slot back to Dutch resale and marks the org dormant.
 
@@ -1055,7 +1055,7 @@ Leaders earn no emissions, there is no per-serve royalty, and there is no protoc
 
 Seven custom Cosmos SDK modules:
 
-- `x/org` — slot registry + acquisition auction (ascending primary implemented; Dutch resale + self-assessed-value rent + forced-sale-in-window designed, not built), per-org module account, intended on-chain demand-leg router (membership payment → burn cut + remainder to leader; custody model open per §13), membership, org-directory transport/auth fields (`hub_endpoint` transport URL via leader-signed setter tx, near-term design; `hub_serving_address` serving/signing authorization key), serving-key feegrant, dormancy/abandonment detection (partial)
+- `x/org` — slot registry + acquisition auction (ascending primary implemented; Dutch resale + self-assessed-value rent + forced-sale-in-window designed, not built), per-org module account, intended on-chain demand-leg router (membership payment → burn cut + remainder to leader; custody model open per §13), membership, org-directory transport/auth fields (`hub_endpoints` — ordered list of 1–3 transport URLs for failover, via leader-signed setter tx, near-term design; `hub_serving_address` serving/signing authorization key), serving-key feegrant, dormancy/abandonment detection (partial)
 - `x/memory` — pending commitment storage (hash + metadata, no blob until approved), approved memory blob storage (encrypted ciphertext as chain state), Merkle root submissions per epoch, contributor-signed verification anchor (plaintext/salt/ciphertext hashes). (Pending-commitment auto-expiry and quarantine flagging are designed but not yet implemented.)
 - `x/serve` — batched serve attestation recording (per-org pseudonymous serve keys), deduplication (memory_cid + serve_key + epoch), self-serve detection/discounting, contributor cross-org serve count aggregation for social attribution (non-economic)
 - `x/reputation` — per-contributor cross-org aggregated stats (serve count, org breadth, domain tags, rep score, wallet age). Enhanced mode per-org when attestation enabled (difficulty histogram, XP, provenance breakdown).
@@ -1074,10 +1074,12 @@ The chain ships a runnable Cosmos SDK application and CLI (`wevibed`). A single-
 
 1. `wevibed init {moniker} --chain-id {id}`
 2. `wevibed keys add validator --keyring-backend test`
-3. `wevibed genesis add-genesis-account {addr} 100000000uvibe`
-4. `wevibed genesis gentx validator 50000000uvibe --chain-id {id}`
+3. `wevibed genesis add-genesis-account {addr} 10000000000000uvibe`
+4. `wevibed genesis gentx validator 1000000000000uvibe --chain-id {id}`
 5. `wevibed genesis collect-gentxs`
 6. `wevibed start`
+
+The canonical local-devnet bootstrap (with the full genesis allocations from §10.3.1, epoch config, and emissions/reputation seeding) is `scripts/init-chain.sh`; the steps above are the standard skeleton.
 
 ---
 
