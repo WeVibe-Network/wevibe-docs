@@ -2875,6 +2875,57 @@ A pinned reference keeps revocation, decay, re-guard, and serve attribution all 
 
 **Why.** A single "certified" badge over a composite where only some fields are attested is a lie of omission; per-field grading keeps the surface honest and prevents attested fields from lending false credibility to the unattestable ones.
 
+## 20. Chain-Resolved Hub Endpoints + Plugin Onboarding
+
+> DECIDED this session. `D-CHAIN-RESOLVED-HUB-ENDPOINT` / `D-HUB-RESPONSE-SIGNED` / `D-HUB-ENDPOINT-CHANGE-TOAST` are DESIGN-ONLY (multi-repo build not started: wevibe-chain proto + leader Msg, wevibe-protocol contract, wevibe-mcp resolution, wevibe-dashboard leader UI). `D-SIDECAR-PLUGIN-OWNS-STATE` + `D-PLUGIN-ONBOARDING-HOOK` are BUILT + committed in wevibe-mcp (6ceac5d..264a29f).
+
+### D-CHAIN-RESOLVED-HUB-ENDPOINT: The chain is the org directory; the plugin resolves hub URLs from chain (consumer never configures a URL)
+
+**Decision.** There is exactly one canonical WeVibe chain = the network source of truth (consistent with `D-12.1`: one chain, many self-hostable hubs). The chain's public RPC is the single stable trust anchor (built-in default, env-overridable for testnet/self-host). The chain is the org directory: add a leader-configurable on-chain org field `hub_endpoint` (network URL), distinct from the existing `StoredOrg.hub_serving_address` in section 18 amendment 11 (leader-signed `MsgSetServingKey`, self-host-anytime, feegrant tracks the current whitelist). The split is locked: `hub_serving_address` = AUTH (the Cosmos key authorized to submit org serve/deny txs); `hub_endpoint` = TRANSPORT (where contributors/consumers reach the org's hub). Both are leader-controlled, on-chain, and set by leader-signed message flow (extend `MsgSetServingKey` → `MsgSetServingInfo`, or fold into `MsgSetOrgConfig`). Proto changes are regenerated via Docker `make proto-gen` and never hand-edit `.pb.go`.
+
+Resolution path is one-way and biometric-free: chain → RPC → plugin org query → resolve/check endpoint → update local config/sidecar if changed → done. This runs once per session start (org details are public, so no identity load; consistent with lazy boot). The plugin reads cached `org_id`s from its sidecar, queries chain RPC for each org's `hub_endpoint`, and rewrites local config + sidecar only when needed. Consumers/contributors never see or type a hub URL. Per-org plugin-sidecar state is keyed by globally unique chain `org_id` (stable across a leader hub migration, so endpoint re-pointing does not change `org_id`): `orgs: { "weorg-N": { hubEndpoint, hubServingAddress, joinedAt, lastExtractedAt } }`. Alpha (`D-SINGLE-ORG`) fills one entry; the shape stays forward-compatible.
+
+**Why.** Self-hosting must remain first-class (`D-12.1`) without pushing infra configuration onto end users. Resolving transport from the same chain source already used for org details + serving auth keeps one canonical path and avoids introducing a separate directory service every self-hosted hub would need to synchronize (same shared-surface rationale as `D-13.4`).
+
+### D-HUB-RESPONSE-SIGNED: Hubs sign responses with the on-chain serving key; the plugin verifies
+
+**Decision.** Every hub response is signed with that org's current on-chain serving key, and the plugin verifies each response signature against the chain `hub_serving_address` for the target org. The signing/verification contract is published in `wevibe-protocol` so every self-hostable hub conforms to one interoperable wire contract.
+
+**Why.** This closes transport-level endpoint-swap / MITM before content checks. Auto-resolution remains safe because a hostile endpoint cannot impersonate the authorized hub without the on-chain serving key.
+
+**Security / damage-minimization model (shared rationale; hub = UNTRUSTED transport).**
+1. Endpoint changes are leader-signed, on-chain, auditable, and revertible (not a silent server flip).
+2. Content integrity is endpoint-independent: Umbral end-to-end + consumer-side guard (`D-RECALL-GATE-ON-RISK`) + provenance. A malicious endpoint can withhold, stale, or attempt-inject, but cannot forge content past consumer crypto + guard.
+3. Blast radius is per-org: a compromised org endpoint degrades only that org's recall for that consumer, never identity/keys/other orgs.
+4. The canonical chain RPC is the only default trust anchor.
+5. Hub-response signing (`D-HUB-RESPONSE-SIGNED`) defeats transport-level impersonation.
+
+**Worst case.** If an org/hub is fully compromised, impact is degraded/poisoned recall for that one org; it is caught by guard + crypto and reverted on-chain. It is never key/identity loss and never cross-org contamination.
+
+### D-HUB-ENDPOINT-CHANGE-TOAST: Passive one-time toast when an org's endpoint changes
+
+**Decision.** If a resolved org `hub_endpoint` changes between sessions, the plugin switches automatically and surfaces a one-time passive toast ("Org X moved its hub"). Otherwise resolution stays silent and requires no user action.
+
+**Why.** This preserves zero-config UX while still giving the consumer a visible signal if a leader-key-authorized re-point occurs.
+
+### D-SIDECAR-PLUGIN-OWNS-STATE: The plugin is the sole writer of the local identity sidecar (`adoptedAt`/`extractedAt`)
+
+**Decision.** Only the plugin (Node, on-device) writes `~/.wevibe/identity.json`; the browser dashboard is sandboxed and cannot touch local files. The plugin stamps `adoptedAt` when it performs local pair/adopt. It learns `extractedAt` by querying the org's serving hub, preferring reuse of an existing per-contributor memory query ("has this pubkey submitted >=1 memory for this org") over inventing a new endpoint.
+
+**Why.** One physical writer prevents split-brain. Hub/chain remain the shared rendezvous for browser-side events, while the plugin owns the device-local state file.
+
+### D-PLUGIN-ONBOARDING-HOOK: opencode TUI onboarding + lazy identity + zero-config installer
+
+**Decision.** This behavior is locked as BUILT in `wevibe-mcp` (commits `6ceac5d..264a29f`):
+1. opencode 1.16 user-loadable TUI plugin (`~/.config/opencode/tui.json`) with first-run no-identity flow: `DialogConfirm` ("create identity now?") → Touch ID → `DialogAlert` congrats. Identity creation is step 1 only; rewards come only from joining an org + contributing on dashboard (never from identity creation/click).
+2. Session-count nudge: at `N >= 3` distinct sessions (24h cooldown), open `app.wevibe.network` to join/contribute (adopted-aware copy). Slash commands: `/wevibe-setup`, `/wevibe-connect`, `/wevibe-status`.
+3. Lazy identity boot: no biometric/keychain load at boot. Boot does only `initCrypto` + non-prompting existence check; membership sync + pre-pubkey registration defer to first use.
+4. Non-secret sidecar `~/.wevibe/identity.json` stores public keys + `createdAt`/`adoptedAt`/`extractedAt`/`lastPairingId` + per-org `orgs` map, enabling identity-state reporting and endpoint resolution with no biometric prompt.
+5. `wevibe-admin install-opencode` / `uninstall-opencode`: idempotent cross-OS installer that resolves config dir, copies the TUI plugin, merges `tui.json` plugin entry + `opencode.json` `mcp.wevibe` entry, preserves other keys, and refuses to clobber commented JSONC.
+6. Identity is seed-based (32-byte Ed25519 seed in OS keychain, biometric-gated on macOS) with BIP39 recovery/pairing; dashboard↔plugin reconcile to one pubkey via short pairing code (both directions) or phrase.
+
+**Why.** This gets a normie vibe-coder from zero to a self-custodial identity in seconds, then to dashboard join/contribute, with no crypto ceremony and no boot-time biometric surprises — aligned with `D-IDENTITY-PROGRESSIVE-CUSTODY` and with contribution accountability remaining leader-gated (`D-LEADER-SOLE-SIGNER`).
+
 ---
 
 *End of DECISIONS.md*

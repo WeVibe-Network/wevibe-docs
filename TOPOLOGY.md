@@ -697,6 +697,8 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 | x/reputation | x/reputation/keeper/ | proto/wevibe/reputation/v1/ | keeper | Contributor reputation |
 | x/serve | x/serve/keeper/ | proto/wevibe/serve/v1/ | keeper + integration | Serve attestations |
 
+- **Design-only (not yet built):** `x/org` `StoredOrg` gains `hub_endpoint` + leader-signed setter (`MsgSetServingInfo` extending `MsgSetServingKey`, or `MsgSetOrgConfig`); proto updates regenerate via Docker `make proto-gen` (never hand-edit `.pb.go`). Decision: `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
+
 ### Genesis Seeding & Epoch Hooks (Sprint 32 / CO-040)
 
 **module.HasGenesis wiring (CO-040, DECISIONS D-S32-HASGENESIS-CUSTOM-MODULES).**
@@ -872,17 +874,22 @@ e2e/
 
 **Language:** TypeScript
 **Purpose:** MCP client for AI agents to interact with WeVibe Network. Also serves an HTTP API on `127.0.0.1:4450` for the OpenCode plugin (CO-244).
+**Status (built + committed, `6ceac5d..264a29f`):** plugin onboarding + identity-sidecar/pairing/installer path landed (`D-SIDECAR-PLUGIN-OWNS-STATE`, `D-PLUGIN-ONBOARDING-HOOK`).
 
 ### `src/` — Main source
 
 ```
 src/
-├── server.ts              # MCP server entry point
+├── server.ts              # MCP server entry point; LAZY boot in main() (initCrypto + non-prompting existence check; membership sync + PRE-pubkey registration deferred to first use)
 ├── dashboard-server.ts    # Dashboard integration server
+├── config.ts              # Central URLs/ports/models
 ├── types.ts              # TypeScript types
 ├── session.ts            # Session management
 ├── crypto.ts            # Cryptographic utilities
+├── pair-crypto.ts        # Pairing v1 crypto (import/export, both directions)
 ├── auth.ts              # Authentication + PRE identity lifecycle (CO-222)
+├── identity-sidecar.ts   # Non-secret `~/.wevibe/identity.json`: public keys + createdAt/adoptedAt/extractedAt/lastPairingId + per-org `orgs` map keyed by chain `org_id`
+├── identity-runtime.ts   # Memoized `ensureIdentity()` runtime gate
 ├── contribution.ts      # Memory contribution flow
 ├── extraction.ts        # Content extraction (Pass 1: memory extraction, Pass 2: vocab-constrained keyword classification with new type exports — CO-236)
 ├── guard.ts             # Prompt injection detection
@@ -907,8 +914,12 @@ src/
 ├── trust-panel.ts       # Trust panel formatting for contributor stats
 ├── retrieve-cli.ts      # Importable module for PRE retrieval (query → decrypt → sanitize → artifact policy → trust panel). Exports `retrieve(input: RetrieveInput): Promise<Output>`. No CLI wrapper.
 ├── http-server.ts       # HTTP API server on 127.0.0.1:4450 (CO-244)
-└── admin.ts             # Admin operations (invite requires PRE pubkey + epoch SK)
+└── admin.ts             # Admin CLI: install-opencode/uninstall-opencode (idempotent cross-OS installer), identity-status, setup-identity --json, export-pairing
 ```
+
+- **Repo-root (NOT under `src/`):** `opencode-plugin/wevibe.tsx` — OpenCode 1.16 TUI onboarding plugin; canonical source, installed by `wevibe-admin install-opencode` to `~/.config/opencode/tui/wevibe.tsx` and registered in `~/.config/opencode/tui.json`.
+
+- **Built path runtime note:** no biometric prompt at process boot (LAZY boot), and PRE membership sync/registration are first-use deferred (`D-SIDECAR-PLUGIN-OWNS-STATE`, `D-PLUGIN-ONBOARDING-HOOK`).
 
 ### `wevibe_mcp/` — Python MCP implementation
 
@@ -1185,9 +1196,16 @@ post-mainnet extension.
     (not per-memory cards)
   - approved-memory (contribution) counts
   - org membership + roles
+  - **(design-only; not yet built)** org directory fields: `hub_endpoint`
+    (network URL) and `hub_serving_address` (serve/deny AUTH key) as distinct
+    values, with leader-signed setter path (`MsgSetServingInfo` extending
+    `MsgSetServingKey`, or `MsgSetOrgConfig`)
   - per-memory rarity tier (computed once at commit from keyword
     supply/demand, then frozen on-chain)
   - economic state
+- **Design-only (not yet built):** `hub_endpoint` proto/state changes use Docker
+  `make proto-gen` (no hand-edited `.pb.go`). Decision:
+  `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
 - Economics consumes **only** contribution counts + the network threshold;
   serve counts are never economic inputs.
 
@@ -1197,6 +1215,13 @@ post-mainnet extension.
 - This is the contract between chain and consumers (notably the social graph).
 - RPC exposes raw counts/inputs for rendering, including serve counts, rarity
   tier, contribution counts, and roles.
+- **Design-only (not yet built):** org-details query is the org directory:
+  consumers/plugins resolve `org_id → hub_endpoint` from chain RPC (no manual
+  hub URL configuration). Decision: `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
+- **Design-only (not yet built):** hubs sign responses with the serving key;
+  clients verify against on-chain `hub_serving_address`; signature contract is
+  published in `wevibe-protocol` so self-hostable hubs conform. Decision:
+  `D-HUB-RESPONSE-SIGNED`.
 
 ### Layer 3 — Social Graph (display client)
 
@@ -1247,6 +1272,12 @@ post-mainnet extension.
 ## Consumer Path (post-CO-260)
 
 **Canonical consumer chain (auth layers):**
+0. **Design-only (not yet built):** ONCE per session start (biometric-free),
+   `plugin` reads cached chain `org_id`s from sidecar, queries chain RPC org
+   details for each `hub_endpoint`, and updates local hub URL + per-org sidecar
+   entry if changed; consumer never configures a URL. Endpoint change emits a
+   one-time passive toast (`D-CHAIN-RESOLVED-HUB-ENDPOINT`,
+   `D-HUB-ENDPOINT-CHANGE-TOAST`).
 1. `plugin` calls local `wevibe-mcp` HTTP API using `Authorization: Bearer <token>` loaded from `~/.wevibe/mcp-session-token` (D-12.5a, CO-260).
 2. `wevibe-mcp` validates the Bearer token, performs canonicalization, and signs outbound hub requests with delegate auth (Option beta / D-12.5).
 3. `wevibe-mcp` calls `wevibe-hub` with WeVibe-Signed delegate authentication.
@@ -1263,6 +1294,10 @@ post-mainnet extension.
 - Plugin makes no direct `wevibe-hub` calls for consumer operations.
 - `wevibe-mcp` owns canonicalization + delegate signing (Option beta / D-12.5).
 - `wevibe-hub` API contract remains unchanged; only caller identity changed.
+- **Design-only (not yet built):** hub endpoint resolution + response-signature
+  verification are chain-resolved (`D-CHAIN-RESOLVED-HUB-ENDPOINT`,
+  `D-HUB-RESPONSE-SIGNED`) with one-time passive endpoint-change toast
+  (`D-HUB-ENDPOINT-CHANGE-TOAST`).
 
 **Cross-module references:**
 - `WeVibe/wevibe-mcp/docs/TOPOLOGY.md`

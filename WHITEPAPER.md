@@ -19,6 +19,7 @@ v2.3 rewrites the opening narrative around the alpha product and current archite
 3. **Org framing is corrected.** Orgs are domain-expert-run memory collections users join. The org is the container; the vibe coder is the protagonist.
 4. **Keyword posture is clarified.** Public plaintext keywords are discovery metadata, treated as a feature (not a privacy alarm).
 5. **Stale architecture claim fixed.** The prior "wevibe-hub eliminated" claim is removed. In alpha, the hub is live and part of the hosted coordination/accounting path alongside chain + local retrieval.
+6. **Zero-config transport + onboarding posture added.** The near-term chain-resolved hub model is now explicit (`hub_endpoint` transport from chain, distinct from `hub_serving_address` auth key; hub-response signing; endpoint-change passive toast; `org_id`-keyed sidecar updates — DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-RESPONSE-SIGNED`, `D-HUB-ENDPOINT-CHANGE-TOAST`, `D-SIDECAR-PLUGIN-OWNS-STATE`), alongside the already-built OpenCode onboarding/lazy-identity/installer/pairing flow (DECISIONS `D-PLUGIN-ONBOARDING-HOOK`).
 
 ---
 
@@ -633,7 +634,25 @@ Each coding agent gets its own plugin codebase:
 
 All plugins call the same local MCP server and the same wevibe-guard binary (`WEVIBE_GUARD_BIN`). Decryption is handled through the local Umbral sidecar; retrieval/search remains in hub APIs.
 
-**Status:** only the **OpenCode** plugin (`wevibe-opencode-plugin`) ships today. The Claude Code, Cursor, and Cline rows are target integrations — planned, not yet built.
+OpenCode 1.16+ ships a built first-run onboarding hook (DECISIONS.md `D-PLUGIN-ONBOARDING-HOOK`): `DialogConfirm` → Touch ID/passkey confirmation → completion screen. Identity creation is step one only; reputation/rewards come from joining orgs and contributing approved memories, never from identity creation itself.
+
+The OpenCode plugin exposes `/wevibe-setup`, `/wevibe-connect`, and `/wevibe-status`, and nudges the user to dashboard join/connect flow after three local sessions. Identity boot is lazy (no biometric prompt at plugin startup). Non-secret local identity state is plugin-owned and stored at `~/.wevibe/identity.json` (DECISIONS.md `D-SIDECAR-PLUGIN-OWNS-STATE`).
+
+Install/uninstall is zero-config via `wevibe-admin install-opencode` and `wevibe-admin uninstall-opencode`. The local keystore is seed-based with BIP39 recovery, and short-code pairing reconciles dashboard + plugin onto one contributor pubkey.
+
+**Status:** only the **OpenCode** plugin (`wevibe-opencode-plugin`) ships today, including the onboarding hook, lazy identity boot, sidecar state ownership, installer flow, and short-code pairing. The Claude Code, Cursor, and Cline rows are target integrations — planned, not yet built.
+
+### 4.8 Chain-Resolved Hub Endpoints (Zero-Config Transport)
+
+WeVibe keeps one canonical chain as network source of truth, with a public chain RPC as the single stable client anchor (default endpoint, env-overridable for operators). The chain is the org directory. Each org carries a leader-configurable `hub_endpoint` network URL for transport via a leader-signed on-chain setter, distinct from `hub_serving_address`, the Cosmos key that authorizes serve/deny and response authority. Transport and authorization are intentionally separated (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`).
+
+At session start, the plugin resolves per-org endpoint routing from chain RPC once (biometric-free, because org metadata is public), updates local config, and persists per-org sidecar state keyed by globally unique `org_id` so state remains stable across hub migration (DECISIONS `D-SIDECAR-PLUGIN-OWNS-STATE`). In this model, the consumer never hand-configures a hub URL.
+
+Hub transport remains untrusted: hub responses are signed by the org's on-chain serving key and verified by the plugin against `hub_serving_address` (DECISIONS `D-HUB-RESPONSE-SIGNED`). The response-signing contract lives in `wevibe-protocol` so hosted and self-hosted hubs conform to one verification path. If `hub_endpoint` changes, clients auto-switch silently and show a one-time passive toast (DECISIONS `D-HUB-ENDPOINT-CHANGE-TOAST`).
+
+Why this path: self-hosting remains a first-class leader right, but endpoint operations stay abstracted from end users. Resolving transport from the same chain source of truth preserves one path and avoids creating a second directory service every self-hosted hub would otherwise need to mirror and keep in sync.
+
+**Status (near-term locked design, not yet shipped):** chain-resolved endpoint routing + hub-response signing + endpoint-change toast are target architecture for upcoming alpha work; current clients still rely on manually configured hub URLs.
 
 ---
 
@@ -916,6 +935,8 @@ Defense layers: submission-time wevibe-guard (advisory), OCR sanitization, human
 ### 9.3 Leader Key Compromise
 K_master compromise exposes all epoch-derived content. Mitigation: offline recovery phrase, encrypted vault with Argon2id, threshold recovery.
 
+Separately, hub infrastructure is treated as untrusted transport, not a trust root: endpoint authority comes from leader-signed on-chain `hub_endpoint` updates on the canonical chain (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`), and client verification of hub-signed responses against on-chain `hub_serving_address` is the transport MITM defense (DECISIONS `D-HUB-RESPONSE-SIGNED`).
+
 ### 9.4 Chain State Observability
 On-chain data is public (encrypted blobs + plaintext metadata). An observer can see: org sizes, submission frequency, keyword distributions, serve patterns, contributor activity, reputation scores. They cannot see: memory content, decryption keys, member identities beyond pub keys, local blacklist state.
 
@@ -936,11 +957,14 @@ The system's security model is therefore not "prevent capture through internal g
 
 > Make capture economically unsustainable through transparent on-chain accountability, frictionless exit for members, and a public escalation primitive designed so that a captured org cannot suppress it.
 
-The three load-bearing properties:
+The four load-bearing properties:
 
 1. **The chain is the unforgeable audit log.** Every consequential action — memory commit, denial settlement, report acknowledgment, dispute publication, member departure — is a signed on-chain transaction. Neither the captured org nor WeVibe-the-protocol nor any platform operator can edit or suppress it after the fact.
 2. **Consumers are designed to have an escalation path the org cannot close.** The verification anchor that makes this possible (§5.4) ships today; the reporter-signed public escalation and its response window are the near-term accountability layer built on it. In the target model a dismissed (`clear_report`) or unaddressed on-chain report unlocks a reporter-signed public escalation — wallet-gated and gas-paid, revealing plaintext only after the one-week window elapses or the leader dismisses, anchored to the contributor-signed hash the leader cannot poison (§5.4) — and once published it cannot be edited or deleted. At launch the escalation broadcasts through a WeVibe-operated relay with a second WeVibe relay as the retry backstop; resistance to a captured *org-run* relay arrives when orgs can run their own relays, with the WeVibe relay as the fallback that bypasses a blocking org. Resistance that does not rely on WeVibe-operated infrastructure is a roadmap item.
 3. **Exit is unfakeable.** Members leaving voluntarily is a first-class on-chain event. Sybils can be invited and can file frivolous reports, but they cannot fake people walking away. The voluntary-departure-rate signal on public discovery (§7.1) lets prospective joiners read the most honest possible signal about whether existing members trust the org.
+4. **Hub compromise is a per-org degradation event, not network takeover.** Per-memory Umbral crypto and consumer-side `wevibe-guard` still gate plaintext/injection, and hub responses must verify against on-chain serving keys (`D-HUB-RESPONSE-SIGNED`). A compromised endpoint can at worst degrade or poison recall for that org; it cannot mint identities, steal contributor keys, or affect other orgs. The endpoint can be rotated on-chain by leader signature, with clients auto-switching and passively notifying once (`D-HUB-ENDPOINT-CHANGE-TOAST`).
+
+Worst case in this class is degraded/poisoned recall quality for one org, typically surfaced by guard/crypto checks and reversible by on-chain endpoint rotation.
 
 **The leader bears sole signature.** Co-attestation of moderator pubkeys on leader-signed chain transactions is explicitly removed (§5.3). A leader's chain commit binds the leader's wallet only. This concentrates responsibility on the actor who actually signs and prevents implicating moderators in chain-level decisions they did not directly authorize. The trade-off — moderator accountability for individual approvals becomes an org-local rather than chain-public concern — is acceptable because internal moderator vote history cannot defend against a capture scenario anyway, and because making leaders sole signatories sharpens the public attribution of every consequential action.
 
@@ -955,6 +979,8 @@ The three load-bearing properties:
 ### 10.1 Chain Architecture
 
 WeVibe's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a rollup — WeVibe requires deterministic finality (CometBFT provides this; rollups have multi-day challenge windows). The chain halts before it forks — safety-over-liveness is correct for memory attestation and storage.
+
+In the near-term org-directory model, chain org state also carries `hub_endpoint` transport URL (set through a leader-signed setter transaction), while `hub_serving_address` remains the serve/deny signing-authorization key; clients resolve transport from chain RPC rather than manual URL config (DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-RESPONSE-SIGNED`).
 
 ### 10.2 The Four Roles
 
@@ -1029,7 +1055,7 @@ Leaders earn no emissions, there is no per-serve royalty, and there is no protoc
 
 Seven custom Cosmos SDK modules:
 
-- `x/org` — slot registry + acquisition auction (ascending primary implemented; Dutch resale + self-assessed-value rent + forced-sale-in-window designed, not built), per-org module account, intended on-chain demand-leg router (membership payment → burn cut + remainder to leader; custody model open per §13), membership, serving-key feegrant, dormancy/abandonment detection (partial)
+- `x/org` — slot registry + acquisition auction (ascending primary implemented; Dutch resale + self-assessed-value rent + forced-sale-in-window designed, not built), per-org module account, intended on-chain demand-leg router (membership payment → burn cut + remainder to leader; custody model open per §13), membership, org-directory transport/auth fields (`hub_endpoint` transport URL via leader-signed setter tx, near-term design; `hub_serving_address` serving/signing authorization key), serving-key feegrant, dormancy/abandonment detection (partial)
 - `x/memory` — pending commitment storage (hash + metadata, no blob until approved), approved memory blob storage (encrypted ciphertext as chain state), Merkle root submissions per epoch, contributor-signed verification anchor (plaintext/salt/ciphertext hashes). (Pending-commitment auto-expiry and quarantine flagging are designed but not yet implemented.)
 - `x/serve` — batched serve attestation recording (per-org pseudonymous serve keys), deduplication (memory_cid + serve_key + epoch), self-serve detection/discounting, contributor cross-org serve count aggregation for social attribution (non-economic)
 - `x/reputation` — per-contributor cross-org aggregated stats (serve count, org breadth, domain tags, rep score, wallet age). Enhanced mode per-org when attestation enabled (difficulty histogram, XP, provenance breakdown).
