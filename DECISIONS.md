@@ -2651,6 +2651,8 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 
 ### D-ECON-CANON: Canonical VIBE Economy (Consolidation Lock)
 
+> **⚠️ OPEN — CUSTODY MODEL REOPENED (Walter, 2026-06).** This entry still describes leader revenue settling to an **org treasury** withdrawn via `MsgWithdrawTreasury`, but amendment 10 of `D-ECON-STORAGE-MARKET` already **removed** `Treasury`/`MsgWithdrawTreasury` (R-OVERHAUL), and the code has no withdrawal path. Walter's standing position: **WeVibe must be non-custodial** — it holds no user/org funds and needs only a burn-enforcing payment **router**; enforcement implies gating org subscriptions through that router, which conflicts with the hub currently managing subscriptions/payments. The custody question (non-custodial router-to-leader-wallet vs. network-held per-org account), the contributor-claim and leader-withdrawal mechanisms (wallet-link precondition + reentrancy + double-claim guards), and the hub-vs-chain ownership of subscriptions are **OPEN pending Walter resolution**. See WHITEPAPER §13 + §10.5. Do not treat the treasury/`MsgWithdrawTreasury` language below as binding until reconciled.
+
 **Decision:**
 - Contributor VIBE payout is CONTRIBUTION-ONLY: paid per APPROVED MEMORY, gated by a NETWORK-set qualification threshold (not org-set).
 - There is NO retrieval/serve-based contributor payout (anti-game).
