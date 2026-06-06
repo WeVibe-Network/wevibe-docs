@@ -198,7 +198,7 @@ All roles require epoch-specific encryption keys for content access. The leader 
 
 ### 2.3 Organization Lifecycle
 
-**Creation.** Org capacity is a scarce, capped set of registry-allocated **slots** (hard cap, governance-set: 32 alpha / 320 testnet / 3200 mainnet). The leader acquires a slot — by ascending-price primary while the cap fills, or by descending (Dutch) resale once a slot is freed — and signs `MsgRegisterOrg` from their **own wallet** (the hub never signs it); the acquisition payment is split 50/50 — half is burned and half capitalizes the org's own on-chain account (DECISIONS.md `D-ECON-STORAGE-MARKET` amendment 9). The `org_id` is the permanent slot identifier, independent of the leader (it survives leadership transfer/resale). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). See DECISIONS.md `D-ECON-STORAGE-MARKET` (decided; build in progress).
+**Creation.** Org capacity is a scarce, capped set of registry-allocated **slots** (hard cap, governance-set: 32 alpha / 320 testnet / 3200 mainnet). The leader acquires a slot — by ascending-price primary while the cap fills (descending (Dutch) resale of a freed slot is designed, not yet built — see §10.6) — and signs `MsgRegisterOrg` from their **own wallet** (the hub never signs it); the acquisition payment is split 50/50 — half is burned and half capitalizes the org's own on-chain account (DECISIONS.md `D-ECON-STORAGE-MARKET` amendment 9). The `org_id` is the permanent slot identifier, independent of the leader (it survives leadership transfer/resale). The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once (ADR-019). See DECISIONS.md `D-ECON-STORAGE-MARKET` (decided; build in progress).
 
 **First-run detection.** When the MCP plugin/server starts and discovers no org membership, it surfaces an actionable message to the agent, prompting guided setup.
 
@@ -889,7 +889,7 @@ Every validator replicates every memory. This is the storage guarantee — no se
 
 ### 8.2 Keyword Index (On-Chain Metadata)
 
-Plaintext keywords are stored alongside encrypted memories on-chain. This enables keyword-based filtering without decryption. The tradeoff (keyword visibility) is accepted — see Section 3.7.
+Plaintext per-memory keyword weights are stored alongside encrypted memories on-chain. This enables keyword-based filtering without decryption. The tradeoff (keyword visibility) is accepted — see Section 3.7. The org-level keyword *taxonomy* itself — the controlled vocabulary a leader manages (add / merge / rename / deprecate) — is a hub-side capability (hub database + dashboard), not chain state; the chain only carries each memory's keyword weights.
 
 ### 8.3 Semantic Vector Index (Hub Qdrant)
 
