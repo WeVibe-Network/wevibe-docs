@@ -2355,6 +2355,19 @@ max-of-two cache only approximated.
 
 ### D-S32-CO047-SUBSCRIPTION-CREDITS — Credits are a hub-internal subscription gate [SUPERSEDES the per-query deduction in D-3.1 / GAP-O6]
 
+> **⚠️ AMENDED (Walter, 2026-06-07) — ADMISSION IS DECOUPLED FROM CREDITS.** The clause below
+> ("A member is admitted by subscribing … `Subscribe` … debits `SubscriptionCost`") is **OVERRIDDEN**.
+> Member acceptance must NOT touch hub credits. **Accepting a member is an on-chain `MsgAddMember`
+> (leader-signed), gated solely by the org having VIBE to cover gas** (paid via the org-account
+> feegrant — see `D-S32-ORG-FEEGRANT-ALL`). Hub credits gate **recall only** (`membership_active`,
+> read at `retrieval.go`), never admission and never contribution (contribution is free + wallet-free
+> per `D-IDENTITY-PROGRESSIVE-CUSTODY` / `D-LEADER-SOLE-SIGNER`). Implemented: the `billing.Subscribe`
+> call + 402 was removed from `ApproveJoinRequest` and `InviteMember`; a freshly-admitted member is
+> `active=true, membership_active=false` (admitted, recall not yet enabled). `billing.Subscribe`
+> survives as the recall-activation primitive for a future explicit "enable recall" surface (NOT
+> bundled into admission). The "org pool seeded from `fee_model.monthly_credits`" provisioning remains
+> for the recall/demand-leg path. Map: `wevibe-meta/workspace/reports/gather-org-tx-key-gas-map.md`.
+
 **Decision:** Hub credits are an internal PostgreSQL accounting pool per org (`org_credits.balance`,
 hub-only, never on-chain). The org pool is seeded at creation from `fee_model.monthly_credits`
 (`ProvisionOrgLedger`, recorded as a `subscription_grant` txn) and topped up via `TopUp`. A member is
@@ -2372,6 +2385,53 @@ prepaid credit pool funds admissions. The old per-query deduction seeded balance
 `CHECK (balance >= 0)` on the first query — it was both the wrong model and a live defect (660
 constraint violations observed pre-fix). Gating on a boolean `membership_active` is the one-path
 expression of "subscribed or not." (Landed: CO-047.)
+
+---
+
+### D-S32-ORG-FEEGRANT-ALL — Org account is the gas payer for ALL org-purpose on-chain txs [REFINES D-ECON-STORAGE-MARKET amendments 10–11]
+
+**Decision (Walter, 2026-06-07):** The **org's on-chain account** (`org.AccountAddress`, capitalized by
+the 50% acquisition retain + top-ups) is the **single gas source for every org-purpose transaction**,
+via an on-chain **feegrant**. The **leader wallet signs** (authority) but never personally pays gas for
+org work. The **one gate is the org VIBE balance** — a dry org account ⇒ org-purpose txs fail ("org needs
+VIBE"). Realized by a `feegrant.AllowedMsgAllowance` granted org-account → leader-wallet at
+`RegisterOrg` (and re-granted to the new leader on `TransferLeadership`), **scoped to the leader's
+org-purpose msg type URLs** so org funds cannot pay for the leader's unrelated personal txs:
+`x/org` MsgAddMember/RemoveMember/UpdateMemberRole/SetOrgConfig/SetServingKey/SetServingInfo/
+RotateEpoch/TransferLeadership/CloseOrg/GrantTrialAllowance + `x/memory`
+SubmitCommitment/ApproveMemory/ReportMemory. The dashboard sets `Fee.Granter = org account` on
+`directBroadcast`. This mirrors the pre-existing serving-key feegrant (org account → `HubServingAddress`,
+scoped to serve/deny batches).
+
+**Boundaries:**
+- **`MsgRegisterOrg` is the sole leader-personal cost** — there is no org account yet at creation; the
+  leader's wallet pays the acquisition (50% burn / 50% → new org account) + that tx's gas. This is the
+  leader's slot bond / skin-in-the-game.
+- **Personal economic txs stay on the user's own wallet:** `MsgClaimContributorReward` and
+  `MsgMigrateIdentity` are individual actions, NOT org operations — org funds do not cover them.
+- **The three keys, delineated:** *leader wallet* (secp256k1) = authority/signer for org-auxiliary +
+  adjudication + contribution-commit; *serving key* (secp256k1, `HubServingAddress`) = serve/deny batch
+  signer (org-account feegrant); *handshake key* (ed25519, `hub_response_pubkey`) = HTTP response signing
+  (`X-Hub-Signature`), off-chain, no gas, no chain identity.
+
+**Why:** Keeps the leader's economic burden on the *slot* (acquisition + self-assessed-value rent +
+forfeiture), not on per-action gas — a leader running a busy org shouldn't bleed personal VIBE per
+member add / approval. Concentrating org gas on the org account makes "org VIBE balance" the single,
+legible solvency gate and keeps key responsibilities clean (the recurring maintenance-nightmare risk
+is muddy signer/payer coupling). Scoped allowance prevents the org account from being drained for
+non-org txs. Full inventory + rationale: `wevibe-meta/workspace/reports/gather-org-tx-key-gas-map.md`.
+
+**Implemented (not yet committed):** chain `grantLeaderFeegrant` (`x/org/keeper/serving_feegrant.go`,
+called in `RegisterOrg`/`TransferLeadership`); dashboard `directBroadcast(…, feeGranter?)` +
+`getOrgAccountAddress`; approve flow pays via org account. **Follow-ups:** (1) sweep the remaining
+dashboard org-tx callers (member remove, role update, approve memory, report, config, serving, epoch)
+to pass the org-account granter; (2) leadership-transfer does NOT revoke the old leader's allowance
+(SDK feegrant keeper exposes no public revoke) — inert because every org msg gates on
+`signer == current LeaderWalletAddress` and the allowance is msg-scoped, so a former leader can neither
+pass auth nor use it for non-org txs; (3) a future explicit "enable recall" surface to set
+`membership_active` (decoupled from admission). **Open inconsistency to unify:** two leader-auth
+patterns coexist — address-check (`signer == LeaderWalletAddress`) vs role-check (`IsLeader`) — across
+different x/org messages; they can diverge and should be unified.
 
 ---
 

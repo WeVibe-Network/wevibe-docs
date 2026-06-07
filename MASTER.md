@@ -1187,7 +1187,7 @@ Open gaps only. Resolved gaps have been removed (history lives in implementation
 **Participant:** Leader (victim), all orgs
 **Milestone:** ALPHA (pre-mainnet blocker)
 **Severity:** CRITICAL
-**Status:** OPEN (found 2026-06-01 by direct chain read)
+**Status:** RESOLVED IN CODE — verify (re-confirmed 2026-06-07 by direct chain read). `MsgAddMember` now enforces `msg.Signer == org.LeaderWalletAddress` (`x/org/keeper/msg_server.go:69`, → `ErrNotLeader`) and rejects `Role == "leader"` (msg_server.go:73). The unauthenticated-takeover path described below is closed. **Residual to address separately:** (a) no single-leader keeper invariant; (b) a leader-auth *inconsistency* — some org msgs use the address check (`signer == LeaderWalletAddress`: AddMember/RemoveMember/RotateEpoch/SetServingKey/SetServingInfo) while others use the role check (`IsLeader`: SetOrgConfig/UpdateMemberRole/TransferLeadership/CloseOrg/GrantTrialAllowance); these can diverge and should be unified. See `wevibe-meta/workspace/reports/gather-org-tx-key-gas-map.md`.
 
 `MsgAddMember` has **no authorization check whatsoever**, allowing any account to add itself as a `leader` of any existing org and then exercise every leader-gated operation.
 
@@ -1882,11 +1882,11 @@ The sim baseline is the QS3b combined model (D-4.2 Earned Trust + D-9.4 probabil
 
 | Severity | Open Count | Items |
 |----------|------------|-------|
-| CRITICAL | 1 | GAP-SEC-1 (unauthorized `x/org` AddMember → org takeover + treasury drain) |
+| CRITICAL | 0 | (GAP-SEC-1 RESOLVED IN CODE 2026-06-07 — `MsgAddMember` now gates on `signer == LeaderWalletAddress` + rejects role "leader"; verify) |
 | MAJOR | 5 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-SEC-2 (emissions DistributeOperatorRewards missing authority check), GAP-SEC-3 (no on-chain emergency brake / x/circuit not wired), GAP-TIER2-EXPOSE (reporter-signed Tier 2 expose loop + chain timer not built) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
 | MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **11** | |
+| **Total OPEN** | **10** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---
