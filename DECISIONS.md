@@ -2790,12 +2790,13 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 
 **Why.** A single-hub store is a single point of storage custody and censorship for the very data the whitepaper promises no one can suppress. Decentralizing it closes that gap — but it is large, post-MVP, and best satisfied by integration, not a from-scratch build.
 
-### D-REPUTATION-KEYED-BY-PUBKEY: Reputation is keyed by the passkey pubkey until a deliberate, dual-signed migration
+### D-REPUTATION-KEYED-BY-PUBKEY: Reputation AND earnings are keyed by the passkey pubkey until a deliberate, dual-signed migration
 
-**Decision (DESIGN-LOCKED — NOT yet built).** A contributor's reputation/XP is keyed by their **passkey Ed25519 pubkey**, not by a wallet, and stays that way until the user performs a deliberate migration (`D-MIGRATION-ONCHAIN-ALIAS`). Connecting a wallet does **not**, by itself, move or re-key any reputation. Consequences:
+**Decision (DESIGN-LOCKED — NOT yet built).** A contributor's reputation/XP **and earnings** are keyed by their **passkey Ed25519 pubkey**, not by a wallet, and stay that way until the user performs a deliberate migration (`D-MIGRATION-ONCHAIN-ALIAS`). Connecting a wallet does **not**, by itself, move or re-key any reputation. Consequences:
 - **Memory-contribution XP is already keyed by the passkey pubkey on-chain** (`x/memory ApproveMemory → reputationKeeper.IncrementContribution(contributor)`), so wallet-free contributors already earn and display contribution reputation on My Org today.
 - **Serve XP MUST also key by the passkey pubkey.** The current `x/serve` path keys serve XP by `ContributorAddress` (the wallet) and SKIPS it when no wallet is linked, so wallet-free users earn no serve XP — a bug against the wallet-free invariant. The fix keys serve XP by the passkey pubkey (no proto change).
 - **The hub `retrieval/stats.go GetContributorStats` MUST NOT silently prefer a linked wallet address over the pubkey.** Preferring the wallet strands pubkey-earned reputation the instant a user links a wallet; the stats path becomes **alias-aware** (resolve via the migration alias) instead of wallet-preferring.
+- **Earnings accrue on-chain to the passkey identity too — not just XP.** `x/emissions` currently credits the wallet (`contributor_address`); it must credit the passkey `contributor_id` recorded on the committed memory (the memory already records both). **Pre-migration earnings are a claim-later accrual record keyed by the pubkey, NOT spendable coins** (a passkey pubkey is not a funded cosmos account); they become withdrawable only after migration (`D-MIGRATION-ONCHAIN-ALIAS`). This folds the contributor withdrawal-claim path (SEC-FLAG-4 / GAP-ECON-BUILD).
 
 **Why.** Identity is the passkey (`D-IDENTITY-PROGRESSIVE-CUSTODY`); a wallet is an optional earnings/authority upgrade, not identity. Reputation is the soft stake (`D-SYBIL-MEMBERSHIP-GATED`) and must accrue from the moment of contribution, with no wallet, and must never silently vanish when a wallet is later linked.
 
@@ -2808,6 +2809,11 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 - **Flag name = `is_migrated`** (on-chain): `false` before migration, `true` after.
 - **Append-only.** Pre-migration history keyed to the pubkey is preserved and resolved via the alias after migration (the chain is append-only; nothing is rewritten). Social-graph reputation reads stay keyed by pubkey and resolve via the alias once `is_migrated=true`.
 - There is **no migration flag or ed25519→wallet mapping on chain today** — this is entirely unbuilt. The prior belief that a `migration_completed` flag already existed on chain was false.
+- **`is_migrated` unlocks WITHDRAWAL; link ≠ migrate.** Linking a wallet only puts it on file (authority/bond). Migration is the separate, deliberate, dual-signed act that unlocks withdrawal of the accrued passkey-keyed earnings to the wallet and flips the UI to wallet-only. A user may link a wallet (e.g. to lead) WITHOUT migrating their contributor identity — so the linked-but-not-migrated state is real (see `D-IDENTITY-UI-STATE-MACHINE`).
+- **Wallet-immediately users auto-migrate.** A user who connects a wallet before ever using the passkey identity has zero accrued passkey history, so the memory-contribution gate is vacuous (nothing to steal, nothing to move) and migration auto-completes at link time — they never see the dual-render state. The passkey identity is still minted (there is NO second "wallet-as-identity" path — that would fork the model).
+- **No hub-DB authority for the non-migrated state.** The non-migrated render state is served from the CHAIN keyed by the passkey pubkey; the hub MAY cache it for render speed but is never the source of truth. The earlier "maybe a hub-DB component" idea is explicitly rejected — once earnings are on-chain it buys nothing and reintroduces a gaming surface + a chain↔DB drift bug class.
+- **Earnings-secured nudge.** Because real economic value now accrues to a passkey identity, a lost passkey with no backup loses unclaimed earnings. The earnings UI surfaces a "secure your earnings" prompt (BIP39 break-glass / link a wallet) once a non-trivial balance accrues — gated on having something to lose, so zero-friction is preserved otherwise.
+- **Dual-sign construction.** The alias tx MUST bind both keys: each signs a message containing the OTHER's pubkey + a nonce, atomic in one tx, to prevent replay/splice attacks.
 
 **Why.** Reputation must be portable onto the canonical wallet authority when a user upgrades, but only through an explicit, cryptographically anchored act. Dual-signing + memory-contribution gating make rep theft impossible; keeping the alias on-chain keeps the social data on its source of truth and out of a gameable hub table.
 
@@ -2817,6 +2823,7 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 - A **non-migrated passkey account WITH a wallet connected is its own state** → **DUAL-RENDER**: show the passkey-keyed reputation AND the wallet together. (The user linked a wallet for earnings but has not migrated their reputation onto it.)
 - Once `is_migrated = true` → render **ONLY the wallet identity** (reputation now resolves to the wallet via the alias).
 - A pre-wallet "dual chain+DB" rendering is NOT needed: reputation is already on-chain by pubkey, so it is chain-only — pubkey-keyed before migration, wallet-keyed (via alias) after.
+- **All three states are served from the chain** (keyed by passkey pubkey pre-migration; resolved to the wallet via the alias post-migration). The hub may cache for render speed but is not authoritative — there is no hub-DB identity/earnings store (`D-MIGRATION-ONCHAIN-ALIAS`).
 
 **Why.** The link-but-not-migrated window is a real, distinct user state that the old binary wallet/no-wallet view-state machine (`D-FE-VIEW-STATE`) cannot express; rendering it explicitly prevents both stranded-rep confusion and premature wallet-only display.
 
