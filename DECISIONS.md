@@ -3028,6 +3028,79 @@ Resolution path is one-way and biometric-free: chain → RPC → plugin org quer
 
 **Why.** This gets a normie vibe-coder from zero to a self-custodial identity in seconds, then to dashboard join/contribute, with no crypto ceremony and no boot-time biometric surprises — aligned with `D-IDENTITY-PROGRESSIVE-CUSTODY` and with contribution accountability remaining leader-gated (`D-LEADER-SOLE-SIGNER`).
 
+## 21. Memory-Extraction Scope: Object Shape, On-Chain Extraction Profile, Preference & Derivation (Sprint-alpha-final — Walter-locked 2026-06-07)
+
+> Locked via Walter design dialogue + a 4-repo build (chain/hub/mcp/dashboard), R-29-verified, UNCOMMITTED at
+> time of writing. Reports: `wevibe-meta/workspace/reports/{impl-chain-extraction-profile, impl-mcp-extraction-implement-dnd, impl-hub-preference-carry, impl-dash-memory-object-preference, impl-dash-extraction-profile-editor}.txt`
+> and the design + gap docs `design-extraction-prompt-primitive.md` / `gather-memory-extract-gap-surface.md`.
+
+### D-MEMORY-OBJECT-IMPLEMENT-DND: The extraction memory object is implement/dnd (closes the insight/avoid drift)
+
+**Decision.** The contributor extraction object is locked to the D-5.1 schema: `implement` (REQUIRED — what TO do
+and how), `dnd` (nullable — what NOT to do and why), `context`, `stack`, `preference_confidence`, plus an
+engine-stamped `extraction_hash`. The legacy `insight`/`avoid` field names are renamed end-to-end (MCP
+`extraction.ts`, dashboard `session-types.ts` + `sessions/page.tsx` + `/api/extract` validation). The do/do-not
+signal is the **`dnd` field's presence** (not a memory type — `memory_type` is already single-valued
+`MEMORY_TYPE_MEMORY` everywhere, so D-S32-CO048's chain-enum collapse was already complete; only the field rename
++ field-level filter remained). **Why:** the as-built extraction violated the already-locked D-5.1 / D-S32-CO048;
+this is the gating fix to "produce the correct memory object."
+
+### D-EXTRACTION-PROFILE-ONCHAIN: The org's extraction profile lives fully on-chain; the contributor imports it at extract time
+
+**Decision (Walter FORK B + C, "full chain", "on chain now").** Each org carries a leader-configurable
+**Extraction Profile** as on-chain state (`x/org` `StoredExtractionProfile { org_id, profile_version,
+extraction_model, num_ctx, system_prompt, output_schema, domain_framing, exemplars[], constraints,
+updated_at_height }`), set by a leader-signed `MsgSetExtractionProfile` (auth `signer == LeaderWalletAddress`,
+mirroring `MsgSetServingInfo`; keeper bumps `profile_version`), and read over REST at
+`/wevibe/org/v1/extraction-profile/{org_id}` (auto gRPC-gateway). The FULL profile — including exemplars — is
+on-chain, **size-capped in ValidateBasic** (system_prompt ≤ 8192 B, output_schema ≤ 4096, domain_framing ≤ 1024,
+constraints ≤ 4096, extraction_model ≤ 256, ≤ 5 exemplars each ≤ 4096, num_ctx ≤ 131072, **total string bytes ≤
+16384**, `ErrExtractionProfileTooLarge`). Genesis default = empty.
+- **Resolution path (FORK C): chain is SoT, read directly.** The dashboard `/api/extract` fetches the active org's
+  profile from chain REST and forwards `system_prompt`→`prompt`, `num_ctx`, `extraction_model`→`model` to the
+  MCP `/v1/extract` (which now accepts `prompt`/`num_ctx` alongside `model`/`ollama_url`). The hub stores NOTHING
+  for the profile (mirrors D-CHAIN-RESOLVED-HUB-ENDPOINT, one-path). On no-profile/fetch-failure the MCP falls
+  back to its `DEFAULT_EXTRACTION_PROMPT` (the shipped sane default; env `WEVIBE_EXTRACTION_PROMPT` is the only
+  other fallback).
+- **Leader editor** lives in dashboard Settings (leader-gated), broadcasting `MsgSetExtractionProfile` via
+  `directBroadcast` with the org-account feegrant (the msg URL is on the leader feegrant allowlist), with
+  client-side cap validation mirroring the chain.
+
+**Why.** The extraction prompt is the highest-leverage, WeVibe-controllable lever on recall efficacy
+(D-EXTRACTION-MODEL-STANDARD "the controllable half"): it shapes the embedding, the moderation keyword pass, and
+therefore whether a memory ever earns Earned Trust (D-4.2) instead of idle-decaying. Putting it on-chain makes the
+org's stated quality bar the tamper-evident, forkable source of truth a contributor imports and an auditor can
+verify (attestation pillar).
+
+### D-PREFERENCE-QUALITY-SCORE-CARRIED: preference_confidence is a carried quality-guidance score (hub-side), surfaced before chain commit [extends D-5.2]
+
+**Decision (Walter FORK A).** `preference_confidence` (0.0 factual … 1.0 pure opinion) is upgraded from a dead
+extraction-only flag to a **quality-guidance score that renders low-quality memory** and is **carried forward**:
+MCP extraction → dashboard review card (a "likely/possible preference · low quality" badge guides the contributor)
+→ submit payload → hub `pending_submissions.preference_confidence` → returned in the chain-submit listing →
+surfaced to the leader at chain-submit (the threshold UI >0.8/>0.5 already existed and is now fed) **to guide how
+memories are committed.** It is **HUB-SIDE ONLY** — NOT on-chain, NOT in the signed canonical body, NOT in
+`MsgApproveMemory`. It is a pre-chain decision aid (advisory), not a verification anchor. **Why.** High preference
+= subjective/low-quality; the leader (sole signer, D-LEADER-SOLE-SIGNER) should see it before committing. As an
+advisory aid it does not belong on the immutable signed record.
+
+### D-DERIVATION-FLAG: verbatim | edited-after-extraction, computed client-side, carried hub-side [implements D-EXTRACTION-MODEL-STANDARD §3]
+
+**Decision (Walter FORK D).** Each memory carries `derivation ∈ {verbatim, edited-after-extraction}` =
+`H(extraction_output)` vs `H(submitted)`. The MCP stamps each candidate with `extraction_hash` =
+`sha256(JSON.stringify({implement,context,dnd,stack}` with sorted keys, stack order preserved`))`; the dashboard
+recomputes the byte-identical hash (Web Crypto, same construction) at submit and sets `derivation`. It is carried
+HUB-SIDE (`pending_submissions.derivation`, returned in the chain-submit listing) and shown to the leader as an
+"edited after extraction" badge — so a hand-edited memory is never dressed as fully model-derived. NOT on-chain,
+NOT signed. **Why.** Completes the attestation half alongside the on-chain profile + pinned extraction model; cheap
+(hash compare) and honest about provenance.
+
+**Cross-references.** D-5.1 (memory schema), D-5.2 (preference flag, now a carried score), D-5.6 (extraction unified
+via MCP), D-EXTRACTION-MODEL-STANDARD (pin model + derivation), D-S32-CO048-MEMORY-TYPE-IMPL (single type — chain
+collapse already done), D-CHAIN-RESOLVED-HUB-ENDPOINT (chain-as-directory pattern reused for the profile),
+D-S32-ORG-FEEGRANT-ALL (the new MsgSetExtractionProfile rides the org-account feegrant). Pre-MVP wipe per D-13.9
+covers the new chain field + hub columns.
+
 ---
 
 *End of DECISIONS.md*
