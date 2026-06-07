@@ -674,7 +674,7 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 
 ### Custom Modules (7)
 
-> **FORWARD NOTE (Sprint 32, storage-market overhaul — DECISIONS.md `D-ECON-STORAGE-MARKET`, brief `wevibe-meta/workspace/reports/design-storage-market-economy.md`):** the file:line details below reflect CURRENT (pre-overhaul) code. Incoming changes: `x/org` → slot registry + acquisition auction + self-assessed-V rent + demand-leg router (replaces `DeriveOrgID`/`DynamicPrice`); `x/memory` → per-memory storage deposit + keeper-prune + report-state transition; `x/emissions` → removal of the org-treasury payout subsystem + WorkScore/operator machinery; `x/bandwidth` memory-cap wired as the testnet DDoS guard (deleted at mainnet); `x/attestation` neutered (disabled-but-wired). This section is updated as those land.
+> **FORWARD NOTE (Sprint 32, storage-market overhaul — DECISIONS.md `D-ECON-STORAGE-MARKET`, brief `wevibe-meta/workspace/reports/design-storage-market-economy.md`):** landed: `x/org` slot registry + ascending-price acquisition auction; `x/emissions` org-treasury payout subsystem removed (Treasury/`MsgWithdrawTreasury` removed); `x/attestation` neutered (disabled-but-wired); `x/bandwidth` memory-cap wired as the testnet DDoS guard. Remaining unbuilt: on-chain demand-leg router; self-assessed-value (Harberger) rent + forced-sale-in-window; Dutch resale of freed slots; full per-memory storage-deposit activation (parameterized ~0 on testnet).
 
 | Module | Keeper Path | Proto Path | Tests | Purpose |
 |--------|------------|-----------|-------|---------|
@@ -1237,12 +1237,14 @@ post-mainnet extension.
 - Emissions payout path: validators/stakers.
 - Org-creation burn is a sink.
 - Leader revenue path: org demand leg — members pay the org in VIBE for recall
-  access (hub-accounted, **model & price set by the leader**, market-driven),
-  settling to the org treasury; a **small protocol burn** is taken on
-  subscription revenue at settlement (the loop's deflationary sink), remainder
-  to the leader (`MsgWithdrawTreasury`). Moderator pay is leader-discretionary
-  from treasury. Decided, not yet built. See `DECISIONS.md`
-  `D-ECON-CANON`.
+  access (**model & price set by the leader**, market-driven); settlement runs
+  through an on-chain demand-leg router that enforces a protocol burn
+  `max(n%, floor)` (the loop's deflationary sink); the remainder's destination
+  (non-custodial leader wallet vs network-held per-org account) is an open
+  custody question. The prior Treasury/`MsgWithdrawTreasury` model is removed
+  and no withdrawal path is built. Moderator pay is leader-discretionary from
+  that (open) revenue path. Decided, not yet built. See `DECISIONS.md`
+  `D-ECON-CANON` / `D-ECON-STORAGE-MARKET`.
 - Serve counts are deliberately excluded from economics (anti-game).
 - Decision locks: `DECISIONS.md` `D-ECON-CANON` and
   `D-S32-TOKENOMICS-LOCKED`.

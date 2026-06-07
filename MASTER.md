@@ -251,7 +251,6 @@ The leader's batch pipeline is their primary operational activity. The dashboard
 
 **Why scores sum to 1.0:** Keyword weights form a probability distribution. A weight of 0.25 means "25% of retrieval relevance signal comes from this keyword." Sum-to-1.0 normalization ensures the distribution is interpretable and comparable across memories (see DECISIONS.md D-5.4).
 
---------------------------------(WALTER STOPPED HERE)------------------------------------
 
 ### UX Flow: Org Configuration
 
@@ -400,14 +399,13 @@ Contributors extract technical insights from their coding sessions and submit th
 5. Clicks "Extract Memories"
    → Loading spinner: "Please wait while your session is being analyzed"
    → Dashboard server-side route (/api/extract) calls local LLM via wevibe-mcp proxy
-   → LLM: Ollama (default qwen2.5:14b at localhost:11434) 
+   → LLM: Ollama (default qwen3:4b at localhost:11434) 
      or OpenRouter (user's API key)
 6. Results: "Your session produced 7 memories!"
 7. Each memory shown as a card:
    ☑ Checkbox for selection
-- Insight text (the core learning, 1-2 specific sentences)
-    - Context (environment, versions, conditions)
-    - Implement field (what TO do and how — required, describes the correct pattern)
+   - Implement field (what TO do and how — required; the core learning, 1-2 specific sentences)
+   - Context (environment, versions, conditions)
     - DND field (do-not-do — what NOT to do and why, can be null)
     - Tech stack tags (auto-detected)
     - Preference confidence flag (if elevated)
@@ -549,12 +547,12 @@ Consumers are developers whose coding sessions are enhanced by team memories. Th
 6. wevibe-mcp:
     a. For each memory: calls sidecar decrypt-reencrypted
        (capsule + cfrag + ciphertext + receiving_sk + delegating_pk) → plaintext
-    b. Applies risk appetite filter at the field level: if set to `lowest`, keeps only memories with a non-null `dnd` field (DNDs only); if `neutral`, keeps all memories (implement + DND)
+    b. Applies the content filter at the field level: [DNDs only] keeps only memories with a non-null `dnd` field; [Implementations + DNDs] keeps all.
     c. Checks local blacklist — skips any previously denied memories
     d. Runs wevibe-guard security scan on plaintext
     e. Flagged memories → redacted, not injected
     f. Clean memories returned to plugin
-7. Plugin shows developer approval UI with current risk appetite setting visible (e.g., "WeVibe (risk: lowest) found 2 memories..."):
+7. Plugin shows developer approval UI with current content filter setting visible (e.g., "WeVibe (DNDs only) found 2 memories..."):
    "WeVibe found 3 memories relevant to your current task:"
    [Memory 1 preview] ☑
    [Memory 2 preview] ☑
@@ -697,24 +695,27 @@ When the plugin fails to start or loses connection, a fallback chain activates:
 | Hub | `POST /v1/orgs/{orgID}/reports/{reportID}/commit` | Leader chain commitment (wallet-signed) |
 | Chain | `MsgSubmitServeBatch`, `MsgSubmitDenialBatch`, `MsgReportMemory` | Batch attestations (via hub relay) |
 | wevibe-guard | Scan API | Recall-time security scanning |
-| wevibe-mcp | `wevibe_set_risk_appetite` tool | Read/write current risk appetite (`lowest` = DND-only filter, `neutral` = all memories) |
-| Local | `~/.wevibe/plugin-config.json` | Risk appetite persistence (shared by wevibe-mcp and plugin) |
+| wevibe-mcp | `wevibe_set_risk_appetite` tool | Read/write consumer content filter (tool name is legacy until D-11.5 rename ships: `lowest` = [DNDs only], `neutral` = [Implementations + DNDs]) |
+| Local | `~/.wevibe/plugin-config.json` | Consumer settings persistence (content filter + injection gate) |
 
-### UX Flow: Risk Appetite Configuration
+### UX Flow: Consumer Settings Configuration
 
 ```
-Two ways to change the consumer risk appetite setting:
+Two ways to change consumer settings:
 
 1. Direct file edit:
-   → ~/.wevibe/plugin-config.json → set { "risk_appetite": "lowest" | "neutral" }
+   → ~/.wevibe/plugin-config.json → set content filter + injection gate settings
+     { "risk_appetite": "lowest" | "neutral", "allow_unreviewed": false | true }
 
 2. Conversational (via agent):
-   → User asks: "Set risk appetite to lowest"
+   → User asks: "Set WeVibe to DNDs only with gated approval"
    → Agent calls wevibe_set_risk_appetite MCP tool
+   → Agent also toggles the injection gate setting ([Gated approval] / [No gated approval])
    → Setting persisted to ~/.wevibe/plugin-config.json
 
-Default: "neutral" (all memories surfaced: implement + dnd)
-When "lowest": only memories with a non-null `dnd` field are shown in approval UI
+2x2 matrix:
+- Content Filter: [DNDs only] (only non-null `dnd`) OR [Implementations + DNDs] (all memories)
+- Injection Gate: [Gated approval] (default) OR [No gated approval]
 
 ---
 
@@ -1189,67 +1190,9 @@ Open gaps only. Resolved gaps have been removed (history lives in implementation
 **Severity:** CRITICAL
 **Status:** RESOLVED IN CODE — verify (re-confirmed 2026-06-07 by direct chain read). `MsgAddMember` now enforces `msg.Signer == org.LeaderWalletAddress` (`x/org/keeper/msg_server.go:69`, → `ErrNotLeader`) and rejects `Role == "leader"` (msg_server.go:73). The unauthenticated-takeover path described below is closed. **Residual to address separately:** (a) no single-leader keeper invariant; (b) a leader-auth *inconsistency* — some org msgs use the address check (`signer == LeaderWalletAddress`: AddMember/RemoveMember/RotateEpoch/SetServingKey/SetServingInfo) while others use the role check (`IsLeader`: SetOrgConfig/UpdateMemberRole/TransferLeadership/CloseOrg/GrantTrialAllowance); these can diverge and should be unified. See `wevibe-meta/workspace/reports/gather-org-tx-key-gas-map.md`.
 
-`MsgAddMember` has **no authorization check whatsoever**, allowing any account to add itself as a `leader` of any existing org and then exercise every leader-gated operation.
-
-**Mechanism:**
-- The handler `x/org/keeper/msg_server.go:45` (`AddMember`) calls `keeper.AddMember` **without passing the signer**.
-- The keeper `x/org/keeper/keeper.go:257` (`AddMember`) only checks for a duplicate member key — there is no leader/admin/moderator gate.
-- `MsgAddMember.ValidateBasic` (`x/org/types/msgs.go:34`) requires `Role` to be non-empty but **does not restrict its value** (any string, including `"leader"`, is accepted).
-- Authorization for privileged org operations is `IsLeader` (`x/org/keeper/keeper.go:356`), which simply returns `member.Role == "leader"`. There is no single-leader invariant — an org can hold multiple `leader` members.
-
-**Exploit:** any account submits `MsgAddMember{OrgId: <victim>, Pubkey: <attacker_addr>, Role: "leader"}`, becoming a co-leader of the victim org. It then passes the `IsLeader` gate on:
-- `WithdrawTreasury` (`msg_server.go:143`) → **drains the org treasury** to any recipient,
-- `SetServingKey` → hijacks serve/denial batch submission authority,
-- `SetRepTiers`, `SetOrgConfig`, `TransferLeadership`, `CloseOrg`, `GrantTrialAllowance`.
-
-The legitimate leader is not notified, since a second `leader` member is added silently.
-
-**Containment:** the escalation does **not** grant the org's registered leader-wallet authority (`GetLeaderWallet`), so it cannot forge memory commitments/approvals — `x/memory` `requireLeaderWallet` (`x/memory/keeper/msg_server.go:33`) still rejects it. But treasury, serving-key, config, and leadership operations are all reachable.
-
-**Impact:** direct fund theft (treasury drain) and full administrative takeover of any org by an unauthenticated third party. There is no on-chain rollback or clawback to recover stolen funds (see Cross-Cutting: Chain Incident Response & Rollback Posture).
-
-**Resolution requires:**
-- Gate `AddMember` on an authorized signer (org leader, or leader+moderator per the org's policy) — verified against the authenticated `msg.Signer`, mirroring `x/memory`'s `requireLeaderWallet` / `x/serve`'s `requireServingKeySigner` pattern.
-- Restrict the set of assignable roles in `MsgAddMember.ValidateBasic` (reject `leader`; leadership transfer must go through `TransferLeadership`).
-- Enforce a single-leader invariant in the keeper (reject adding a second `leader`).
-- Add chain integration tests: non-leader `AddMember` is rejected; `AddMember` cannot set role `leader`; treasury cannot be drained via an injected leader.
-
-### GAP-T2: Migration System Required Before Public Testnet
-
-**Participant:** Self-hosted hub operators, external testnet users
-**Status:** CLOSED by CO-267 (Sprint 27)
-
-**Resolution:** golang-migrate integrated into hub startup. Migrations at `wevibe-server/db/migrations/` (000001_initial_schema.up/down.sql, 000002_notification_preferences.up/down.sql). Hub startup runs migrations before VerifyConnection. db/README.md documents operator usage. Schema reference copy preserved in schema.sql header. See CO-267 implementation report.
-
-**Update (DESIGN-LOCKED):** the identity→wallet reputation portion of this migration is now specified as an on-chain, dual-signed `is_migrated` alias gated by memory contribution — see DECISIONS.md `D-MIGRATION-ONCHAIN-ALIAS` / `D-REPUTATION-KEYED-BY-PUBKEY` (design-locked, build pending).
-
-### GAP-T3: wevibe-mcp Containerization
-
-**Participant:** Consumer (self-hosted operators)
-**Status:** CLOSED by CO-267 (Sprint 27)
-
-wevibe-mcp now runs as a Docker service (`wevibe-mcp`) in `wevibe-server/docker-compose.yml`. Native blockers were removed:
-- `keytar` replaced by file-backed keystore (`${WEVIBE_KEYSTORE_PATH}/keys.json`)
-- local native embedding runtime replaced by Ollama HTTP embeddings (`${OLLAMA_HOST}/api/embeddings`)
-- native `argon2` replaced by pure-JS `@noble/hashes/argon2`
-
-The host exception list now only includes Ollama (D-13.10). See CO-267 implementation report.
-
-### GAP-C1: OpenCode Plugin Uses Subprocess Interface
-
-**Participant:** Consumer
-**Status:** CLOSED by CO-260 (Sprint 26)
-
-The OpenCode plugin now communicates with wevibe-mcp via HTTP API (127.0.0.1:4450) rather than subprocess. Plugin reads session token from `~/.wevibe/mcp-session-token` (mode 0600) and includes `Authorization: Bearer <token>` on all calls. Serve event recording and report submission route through wevibe-mcp. Subprocess interface removed. See DECISIONS.md D-12.5.
-
-### GAP-C2: wevibe-mcp HTTP API Not Exposed for Plugin Consumption
-
-**Participant:** Consumer (via plugin)
-**Status:** CLOSED by CO-260 (Sprint 26)
-
-wevibe-mcp now exposes first-class HTTP API at 127.0.0.1:4450 with four endpoints: `GET /v1/health`, `POST /v1/recall`, `POST /v1/serves`, `POST /v1/reports`. All endpoints require Bearer token auth (D-12.5a). Plugin is the sole client surface to the hub. See DECISIONS.md D-12.5.
-
----
+This gap previously allowed any account to self-add as `leader` through `MsgAddMember`, enabling silent co-leader takeover of treasury and org-admin surfaces.
+The direct exploit path is now closed in code via explicit signer authorization plus `Role == "leader"` rejection, and remains flagged only for verification.
+Residual risk is limited to the single-leader invariant and mixed leader-auth checks already called out in the status note above.
 
 ## MAJOR
 
@@ -1286,54 +1229,6 @@ The chain has **no fast incident-response lever**. There is no application-level
 - Wire `cosmossdk.io/x/circuit` (keeper + module + store key + gov-authority) so governance (and a designated circuit-break admin) can disable specific message routes in an emergency. Document the break/reset procedure in the validator ops runbook (`GAP-CHAIN-7`).
 - Decentralize the validator set and harden/secure the gov-authority key before mainnet — the gov address controls emissions, params, and upgrades with no on-chain undo (see Cross-Cutting: Chain Incident Response & Rollback Posture, attack vector #2).
 
-### GAP-M6: Notification System Does Not Exist
-
-**Participant:** All
-**Status:** CLOSED by CO-267 (Sprint 27)
-
-No notification mechanism. Dashboard pages required manual refresh. No real-time updates for join approval, moderation results, contribution feedback, or earnings.
-
-**Resolution:** Activity feed (D-12.9) + email + webhook notification channels implemented. Per-user notification preferences. `notification_preferences` table added via migration. Email via SMTP, webhook for agent/Slack integration. See CO-267 implementation report.
-
-### GAP-M8: Serve Event Recording Path Is Ad-Hoc
-
-**Participant:** Consumer, Contributor (receives credit)
-**Status:** CLOSED by CO-260 (Sprint 26)
-
-Plugin now records serve events via wevibe-mcp POST /v1/serves (value-add proxy). wevibe-mcp handles canonicalization, signing, and hub forwarding. GAP-C2 and GAP-M8 resolved together. See DECISIONS.md D-12.5.
-
-### GAP-S1: Social Graph Service Not Implemented
-
-**Participant:** All
-**Status:** CLOSED by CO-267 (Sprint 27)
-
-Hub-to-display-name mapping was absent. Dashboard rendered truncated wallet addresses.
-
-**Resolution:** Social graph service at `wevibe-server/social-graph-service/` provides wallet→display name mapping. Endpoints: POST/GET/PATCH /v1/profiles/:wallet, batch query, health. Hub integration via `internal/social/client.go`. Moderator role requires display name registration. See CO-267 implementation report.
-
-### GAP-T4: Chain Pruning + IAVL Fast-Node Disabled in Dev Mode
-
-**Participant:** Validator, all on-chain participants
-**Status:** CLOSED by CO-267 (Sprint 27)
-
-**Resolution:** init-chain.sh already had production pruning settings applied: `pruning=custom`, `pruning-keep-recent=100`, `pruning-interval=10`. IAVL fast-node is enabled (default when not explicitly disabled). Chain builds and starts successfully. Hub's broadcast retry logic (8 attempts, 400ms backoff) handles transient IAVL errors. See CO-267 implementation report.
-
-### ARCH-G2: "Instant Complete Revocation" Is Misleading for AI Systems
-
-**Participant:** All
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-PRE revocation is precise: it provides **instant cryptographic revocation of un-retrieved content**, not "remote wipe" of all copies.
-
-| Content Category | Revocation Effective? |
-|-----------------|----------------------|
-| Un-retrieved memories | YES — cryptographically |
-| In-flight memories (re-encrypted but not yet decrypted) | YES — if session terminated |
-| Already-decrypted memories in agent plaintext | NO |
-| Derivative artifacts (summaries, local vectors, prompt traces) | NO |
-
-**Resolution:** Revocation language revised in `wevibe-docs/SECURITY-MODEL.md` and `wevibe-docs/WHITEPAPER.md`. Correct scope documented. wevibe-sdk session-end secure deletion deferred post-alpha. See CO-266 implementation report.
-
 ### ARCH-G6: Qdrant Embedding Inversion — Long-Term Encrypted Vector Search Needed
 
 **Participant:** Consumer, Leader
@@ -1347,22 +1242,6 @@ Phase 1 mitigations are in place (Gaussian noise σ=0.1, Qdrant API key auth, in
 - No Qdrant native support for property-preserving encryption
 
 **Resolution:** Phase 1 mitigations continue as ongoing measure. Encrypted vector search deferred to post-alpha. See `workspace/docs/EVAL-ENCRYPTED-VECTOR-SEARCH.md`.
-
----
-
-### GAP-CHAIN-20: IAVL State Query Failure on Fresh Chains
-
-**Participant:** Validator, Leader, all CLI users
-**Milestone:** ALPHA
-**Status:** CLOSED (resolved by CO-005d marker-write, verified by CO-010)
-
-All module state queries (`query auth`, `query gov`, `query upgrade`, `query bank`, `query staking`, etc.) failed with `"failed to load state at height N; version does not exist (latest height: N)"` on fresh wevibe-chain instances. The chain produced blocks and processed transactions normally — only the ABCI Query path through IAVL was broken.
-
-**Root cause:** WeVibe modules (bandwidth, emissions, memory, org, reputation, serve, attestation) implement AppModule but NOT appmodule.HasGenesis, so ModuleManager.InitGenesis silently skips their genesis handlers and their KV stores receive zero writes. Several SDK modules (feegrant, upgrade, consensusparam) similarly had empty default genesis. The result was all mounted KV stores had zero entries after InitChain, causing IAVL's LoadVersion to fail with ErrVersionDoesNotExist on any state query.
-
-**Resolution:** CO-005d's InitChainer (D-S29-CHAIN-RESTART-FOUNDATION) writes a sentinel marker key (4-byte 0xFF prefix → 0x01) to every mounted KV store immediately after ModuleManager.InitGenesis. This ensures every IAVL tree has at least one entry and version history, preventing LoadVersion failures. CO-010 verified all standard module state queries now work on fresh genesis chains (5/5 passed: bank balances, distribution params, upgrade plan, slashing params, staking validators).
-
-**Verification:** CO-010 query battery on fresh chain — all queries return valid data. No regression in build or tests.
 
 ---
 
@@ -1390,49 +1269,6 @@ Chain modules (`x/emissions`, `x/bandwidth`, `x/reputation`, `x/org`) have defau
 **Partial progress (CO-040):** emission pool is now seeded at genesis and reputation is active at genesis (see GAP-S32-EMISSION-GENESIS). Full economic-parameter finalization (the 32-year emission schedule + contributor attribution) is locked and scheduled under GAP-S32-TOKENOMICS.
 
 ---
-
-### GAP-S32-EMISSION-GENESIS: Emission Pool + Reputation Genesis Activation
-
-**Participant:** Validator, Leader, Contributor
-**Milestone:** Sprint 32
-**Status:** CLOSED (CO-040, pending commit/manager approval)
-
-The emissions epoch hook logged "no emission pool found" every epoch and never minted, because no pool was seeded at genesis; and reputation launched inactive (DefaultGenesis returned Active:false) despite DefaultParams.Active=true (GAP-REP-1).
-
-**Resolution:** CO-040 implemented `module.HasGenesis` for `x/emissions` and `x/reputation` (DECISIONS D-S32-HASGENESIS-CUSTOM-MODULES), seeds `app_state.emissions = {}` and `app_state.reputation = {"active": true}` in `init-chain.sh`, and the modules' InitGenesis fill the pool (from DefaultParams) and activate reputation (DECISIONS D-S32-EMISSION-POOL-GENESIS, D-S32-REPUTATION-DEFAULTGENESIS-ACTIVE). Verified on the live fast stack: "emission pool set" / "daily emission minted" each epoch; IsActive query returns true. CO-040 also hardened both epoch hooks to never return errors on recoverable conditions (DECISIONS D-S32-EPOCH-HOOK-RESILIENCE).
-
----
-
-### GAP-S32-CACHEKV: Epoch-End Iteration Fails Under Cache-Wrapped Store (root cause of "zero decay")
-
-**Participant:** Validator, Leader, Contributor (decay/economic loops)
-**Milestone:** Sprint 32
-**Severity:** CRITICAL
-**Status:** CLOSED (CO-041, committed `8c92385`) — collect-then-mutate + removal of post-loop `iter.Error()` checks landed across the 24 sites; epoch-end idle decay now runs on the live chain
-
-The Sprint-31 "zero decay" symptom is caused by the keepers' `iter.Error()`-as-failure pattern. Under the cache-wrapped KV store used in BeginBlock / epoch hooks, `cosmossdk.io/store cacheMergeIterator.Error()` returns non-nil at NORMAL end-of-iteration. So `ApplyEpochDecay`, `CheckEpochExpiry`, `getAllOrgsWithMemories`, and emissions `GetAllOrgs` all error every epoch and epoch-end idle decay never runs. The defect spans 24 sites across 10 keeper files in 4 modules (emissions, memory, org, reputation). It was invisible to unit tests because they iterate a direct IAVL store (returns nil at end), and was masked until CO-040 seeded the emission pool (which advanced the emissions hook past its previous early return).
-
-**Impact:** memory decay, expiry, and merkle-root computation do not run on the live chain; the only observed decay comes from the event-time serve/denial path. The 75pp decoupling contract cannot pass until fixed.
-
-**Resolution requires (CO-041 Task A, DECISIONS D-S32-CACHEKV-ITER):** remove the post-loop `iter.Error()` checks (rely on `Valid()` termination); adopt collect-then-mutate for iterate-and-modify paths (`ApplyEpochDecay`, `CheckEpochExpiry`); add a cachekv-wrapped regression test that fails pre-fix and passes post-fix.
-
----
-
-### GAP-S32-TOKENOMICS: 32-Year Emission Schedule + Contributor Attribution
-
-**Participant:** Validator, Leader, Contributor
-**Milestone:** Sprint 32
-**Severity:** MAJOR
-**Status:** CLOSED (CO-041, committed `8c92385`) — 32-year schedule + contributor attribution implemented; on-chain DefaultParams match D-S32-TOKENOMICS-LOCKED; final tokenomics lock gated on the empirical gate matrix (in progress)
-
-The flat `daily_mint` placeholder must be replaced by the locked 32-year schedule: 1B VIBE total, 10% foundation + 1% validator at genesis, 570M validator pool + 320M contributor pool emitted over 11,680 epochs, 10M VIBE/yr contributor cap, global rollover. Contributor address must be persisted through memory state (`contributor_address` on pending + committed), serve attribution must derive the contributor from the stored memory, and emissions must distribute to distinct qualifying contributors network-wide per epoch.
-
-**Resolution requires (CO-041, DECISIONS D-S32-TOKENOMICS-LOCKED, D-S32-CONTRIBUTOR-ATTRIBUTION):** proto changes (emissions params + pool fields, memory contributor_address), emissions keeper overhaul, memory contributor-by-epoch query, serve attribution rewire, init-chain.sh allocations, genesis re-plumbing. Depends on GAP-S32-CACHEKV landing first (the contributor distribution adds a network-wide approved-memory iteration). Empirically gated by the 300-epoch seed-42 contract (chain.gap ≥ 75pp AND |Δ gap| ≤ 5pp).
-
----
-
-### GAP-VE-1: AEAD-in-SP1 Feasibility Spike Required Before Implementation
-**Status:** CLOSED (resolved by CO-028 feasibility spike 2026-05-27 + DMO-029 redesign). Spike measured ChaCha20-Poly1305 + SHA-256 in SP1 v6, returned GO-WITH-RESERVATIONS at 16.6 GB peak RSS and 45 s wall on M3 Ultra. Walter and manager concluded the ZK pathway is operationally unshippable. DMO-029 supersedes the ZK design with a signed-canonical-body design (D-VR-1 through D-VR-8) that requires no proving. Spike workspace preserved as historical record at /Users/jerrysmith/Desktop/wevibe-workspace/spike-aead-ve/ (local-only, not committed). Sprint 31 implementation CO ships the canonical-body redesign instead.
 
 ### GAP-VR-1: Sprint 31 Implementation — Canonical Body Overhaul + Three Bug Fixes
 
@@ -1504,97 +1340,6 @@ Likely Sprint 31 priority due to downstream blockage immediately after moderatio
 
 ## MODERATE
 
-### GAP-DENIAL-LOOP: Denial Loop Actionable Surface Coverage
-
-**Participant:** Moderator, Contributor, Leader
-**Status:** CLOSED (Sprint 30)
-
-All 8 actionable denial-loop surfaces shipped in Sprint 30 under CO-012 through CO-017.
-
-**Closure notes:**
-- Complete denial-loop surface delivery landed across CO-012, CO-013, CO-014, CO-015, CO-016, and CO-017
-- Optimistic ledger behavior was proven by CO-013 fixture tests
-
-### GAP-O3: Dashboard Voting UI Missing for Approval Quorum
-
-**Participant:** Moderator
-**Status:** CLOSED by CO-265 (Sprint 27)
-
-Moderation page showed Approve/Deny buttons but no explicit Vote button. For orgs with `required_approvals > 1`, moderators need to vote before final approval.
-
-**Resolution:** Dashboard moderation page now shows Vote to Approve button for `required_approvals > 1`, with vote count display and threshold visualization. See CO-265 implementation report.
-
-### GAP-O6: Hub Credits and Chain Treasury Are Disconnected
-
-**Participant:** Leader
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-Two separate systems existed: Hub `org_credits` (PostgreSQL integer credits, 1 deducted per query) and Chain `StoredTreasury` (uvibe, debited by emissions for contributor payouts). Leader had no unified view of org finances.
-
-**Resolution:** Dashboard billing page now shows both credits balance and chain financial data via `GET /v1/orgs/{orgID}/finances`. See CO-266 implementation report.
-
-### GAP-O7: Chain Config Not Manageable from Dashboard
-
-**Participant:** Leader
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-Dashboard could not manage chain-level org config (`serve_attestation_required`, `contest_stake_uvibe`) or reputation tiers.
-
-**Resolution:** Dashboard settings page now exposes chain configuration read/edit UI. New hub `GET /v1/orgs/{orgID}/chain-config` (leader-only) and `PATCH /v1/orgs/{orgID}/config` updated to accept chain fields. See CO-266 implementation report.
-
-### GAP-O9: No User-Visible Feedback When Contribution Is Flagged
-
-**Participant:** Contributor
-**Status:** CLOSED by CO-265 (Sprint 27)
-
-wevibe-guard at submit time logged warnings to stderr but contributor saw "submitted N for review" even when content was flagged. No indication of security findings.
-
-**Resolution:** Hub submit response now includes `sanitization_findings`; dashboard sessions page displays amber success+warning banner when findings exist. Contributor sees sanitization status at submit time. See CO-265 implementation report.
-
-### GAP-O10: Hub ↔ Chain Org Records Not Synchronized
-
-**Participant:** Leader
-**Status:** CLOSED by CO-265 (Sprint 27)
-
-Hub creates org in PostgreSQL. Chain has separate org registration via `MsgRegisterOrg`. These were independent records that could diverge.
-
-**Resolution:** `CreateOrg` now broadcasts `MsgRegisterOrg` to wevibe-chain during org creation and persists `orgs.chain_registered` state. Chain registration failure does not roll back hub org creation. See CO-265 implementation report.
-
-### GAP-O11: Pre-Existing Integration Test Suite Failures
-
-**Participant:** Worker / CI (does not affect runtime UX)
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-Seven test files failed against the dogfood stack due to fixture-state drift and assertion drift from recent CO changes.
-
-**Resolution:** Per-file triage completed. Stale e2e/integration harnesses converted to `describe.skip(...)` placeholders (`capstone.test.ts`, `e2e-flow.test.ts`, `full-lifecycle.test.ts`). Moderation and server-tools tests updated for changed tool counts and `memory_type_override` drift (`moderation-approval.test.ts`, `moderation.test.ts`, `server-tools.test.ts`). See CO-266 implementation report.
-
-### ARCH-G7: Model Provider Leakage Policy Not Enforced
-
-**Participant:** Consumer, Contributor
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-When a memory is injected into a cloud inference session (Claude API, GPT-4, etc.), the model provider can potentially see the memory content.
-
-**Resolution:**
-- `provider_policy` modes implemented: `unrestricted` (default), `local_only`, `allowlist`
-- Policy stored in `~/.wevibe/plugin-config.json`
-- `wevibe_set_provider_policy` MCP tool for configuration
-- `local_only` blocks non-local provider artifacts
-- `allowlist` checks against org-scoped allowed providers returned from hub membership
-- `wevibe_author_memory` restricted to leader role only; non-leaders receive explicit admin-path description
-
-See CO-266 implementation report.
-
-### ARCH-G8: PRE Recovery Path — Operational Procedure Not Documented
-
-**Participant:** Leader
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-Recovery path properties (2-of-3 Shamir, on-chain multi-sig auth, separate `wevibe-recover` CLI, on-chain logging) were designed but not implemented or documented.
-
-**Resolution:** Created `workspace/docs/RUNBOOK-PRE-RECOVERY.md` documenting the recovery ceremony procedure and invocation steps. See CO-266 implementation report.
-
 ### ARCH-G9: BIP-32 Key Hierarchy Separation Not Implemented
 
 **Participant:** All
@@ -1606,24 +1351,6 @@ Coupling financial identity (Cosmos wallet) with confidential memory retrieval (
 - Use distinct derivation path from wallet keys
 - Document key hierarchy in security documentation
 
-### OQ-6: Operational Runbook for Epoch SK Compromise
-
-**Participant:** Leader
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-Runbook for epoch SK compromise procedure was not defined.
-
-**Resolution:** Created `workspace/docs/RUNBOOK-EPOCH-SK-COMPROMISE.md` documenting the background re-encryption procedure, chain epoch status transition, hub behavior during compromised window, re-encryption throughput targets, gas cost estimation per 100K memories, and monitoring/alerting for completion tracking. See CO-266 implementation report.
-
-### OQ-7: Docker Compose Network Fix for Smoke Tests
-
-**Participant:** Developer (CI/CD)
-**Status:** CLOSED by CO-265 (Sprint 27)
-
-`wevibe-chain/scripts/smoke-test.sh` expected chain node at `localhost:26657`. Docker Compose has separate networks.
-
-**Resolution:** RPC_URL override documented in smoke-test.sh script header. `RPC_URL` env var override supported. See CO-265 implementation report.
-
 ---
 
 ## MINOR
@@ -1633,33 +1360,6 @@ Runbook for epoch SK compromise procedure was not defined.
 **Participant:** Leader
 
 Billing page has "Stripe coming soon" button. Hub `TopUpCredits` is manual credit injection without payment processing or signature verification.
-
-### GAP-N2: No Memory Editing Before Moderation Approval
-
-**Participant:** Moderator
-**Status:** CLOSED by CO-266 (Sprint 28) — fallback implementation
-
-Cannot edit content before approving — only Approve or Deny.
-
-**Resolution:** Dashboard deny dialog now offers "Save & Edit" option for encrypted content that cannot be previewed inline. Records original+edited content in denial reason field. Fallback used when crypto pipeline constraints prevent inline content editing. See CO-266 implementation report.
-
-### GAP-N3: No Contributor Feedback on Denial
-
-**Participant:** Contributor
-**Status:** CLOSED by CO-265 (Sprint 27)
-
-`DenySubmission` recorded `denial_reason` but nothing surfaced to the contributor.
-
-**Resolution:** New hub endpoint `GET /v1/orgs/{orgID}/my-submissions` consumed by dashboard `My Submissions` page. Status badges and denial reason inline rendering for denied submissions. See CO-265 implementation report.
-
-### GAP-N4: No Role-Gated Dashboard Sidebar
-
-**Participant:** All
-**Status:** CLOSED by CO-265 (Sprint 27)
-
-All users saw all pages regardless of role.
-
-**Resolution:** Sidebar navigation gated by `activeOrg.role`. Members see limited nav; moderators/leader see moderation, reports, join requests; leaders additionally see batch pipeline, members, keywords, recovery, epochs, settings. See CO-265 implementation report.
 
 ### GAP-N5: Chain Features Without Any Surface
 
@@ -1771,93 +1471,9 @@ No way to browse chain state visually. Validators and leaders must use CLI queri
 - Deploy or build a minimal scanner for solo-dogfood use
 - Ensure compatibility with WeVibe custom modules (x/memory, x/org, x/emissions)
 
-### GAP-N8: No Trial Period Logic in Hub
-
-**Participant:** New User
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-`MsgGrantTrialAllowance` proto existed on chain. Hub had no trial awareness. Retrieval was all-or-nothing — no keyword-only degraded mode.
-
-**Resolution:** Trial membership schema added (`members.is_trial`, `members.trial_expires_at`, `orgs.trial_days`). Join approval accepts `trial` boolean. Trial members blocked from contribution (submit + batch-submit return 403). Retrieval enforces expiry check and daily rate limit (default 5/day). Trial→full upgrade clears trial state. See CO-266 implementation report.
-
-### GAP-N9: No Batch Memory Submission
-
-**Participant:** Contributor
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-Sessions page submitted memories one at a time via individual POST requests.
-
-**Resolution:** Sessions page now supports batch submission via `POST /v1/orgs/{orgID}/moderation/batch-submit`. Unified progress indicator shows batch submission status. See CO-266 implementation report.
-
-### GAP-N10: `wevibe_author_memory` MCP Tool Fate Unclear
-
-**Participant:** Moderator/Leader
-**Status:** CLOSED by CO-266 (Sprint 28)
-
-`wevibe_author_memory` lets leaders/moderators submit + immediately approve a memory. This is a second contribution path alongside the sessions page.
-
-**Resolution:** `wevibe_author_memory` is kept. Gated to leader role only — non-leaders receive explicit description indicating this is an admin-path tool. See CO-266 implementation report.
-
-### GAP-N11: Pre-Existing TS1005 Syntax Error in wevibe-guard Plugin
-
-**Participant:** Worker / Developer (does not affect runtime)
-**Status:** CLOSED by CO-265 (Sprint 27)
-
-`wevibe-opencode-plugin/plugins/wevibe-plugin.ts` contained a TypeScript syntax error: `TS1005: ';' expected`. The malformed type annotation and generic syntax around the inline type expression was fixed. See CO-265 implementation report.
-
----
-
-## Sprint 29 Scope
-
-### Completed (Sprint 29)
-
-| Item | CO | Status |
-|------|-----|--------|
-| Deferred test vector regeneration + cleanup | CO-006 | **CLOSED** |
-| Cosmos SDK v0.53.5 + CometBFT v0.38.20 foundation | CO-008 | **CLOSED** |
-| x/upgrade end-to-end verification (5 iterations, 5 bugs fixed) | CO-005 → CO-005e | **CLOSED** — GAP-CHAIN-3 |
-| Workspace `make proto-gen` tooling | CO-003 | **CLOSED** — GAP-CHAIN-8 |
-| R-REMOTE-PREFLIGHT template hardening | CO-004 | **CLOSED** |
-| Keyword weight decay end-to-end wiring | CO-009 | **CLOSED** — GAP-CHAIN-1 |
-
-### In Scope (Sprint 29, remaining)
-
-| Item | Reference | Severity | Status |
-|------|-----------|----------|--------|
-| Genesis parameter finalization (Walter approval required) | GAP-CHAIN-5 | MAJOR | Next |
-| IAVL state query fix | GAP-CHAIN-20 | MAJOR | **CLOSED** (CO-005d + CO-010 verification) |
-| BIP-32 key hierarchy separation | ARCH-G9 | MODERATE | Any time |
-
-### Out of Scope (Deferred to post-alpha)
-
-| Item | Reason |
-|------|--------|
-| Incremental Merkle commitments | Optimization; solo dogfood doesn't need epoch data availability proofs |
-| Worst-case validator benchmarks | Production sizing; not blocking pre-alpha |
-| State retention categorization | Architecture paperwork; doesn't unblock anything |
-| Batch settlement for serve/denial events | Throughput optimization; per-event model works at solo scale (see D-S29-THROUGHPUT-DEFERRED) |
-| Validator ops runbook (GAP-CHAIN-7) | Docs; Walter knows how to run the chain |
-| Block scanner (GAP-CHAIN-4) | Convenience; not blocking solo dogfood |
-
 ---
 
 ## Sprint 32 Scope
-
-### Completed (Sprint 32 ingress)
-
-| Item | CO | Status |
-|------|-----|--------|
-| Chain Earned Trust decay formula (D-4.2 per-keyword matched gate, memory-level lifetime counters, archive predicate `.every() ≤ retrievalThreshold`, grace 14→20) | CO-031 Rev 2 | **CLOSED** — GAP-CHAIN-1 |
-| ServeEntry + StoredServeAttestation gain `matched_keywords` field, validated non-empty on chain | CO-031 Rev 2 | **CLOSED** — chain ingress contract |
-| Hub tempered power-law sampler (D-9.4 position 1 strict, positions 2..N sampled), new-memory boost, retrieval env vars | CO-032 | **CLOSED** — GAP-RETRIEVAL-1 |
-| Hub serve_events.matched_keywords TEXT[] NOT NULL persistence, strict 400-on-empty validator on POST /v1/serves | CO-033a | **CLOSED** — hub ingress contract |
-| wevibe-protocol JS bindings regen (matchedKeywords on ServeEntry, all 33 .ts files updated) | CO-033b | **CLOSED** — JS contract |
-| Dashboard `buildServeBatchMsg` + live `handleSubmitBatch` broadcaster (replaces deprecated stub at chain-submit/page.tsx) | CO-033b | **CLOSED** — dashboard contract |
-| MCP forwards matched_keywords on POST /v1/serves, validates non-empty inline | CO-033b | **CLOSED** — MCP contract |
-| Plugin threads matched_keywords from recall response through inject loop to serve POST | CO-033b | **CLOSED** — plugin contract |
-| Hub test infrastructure cleanup: ListMembers dismissed_reports_count SELECT, reports_test reason fixture, members_test isolation, qdrantAvailable 401 skip | CO-033b | **CLOSED** — test infra |
-| dogfood-pipeline.test.ts step 1: canonical body signer overhaul (4 hash fields aligned with chain's 9-field canonical body) | CO-033b | **CLOSED** — dogfood pipeline drift |
-| DECISIONS.md D-4.2 + D-9.4 Implementation Clarifications subsections (per-keyword gate, lifetime counters, power-law-not-softmax, boost window arithmetic, matched-keyword tracking) | DMO-006, DMO-007 | **CLOSED** — spec codification |
 
 ### In Scope (Sprint 32, remaining)
 
@@ -1882,11 +1498,11 @@ The sim baseline is the QS3b combined model (D-4.2 Earned Trust + D-9.4 probabil
 
 | Severity | Open Count | Items |
 |----------|------------|-------|
-| CRITICAL | 0 | (GAP-SEC-1 RESOLVED IN CODE 2026-06-07 — `MsgAddMember` now gates on `signer == LeaderWalletAddress` + rejects role "leader"; verify) |
-| MAJOR | 5 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-SEC-2 (emissions DistributeOperatorRewards missing authority check), GAP-SEC-3 (no on-chain emergency brake / x/circuit not wired), GAP-TIER2-EXPOSE (reporter-signed Tier 2 expose loop + chain timer not built) |
+| CRITICAL | 1 | GAP-SEC-1 (RESOLVED IN CODE — verify: `MsgAddMember` now gates on `signer == LeaderWalletAddress` + rejects role "leader"; residual single-leader/auth-consistency note remains) |
+| MAJOR | 6 | GAP-CHAIN-5 (genesis params), GAP-PIPELINE-STATUS (pending submission status constraint mismatch), GAP-SEC-2 (emissions DistributeOperatorRewards missing authority check), GAP-SEC-3 (no on-chain emergency brake / x/circuit not wired), GAP-VR-1 (Sprint 31 canonical body overhaul + bug-fix package), GAP-TIER2-EXPOSE (reporter-signed Tier 2 expose loop + chain timer not built) |
 | MODERATE | 1 | ARCH-G9 (BIP-32 key hierarchy) |
-| MINOR | 4 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
-| **Total OPEN** | **10** | |
+| MINOR | 6 | GAP-N1 (Stripe), GAP-N5 (chain features without surface), GAP-RARITY-1 (memory rarity tier gamification spec gap), GAP-REP-1 (reputation genesis/serve-path defects), GAP-CHAIN-7 (validator runbook), GAP-CHAIN-4 (block scanner) |
+| **Total OPEN** | **14** | |
 | Documented Finding | 1 | ARCH-G6 (no viable encrypted vector search library; Phase 1 mitigations continue) |
 
 ---

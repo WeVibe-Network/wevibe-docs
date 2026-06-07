@@ -8,70 +8,14 @@ Classification: Confidential — Not for public distribution
 
 ---
 
-## Revision notes (v2.2 → v2.3)
+## Changelog
 
-**Repositioning: social-first for individual vibe coders and small crews.**
-
-v2.3 rewrites the opening narrative around the alpha product and current architecture:
-
-1. **Audience is explicit.** WeVibe is for individual vibe coders and small crews, not enterprise procurement funnels or billion-dollar engineering organizations.
-2. **Hook is social momentum.** Public reputation and collectible badges from daily coding work are the front door; memory recall remains the practical bonus that makes agents better.
-3. **Org framing is corrected.** Orgs are domain-expert-run memory collections users join. The org is the container; the vibe coder is the protagonist.
-4. **Keyword posture is clarified.** Public plaintext keywords are discovery metadata, treated as a feature (not a privacy alarm).
-5. **Stale architecture claim fixed.** The prior "wevibe-hub eliminated" claim is removed. In alpha, the hub is live and part of the hosted coordination/accounting path alongside chain + local retrieval.
-6. **Zero-config transport + onboarding posture added.** The near-term chain-resolved hub model is now explicit (`hub_endpoints` — 1–3 transport URLs from chain for failover, distinct from `hub_serving_address` auth key; hub-response signing; endpoint-change passive toast; `org_id`-keyed sidecar updates — DECISIONS `D-CHAIN-RESOLVED-HUB-ENDPOINT`, `D-HUB-RESPONSE-SIGNED`, `D-HUB-ENDPOINT-CHANGE-TOAST`, `D-SIDECAR-PLUGIN-OWNS-STATE`), alongside the already-built OpenCode onboarding/lazy-identity/installer/pairing flow (DECISIONS `D-PLUGIN-ONBOARDING-HOOK`).
-
----
-
-## Revision notes (v2.1 → v2.2)
-
-**Verification anchor redesign: signed canonical body, no zero-knowledge cryptography.**
-
-v2.2 replaces the Pattern B Tier 2 verification anchor that v2.1 introduced as a contributor-signed plaintext hash (and that the DMO-028 lock subsequently elaborated as an SP1 zero-knowledge proof). The redesign is grounded in two findings from Sprint 31:
-
-1. **GO-001 (2026-05-27)** established that the existing contributor signature at submit time covers only org_id, epoch_id, memory_type, contributor_pubkey, and submission_hash — it does not cover plaintext_hash (which did not exist) or salt (which did not exist), and binds ciphertext only transitively through submission_hash. The signature, in its current form, cannot serve as a Tier 2 verification anchor.
-2. **CO-028 (2026-05-27)** validated that the SP1 zero-knowledge pathway specified by DMO-028 is technically achievable but operationally unshippable — 16.6 GB peak RSS, 45 s wall on high-end consumer hardware, with no alternative prover location that preserves the system's deployment model.
-
-The replacement design adds three fields to the contributor's signed canonical body at submit time: plaintext_hash, salt, ciphertext_hash. The signature now binds the contributor to the exact plaintext (via salted hash), the exact ciphertext (via direct hash), and the relationship between them. At Tier 2 escalation, the reporter reveals (plaintext, salt) and the chain verifies sha256(salt || plaintext) equals the on-chain plaintext_hash. The contributor's signature, also on-chain, binds the contributor to having authored that specific (plaintext, ciphertext) tuple. The leader is removed from the verification chain — they cannot poison the anchor because they do not sign it.
-
-The cryptographic coverage of v2.2 equals the coverage of v2.1's ZK design for every attack the system is designed to defeat. The differences are operational: v2.2 ships on any hardware, has no DDoS surface, has no consensus-timing concerns, requires no audit of a zkVM toolchain, and ships in a single Sprint 31 implementation CO rather than a 10-12 task production rollout.
-
-Three production bugs that were independent of the verification design but blocking proper Tier 2 verification are also addressed by the v2.2 implementation: WrappedDekEnc is now forwarded to chain (was nil), rotation_buffer signature persistence now requires prior verification (was unverified), and the dashboard's submit path no longer sends plaintext to the hub in cleartext (was an asymmetry with the MCP client).
-
-The chain is wiped. The hub state is wiped. The canonical message tag remains wevibe.submit_memory.v1 — its field set is overhauled in place, not versioned.
-
----
-
-## Revision notes (v2.0 → v2.1)
-
-**Accountability model: silent denial, two-tier reports, public on-chain escalation.**
-
-v2.1 formalizes the accountability primitives that sit alongside the moderation pipeline. The architectural commitments and economic primitives of v2.0 are unchanged. The additions:
-
-1. **Silent denial as cheap negative signal.** The plugin's Deny control is a frictionless, no-reason-required signal. Denials feed an optimistic local-ledger model: retrieval ranking reflects denial pressure immediately, while the chain remains the eventual source of truth, settled by the leader on a cadence of their choosing.
-2. **Two-tier report model.** Reports now have a private tier (existing flow) and a public on-chain escalation tier (new). Most reports never escalate. The public tier exists specifically to make org capture economically unsustainable.
-3. **Contributor-signed plaintext hash as verification anchor.** Every memory now carries a contributor-signed hash of its plaintext through the moderation pipeline and onto the chain commit. This removes the leader from the verification chain for any future public report — a captured leader cannot poison the verification anchor.
-4. **Leader sole signature on chain commits.** Co-attestation of moderator pubkeys on leader-signed chain transactions is removed. Leaders bear sole responsibility for what they commit. Internal moderator accountability remains an org-local concern.
-5. **Unfakeable org-health signals on public discovery.** Discovery surfaces "leader last active" (aggregated chain activity) and "voluntary departure rate" (members who chose to leave). Report counts and other gameable aggregates are not surfaced inside WeVibe — the chain is the public record, the block explorer is the viewer.
-
-The chain remains the only place where consequential accountability claims live. WeVibe's own surfaces never become a tribunal.
-
----
-
-## Revision notes (v1.6 → v2.0)
-
-**Architecture pivot: on-chain storage + hub retrieval + human-gated attribution signals.**
-
-v2.0 introduced the architecture that current alpha still builds from: encrypted memories on-chain, hub-served retrieval with local decryption/safety gating, and plugin-gated human approval before agent injection. The key changes:
-
-1. **Memories stored on-chain.** Encrypted memory blobs go directly on the WeVibe chain as state.
-2. **Hub retrieval path with local trust boundary.** The MCP/plugin computes query embeddings locally and sends vectors to wevibe-hub; the hub runs vector retrieval and returns IDs + metadata; ciphertext is decrypted locally before any injection.
-3. **Hub role is explicit and live.** wevibe-hub runs hosted coordination/accounting and retrieval in alpha; it is not eliminated.
-4. **Serve attribution as social signal.** Human-approved serves are attributed on-chain to contributor and org aggregates for public reputation/badge surfaces; this is social/status data, not per-serve payout.
-5. **Domain-expert-led org operations.** Leaders set domain focus, reviewer standards, and org policies; members join for curated memory quality and social credibility.
-6. **Three software pieces.** wevibe-chain (source of truth), wevibe-hub (retrieval + coordination/accounting), and MCP server + plugin (local decryption, guard, human gate, injection).
-
-Sprint 22 chain hardening work (CO-162 through CO-170) remains valid — the Cosmos SDK app, module infrastructure, CometBFT consensus, and operator economics are the foundation this pivot builds on.
+| Version | Summary |
+|---|---|
+| v2.3 | Social-first repositioning for individual vibe coders/small crews; hub is live (not eliminated); public keywords are a discovery feature; chain-resolved hub-endpoint + onboarding posture added. |
+| v2.2 | Verification anchor redesigned to a contributor-signed canonical body (`plaintext_hash`/`salt`/`ciphertext_hash`); SP1/ZK pathway rejected as operationally unshippable; three production bugs fixed. |
+| v2.1 | Accountability primitives: silent denial as cheap negative signal, two-tier reports with public on-chain escalation, contributor-signed verification anchor, leader sole signature, unfakeable org-health signals. |
+| v2.0 | Architecture pivot: on-chain encrypted memory storage + hub retrieval with local decryption/guard + plugin-gated human approval; serve attribution as social signal; domain-expert-led orgs; three software pieces. |
 
 ---
 

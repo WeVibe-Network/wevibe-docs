@@ -26,11 +26,19 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 10. [Operational Procedures & Recovery](#10-operational-procedures--recovery)
 11. [Architecture Tradeoffs (Documented Acceptance)](#11-architecture-tradeoffs-documented-acceptance)
 12. [Sprint 25 Architecture: Multi-Org, Discovery, Profiles, Activity](#12-sprint-25-architecture-multi-org-discovery-profiles-activity)
-13. [Sprint 25 Architecture: Chain Hardening — Accountability + Social Graph Foundation](#13-sprint-25-architecture-chain-hardening--accountability-social-graph-foundation)
+13. [Sprint 25 Architecture: Chain Hardening — Accountability + Social Graph Foundation](#13-sprint-25-architecture-chain-hardening--accountability--social-graph-foundation)
 14. [Sprint 29 Chain Foundation Decisions](#15-sprint-29-chain-foundation-decisions)
 15. [Pattern B Tier 2 Verification Anchor (Current Design)](#16-pattern-b-tier-2-verification-anchor-current-design)
+16. [Sprint 30 Deferred Decisions](#17-sprint-30-deferred-decisions)
+17. [Sprint 32 Decisions: Memory Decay Activation + Tokenomics](#18-sprint-32-decisions-memory-decay-activation--tokenomics)
+18. [Sprint 32+ — CO-044: Multi-Org Broadcasting, Least-Privilege Key Separation, Gas Faucet](#sprint-32--co-044-multi-org-broadcasting-least-privilege-key-separation-gas-faucet)
+19. [Social Graph Attribution, Economy Canon, and Attestation Roadmap](#19-social-graph-attribution-economy-canon-and-attestation-roadmap)
+20. [Identity, Onboarding & Accountability (Sprint 32 — locked via Walter design dialogue)](#identity-onboarding--accountability-sprint-32--locked-via-walter-design-dialogue)
+21. [Recall UX & Model-Attested Provenance (Sprint 32 — locked via Walter design dialogue)](#recall-ux--model-attested-provenance-sprint-32--locked-via-walter-design-dialogue)
+22. [Chain-Resolved Hub Endpoints + Plugin Onboarding](#20-chain-resolved-hub-endpoints--plugin-onboarding)
+23. [Memory-Extraction Scope: Object Shape, On-Chain Extraction Profile, Preference & Derivation (Sprint-alpha-final — Walter-locked 2026-06-07)](#21-memory-extraction-scope-object-shape-on-chain-extraction-profile-preference--derivation-sprint-alpha-final--walter-locked-2026-06-07)
 
-**New decisions in this update:** D-13.1 (Moderator Pubkey Persistence on Memory), D-13.2 (Upheld Report Plaintext + Ciphertext + Capsule Triplet), D-13.3 (Hub-Side Manipulation Alarm via BlockResults), D-13.4 (Social Graph Data On-Chain, Display Layer Separate), D-13.5 (Reputation Active at Genesis, Additive-Only), D-13.6 (Memory State Cleanup — 7-State Lifecycle Locked at Code Level), D-13.7 (Cross-Module Event Wiring), D-13.8 (Reputation as Tiering Signal — total_approved_memories), D-13.9 (Chain Wipe Acceptable Pre-MVP), D-13.12 (Chain Broadcast via Comet RPC), D-13.13 (Chain Pruning + IAVL Dev Settings); updates to D-2.2 (Umbral container) and D-13.10 (only host exception is Ollama).
+This document spans the project's locked decisions through the alpha-final / Sprint-32+ work; superseded decisions are retained as one-line tombstones pointing to their replacements.
 
 ---
 
@@ -39,6 +47,8 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 ### D-1.1: Cosmos Wallet Is Primary Identity
 
 > ⚠ **SUPERSEDED for onboarding (Sprint 32, `D-IDENTITY-PROGRESSIVE-CUSTODY`).** The wallet is **no longer the primary identity nor a prerequisite to participate.** The primary identity is now a **client-held, passkey-protected account key** created at first run with no wallet. A Cosmos wallet (Keplr/Leap) is an **optional later upgrade**, *linked* as the canonical chain authority + funding anchor via a staged handover — it is not the root every other key derives from. D-1.1 is retained below as historical context for the original alpha design. The economy-binding rationale still holds for users who upgrade; it simply no longer gates entry.
+
+*SUPERSEDED by D-IDENTITY-PROGRESSIVE-CUSTODY — wallet is no longer primary identity; passkey-first, wallet-optional. Retained as historical pointer.*
 
 ---
 
@@ -70,6 +80,8 @@ Decisions are organized by topic. Within each topic, foundational decisions come
 ### D-1.4: PRE Identity Derived from Wallet via BIP-32 (Planned)
 
 > ⚠ **AMENDED (Sprint 32, `D-IDENTITY-PROGRESSIVE-CUSTODY`).** The PRE encryption identity is now **generated client-side at first run** (passkey-protected), NOT derived from the Cosmos wallet — because a guest contributes/recalls before any wallet exists. Wallet-BIP-32 derivation is no longer the source. When a wallet is later linked, the **client-generated PRE key is RETAINED** (no re-key event), so linking a wallet does not invalidate any kfrags. The isolation rationale below still holds (PRE key ≠ signing key); only the derivation source changes.
+
+*AMENDED by D-IDENTITY-PROGRESSIVE-CUSTODY — the PRE key is client-generated at first run, NOT wallet-BIP-32-derived.*
 
 ---
 
@@ -869,28 +881,7 @@ Note: Changes to `report_vote_threshold` require wallet signature (D-1.3).
 
 ### D-8.1: Pay Per Approved Memory, Not Per Serve
 
-**Decision:** Contributor payouts are calculated by counting **approved memories** per contributor per epoch, not serve counts.
-
-**Why:**
-- **Serves are gameable** (a malicious consumer could spam retrievals to inflate a contributor's payout).
-- **Approved memories represent durable value.** A memory that passes moderation is what the org actually wants to reward.
-- **Tier caps prevent dominance.** `MaxContributionsPerEpoch` caps the per-contributor count at each tier; overflow rolls to the next tier, so prolific contributors don't sweep all rewards.
-
----
-
-### D-8.2: Qualification Gate via `min_contributions_per_epoch`
-
-**Decision:** Orgs can set `min_contributions_per_epoch` — contributors must have at least this many approved memories in the epoch to qualify for payout. Default = 0 (any contribution qualifies).
-
-**Why:** Some orgs want to reward only sustained contribution, not one-off submissions. The default of 0 keeps the system open; leaders who want a higher bar can set it explicitly.
-
----
-
-### D-8.3: `payout_per_memory`, Not `payout_per_serve`
-
-**Decision:** Renamed from `payout_per_serve` to `payout_per_memory` to reflect the actual payout basis (D-8.1).
-
-**Why:** Naming should reflect semantics. The old name implied serves were the payout unit, leading to confusion. The rename eliminates the serve-count assumption.
+*SUPERSEDED by D-ECON-CANON + D-S32-TOKENOMICS-LOCKED — contributor payout is a flat even split from the network emission pool, gated by a network-set qualify threshold; the old org-treasury-funded, tier-capped, org-set-threshold model (payout_per_memory tiers) is removed.*
 
 ---
 
@@ -1313,7 +1304,7 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 
 **Why:**
 - Public profiles enable discovery and reputation signaling across org boundaries. A user's reputation in one org is visible to another.
-- Wallet address as canonical username is consistent with D-1.1 (wallet is primary identity). Display name is purely cosmetic and carries no system-level identity weight.
+- Identity is the passkey pubkey (D-IDENTITY-PROGRESSIVE-CUSTODY); the wallet is optional; profile resolves by passkey pubkey pre-migration and by wallet post-migration (alias). Display name is purely cosmetic and carries no system-level identity weight.
 - Aggregate + per-org reputation breakdown gives both a quick summary and org-specific detail. Users can signal expertise in specific domains.
 - Public by default aligns with the open knowledge graph goal — hiding profiles would undermine the discovery surface that makes WeVibe valuable.
 
@@ -1380,7 +1371,7 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 - The public profile IS the application — reputation, contribution history, and org memberships are all visible to the reviewer. No need to ask for information that's already public.
 - Reviewer-controlled admission (leader or moderator) respects org autonomy. Some orgs are selective; some are open. The org decides.
 - Denial reason + cooldown prevent request spam and bad-faith repeat requests. The reason tells the denied user what to improve; the cooldown prevents harassment.
-- No auto-approve in v1: reputation-based auto-approve was considered and deferred. The risk of sybil attacks via high-reputation sock puppets is non-trivial. Manual review is the safe default.
+- There is NO contributor-certification / auto-approve tier, ever (D-LEADER-SOLE-SIGNER) — every contribution is leader-gated.
 
 ---
 
@@ -1412,21 +1403,13 @@ At the "33+ endpoints compromised" threshold, the attacker has effectively compr
 
 ### D-13.1: Moderator Pubkey Persistence on Memory
 
-**Decision:** All moderators who voted to approve a memory are stored permanently on `StoredMemoryCommitment` as `approvers []string`. The previous single-string `approver` field is removed. `MsgApproveMemory` carries `approvers[]` plus `committing_leader_pubkey`.
-
-**D-CO030-APPROVERS:** The `approvers` repeated field in `MsgApproveMemory` has been deleted (CO-030). Co-attestation was removed in the Pattern B redesign. Proto field retained temporarily for backward compatibility through Sprint 31; deleted in Sprint 32 with chain wipe per D-13.9.
-
-**Why:**
-- **Multi-mod quorum accountability requires preserving all participants.** For orgs with `required_approvals > 1`, only recording the final approver who triggered the chain commit lets the other quorum members escape accountability if a memory later turns out to be harmful. The whole point of the moderator social graph showing "moderator X approved Y memories that were later upheld-reported" depends on every approver being on-chain.
-- **Single-mod orgs are not affected.** With `required_approvals = 1`, the array contains one entry. No semantic change for them.
-- **Chain doesn't validate the array.** The hub enforces the vote threshold (D-6.3). The chain records the array as-is. Trust is "the leader signed the TX, so they vouched for the array."
-- **Committing leader is the on-chain TX signer.** They sign the batch commit with their wallet. Recording them separately from approvers preserves the distinction between "who voted approve" (operational) and "who chose to commit this batch to chain" (authoritative).
+*Co-attestation removed in the Pattern B redesign; the `approvers[]` field is DELETED (CO-030, Sprint 32 wipe). Sole on-chain signer is the leader — see D-LEADER-SOLE-SIGNER.*
 
 ---
 
 ### D-13.2: Upheld Report Plaintext + Ciphertext + Capsule Triplet
 
-**Status:** Verification anchor mechanism LOCKED as of 2026-05-27 via DMO-029. The mechanism is the contributor-signed canonical body containing plaintext_hash, salt, and ciphertext_hash — see Section 16 (D-VR-1 through D-VR-8). Implementation ships in the Sprint 31 implementation CO with chain wipe per Walter directive. The prior ZK pathway locked by DMO-028 (D-VE-1 through D-VE-10) is superseded; see Section 14 (superseded).
+**Status:** Verification anchor mechanism LOCKED as of 2026-05-27 via DMO-029. The mechanism is the contributor-signed canonical body containing plaintext_hash, salt, and ciphertext_hash — see Section 16 (D-VR-1 through D-VR-8). Implementation ships in the Sprint 31 implementation CO with chain wipe per Walter directive. The prior ZK pathway locked by DMO-028 is the former ZK/SP1 verifiable-encryption pathway (removed; see D-VR-8).
 
 **Decision (locked):** When a report is upheld and committed on-chain via `MsgReportMemory`, the chain stores:
 - `plaintext` (raw memory content, max 4096 bytes)
@@ -1673,58 +1656,7 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ### D-13.14: CO-026 Contributor-Signed Plaintext Hash — Reverted
 
-**Status:** REVERTED via DMO-027 + CO-026R (2026-05-27).
-
-**Decision:** The work shipped under CO-026 (contributor-signed `sha256(plaintext)` carried across proto, chain keeper, hub canonical v2, dashboard, MCP, and e2e tests) is reverted in full.
-
-**Why reverted:**
-
-1. **No salt.** CO-026 used `sha256(plaintext)` without a per-submission salt. For low-entropy plaintexts (short memories, common technical advice), this is rainbow-table-vulnerable. A captured hub operator with read access to on-chain hashes could brute-force the original content for many memories.
-
-2. **Wrong cryptographic foundation.** CO-026 was scoped as the first half of a verifiable-encryption design intended to defeat contributor+leader collusion attacks on Pattern B Tier 2 reports. The intended verification mechanism (a ZK proof binding the hash to the on-chain ciphertext) was scoped on the assumption that production used Umbral PRE encapsulation. The CO-027 abort report (2026-05-27) revealed that production uses AEAD + sealed-box on the submission path. The verification design must be rebuilt against the actual primitives.
-
-3. **Incomplete threat coverage.** Even with salt, a hash signed only by the contributor protects against leader hash poisoning but not against contributor+leader collusion (when both are adversaries). The replacement design must address this explicitly — either by binding the hash to the AEAD ciphertext through a verifiable encryption proof, or by accepting the residual risk and documenting it as a known limit of the verification anchor.
-
-**What is preserved from CO-026:**
-- The architectural goal: a verification anchor on-chain that binds revealed plaintext in a Tier 2 report to the actual content the contributor submitted, without trusting the leader.
-- The 7-state lifecycle and other proto fields not introduced by CO-026.
-
-**What is removed by the revert:**
-- `MsgApproveMemory.plaintext_hash` (field 9)
-- `MsgReportMemory.plaintext_hash` (field 12)
-- `StoredMemoryCommitment.plaintext_hash` (field 15)
-- `StoredMemoryReport.plaintext_hash` (field 12)
-- DB migration `000005_add_plaintext_hash.up/down.sql`
-- `pending_submissions.plaintext_hash` column
-- Hub canonical v2 → reverts to canonical v1
-- Hub validation of `plaintext_hash` at submit time
-- Hub batch chain submit inclusion of `plaintext_hash`
-- Dashboard and MCP computation of `plaintext_hash` at submission
-- All e2e test assertions involving `plaintext_hash`
-
-**What replaces it:** A re-architected verification anchor design is now locked via DMO-029 (see Section 16, D-VR-1 through D-VR-8). The replacement uses a contributor-signed canonical body containing plaintext_hash, salt, and ciphertext_hash jointly — no zero-knowledge cryptography. DMO-028's ZK pathway lock (D-VE-1 through D-VE-10) was superseded after CO-028 demonstrated that the ZK approach cannot ship on consumer hardware. See D-13.2 for status, Section 14 for the superseded ZK design preserved as historical record, and the implementation CO that follows this DMO for Sprint 31 ship plan.
-
-**Reference:** DMO-027 (this doc revert), CO-026R (companion code revert), CO-027 questions report (2026-05-27, original abort discovery).
-
----
-
-### D-S29-VECTORS-CLOSED: Sprint 28 Deferred Test Vectors Regenerated [PROCESS]
-
-**Decision:** All 4 vectors deferred from Sprint 28 MO-006 per D-S28-MO006-VECTORS-SCOPE have been regenerated via the REGEN_VECTORS pattern. `wevibe-protocol/test_vectors/` now contains no stale vectors.
-
-**Vectors regenerated:**
-- fee_model_hash
-- mnemonic_roundtrip
-- seal_open_envelope
-- shamir_roundtrip
-
-**Provenance:** Each vector file carries a `regenerated_by: "WeVibe-CO-006"` top-level field per R-VECTORS-PROVENANCE.
-
-**Regen method:** `REGEN_VECTORS=1 cargo test test_<vector>_vectors` — SDK test scaffolding added/extended in `wevibe-sdk/crates/wevibe-sdk-core/tests/crypto_tests.rs`.
-
-**Note:** The 4 vectors happened to already be correct — regeneration produced byte-identical output. The stale designation in REGEN-PENDING.md was conservative; the vectors were not actually stale.
-
-**Closes:** D-S28-VECTORS-SPRINT29-TICKET.
+*REVERTED in full (DMO-027, 2026-05-27). Replaced by the contributor-signed canonical body, D-VR-1 through D-VR-8 (Section 16).*
 
 ---
 
@@ -1790,15 +1722,7 @@ The umbral-sidecar service (D-2.2) is a Docker service and is NOT a host excepti
 
 ### D-S29-IAVL-QUERY-BUG-KNOWN: IAVL State Queries Broken — Resolved by D-S29-CHAIN-RESTART-FOUNDATION
 
-**Decision:** All ABCI state queries failed on wevibe-chain with `"version does not exist"`. Root cause was the empty-IAVL-tree problem: WeVibe modules implement AppModule but NOT appmodule.HasGenesis, so ModuleManager.InitGenesis skips their genesis handlers. Their KV stores received zero writes, causing ErrVersionDoesNotExist on LoadVersion for every state query.
-
-The fix (D-S29-CHAIN-RESTART-FOUNDATION, CO-005d) writes a sentinel marker to every mounted KV store in InitChainer. This ensures every IAVL tree has version history.
-
-**Resolution:** CO-005d wrote the marker-write. CO-010 verified all standard module state queries now work on fresh genesis chains (5/5 passed: bank balances, distribution params, upgrade plan, slashing params, staking validators). GAP-CHAIN-20 is CLOSED.
-
-**Discovery:** CO-005b upgrade verification (2026-05-23).
-
-**Reference:** CO-010 implementation report.
+*RESOLVED by D-S29-CHAIN-RESTART-FOUNDATION (CO-005d, verified CO-010); GAP-CHAIN-20 CLOSED.*
 
 ---
 
@@ -1811,16 +1735,6 @@ The fix (D-S29-CHAIN-RESTART-FOUNDATION, CO-005d) writes a sentinel marker to ev
 ### D-S29-INITCHAINER-VERSION-MAP
 
 **Decision:** wevibe-chain's InitChainer calls UpgradeKeeper.SetModuleVersionMap(ctx, ModuleManager.GetVersionMap()) after ModuleManager.InitGenesis returns. This is required for any manually-wired (non-depinject) Cosmos SDK chain. Without it, x/upgrade's ApplyUpgrade reads an empty fromVM, RunMigrations treats every module as new, and re-runs InitGenesis on already-initialized state — panicking on distribution's balance invariant check. The canonical guidance is at cosmossdk.io/x/upgrade@v0.2.0/module.go:130-131. Discovered via CO-005c-resume; fixed in CO-005e.
-
----
-
-### D-S29-HUB-SEQUENCE-RACE [SUPERSEDED by D-S32-CO044-PER-ORG-BROADCAST]
-
-**Decision:** wevibe-hub's broadcast.go cross-checks queried account sequence against a local post-broadcast cache (max-of-two). Without this, successive broadcasts within one CometBFT block window race and the second is rejected with sequence mismatch. Known limitation: max-of-two doesn't handle rejected broadcasts; proper fix is in-flight counter pattern (documented in code). Discovered via CO-005d dogfood; fixed in CO-005d Stage 9.
-
-**Superseded:** CO-044 replaces the single shared `submitter` account (the root cause this hack
-worked around) with a per-org signer registry, each org with its own account and sequence. The
-max-of-two cache is removed. See D-S32-CO044-PER-ORG-BROADCAST.
 
 ---
 
@@ -1872,7 +1786,7 @@ max-of-two cache is removed. See D-S32-CO044-PER-ORG-BROADCAST.
 
 ## 16. Pattern B Tier 2 Verification Anchor (Current Design)
 
-This section replaces Section 14 (D-VE-1 through D-VE-10, superseded). The decisions here define the verification anchor for Pattern B Tier 2 public report escalation using contributor signatures over a redesigned canonical body. No zero-knowledge cryptography.
+This section replaces the former ZK/SP1 verifiable-encryption pathway (removed; see D-VR-8). The decisions here define the verification anchor for Pattern B Tier 2 public report escalation using contributor signatures over a redesigned canonical body. No zero-knowledge cryptography.
 
 **Implementation status:** Design LOCKED. Implementation CO follows immediately; chain wipe is part of the implementation. The anchor (D-VR-1 through D-VR-8) is implemented and live. The Tier 2 escalation loop that consumes the anchor — reporter-signed public exposure under a chain-enforced response-window timer — is DESIGNED, NOT BUILT; see D-VR-9 and GAP-TIER2-EXPOSE.
 
@@ -1884,7 +1798,7 @@ This section replaces Section 14 (D-VE-1 through D-VE-10, superseded). The decis
 
 **Why signatures rather than ZK:**
 
-The ZK pathway (Section 14, superseded) proved a relationship between plaintext_hash, salt, and ciphertext at memory commit time. A signed canonical body that includes plaintext_hash, salt, and ciphertext_hash as signed fields proves the same relationship — the contributor cryptographically attests to all three values jointly. The attacks defeated are identical:
+The former ZK/SP1 verifiable-encryption pathway (removed; see D-VR-8) proved a relationship between plaintext_hash, salt, and ciphertext at memory commit time. A signed canonical body that includes plaintext_hash, salt, and ciphertext_hash as signed fields proves the same relationship — the contributor cryptographically attests to all three values jointly. The attacks defeated are identical:
 
 - Leader substitutes ciphertext between submit and chain commit → defeated, signature binds ciphertext_hash
 - Contributor claims different plaintext at Tier 2 → defeated, signature binds plaintext_hash and the hash is salted
@@ -2251,26 +2165,7 @@ an implicit global authority and serializing all orgs behind one account sequenc
 
 > **[UPDATE 2026-06-05]** The CO-214 client delegate-key + hub relay implementation described in this historical section is **REMOVED** and superseded by amendment 13 (**D-ECON-STORAGE-MARKET**). Current path: leaders/members sign chain txs wallet-direct (Keplr/Leap + CosmJS `directBroadcast`), and the hub records data only.
 
-**Decision:** The leader may authorize org-decision txs via EITHER of two paths, both supported
-simultaneously. This is a deliberate, manager-directed exception to R-ONE-PATH for this order:
-
-1. **Delegate path** — the leader's wallet grants cosmos `authz` to a delegate session key; the
-   delegate key signs a `MsgExec`-wrapped org-decision msg with `granter = leader wallet`; the hub
-   relays it (`internal/relay/relay.go`, `Delegate <sig>` scheme, granter-must-match check). For
-   high-volume routine signing (e.g. batch approvals).
-2. **Non-delegate (direct) path** — the leader's wallet signs the org-decision tx directly (no
-   delegate key); the hub relays the signed bytes.
-
-In both paths the leader wallet is the on-chain authority and the hub is pure transport + fee
-relay. The operations enumerated in **D-1.3** (report commitment, leadership transfer, org closure,
-`required_approvals`/`report_vote_threshold` changes) MUST use the direct wallet path — they are too
-consequential for a delegate key. Both paths support a multisig leader wallet natively.
-
-**Why:** Different orgs have different security postures. Routine, high-frequency approvals benefit
-from a delegate session key (no wallet popup per action, D-1.1/D-1.3); consequential or
-security-critical actions, and orgs that decline delegate keys entirely, sign directly with the
-(possibly multisig) wallet. Supporting both is worth the two-path cost; the alternative (forcing one)
-either weakens routine UX or weakens security-critical actions.
+*SUPERSEDED by D-ECON-STORAGE-MARKET amendment 13 — the hub relay + delegate-key path is removed; leaders sign chain txs wallet-direct (Keplr/Leap + CosmJS directBroadcast) and the hub records data only.*
 
 ---
 
@@ -2370,14 +2265,15 @@ max-of-two cache only approximated.
 
 **Decision:** Hub credits are an internal PostgreSQL accounting pool per org (`org_credits.balance`,
 hub-only, never on-chain). The org pool is seeded at creation from `fee_model.monthly_credits`
-(`ProvisionOrgLedger`, recorded as a `subscription_grant` txn) and topped up via `TopUp`. A member is
-admitted by subscribing: `Subscribe(orgID, memberPubkey)` atomically debits `SubscriptionCost` (=10)
-from the org pool, sets `members.membership_active = TRUE`, and records a `subscription` txn;
-insufficient balance → explicit `ErrInsufficientCredits` (HTTP 402), member row kept inactive. Recall
-access for NON-TRIAL members is gated SOLELY on `membership_active`; trial members remain governed by
-the orthogonal trial path (expiry + daily limit). The obsolete per-query `DeductQueryCredit` /
-`QueryCost` path (1 credit per query, from the pre-pivot hub-memory model) is DELETED — there is no
-per-query credit metering.
+(`ProvisionOrgLedger`, recorded as a `subscription_grant` txn) and topped up via `TopUp`. Member
+admission is NOT a credit operation: acceptance is the leader-signed on-chain `MsgAddMember`, gated
+only by org VIBE-for-gas via the org-account feegrant (D-S32-ORG-FEEGRANT-ALL), with newly admitted
+members set `active=true, membership_active=false`. Recall access for NON-TRIAL members is gated
+SOLELY on `membership_active` (read at retrieval); `billing.Subscribe(orgID, memberPubkey)` remains as
+the recall-activation primitive for a future explicit "enable recall" surface (not bundled into
+admission). Trial members remain governed by the orthogonal trial path (expiry + daily limit). The
+obsolete per-query `DeductQueryCredit` / `QueryCost` path (1 credit per query, from the pre-pivot
+hub-memory model) is DELETED — there is no per-query credit metering.
 
 **Why:** Memories moved from the hub to the chain (the Sprint-28→32 pivot); the consumer no longer
 "pays per query for a hub lookup." Access is a subscription a member buys from their org; the org's
@@ -2459,38 +2355,7 @@ dogfood realization of the same separation, not a contradiction. (Landed: CO-047
 
 ### D-S32-CO048-EPOCH-COST — Block production was NOT regressed; the consensus floor is the SDK-default 5s `timeout_commit` [CORRECTED — CO-048 NO-OP; supersedes the original falsified mechanism]
 
-**Decision (corrected by CO-048 measurement):** There is NO epoch-hook block-production regression.
-Block interval is a flat ~5.01s set by the Cosmos SDK's default `timeout_commit = 5s`: cosmos-sdk
-v0.53.5 `server/util.go:252-253` overrides cometbft v0.38.20's 1s default to 5s when the chain leaves
-`TimeoutCommit` at the cometbft default, and `init-chain.sh` does not touch it. Under load (≈800
-memories, 4× HEAVY) the per-epoch `AfterEpochEnd` work is negligible against that floor: x/memory decay
-loop ~4-9ms, merkle ~2-6ms, emissions mint/payouts ~0-3ms, and total app `FinalizeBlock` execution
-~12-31ms — i.e. tens of ms against a 5000ms commit floor.
-
-**The "~15s" was a measurement artifact, not block time (Lesson 9).** It is the empirical-replay
-harness's per-epoch CYCLE wall-clock (`traffic + drainServeRelay + waitEpochAdvance`), which spans
-N blocks × 5s: STEADY ≈3 blocks ≈15s, HEAVY ≈5 blocks ≈25s, BOOTSTRAP ≈2 blocks ≈10s. It is throughput
-pacing at a 5s cadence, not a block-production regression.
-
-**Consequence:** the original entry's mechanism — a "~1s cometbft floor" that the epoch hook inflated to
-~15s via redundant `approved/` keyspace walks plus a 2s fast-stack feedback loop — is FALSIFIED. The
-optimizations it proposed (collapse `approved/` walks, scope the Merkle root, bulk-load per-epoch
-serve/denial data) were ABANDONED under R-MEASURE-FIRST: they optimize a non-bottleneck (~tens of ms)
-and would be churn against a 5s floor (R-LONGEVITY). CO-048 shipped NO code; `wevibe-chain` is pristine
-at `8c92385`. Full verbatim evidence (block intervals, FinalizeBlock exec, hook timings, config) is in
-`wevibe-meta/workspace/reports/CO-048-implementation-report.txt`.
-
-**Still binding (independent of the falsified mechanism):**
-- FORBIDDEN to mask cost by lengthening `WEVIBE_EPOCH_DURATION_SECONDS`, changing `IdleDecaySettleEpochs`
-  (untouched at 5), or bounding / paginating / skipping per-epoch decay or emissions work — all change
-  the decay/gate timeline and a half-settled chain is unacceptable (R-DECAY-FROZEN).
-- IF a sub-5s block target is ever desired, it is a `timeout_commit` CONFIG decision (override
-  `Consensus.TimeoutCommit` in `initCometBFTConfig()`), explicitly weighed against consensus stability —
-  NOT an epoch-hook optimization.
-
-**Why the original was wrong:** it measured the harness per-epoch cycle metric and mislabeled it as the
-block interval, and it missed the SDK's 1s→5s `timeout_commit` override. CO-048's instrumentation
-corrected both. (Scoped: CO-048 — closed NO-OP.)
+*FALSIFIED (CO-048, NO-OP). There was no epoch-hook block-production regression; block interval is the SDK-default 5s `timeout_commit`. CO-048 shipped no code. Full evidence: wevibe-meta/workspace/reports/CO-048-implementation-report.txt. (Still binding: never mask cost by lengthening epoch duration or bounding decay — R-DECAY-FROZEN.)*
 
 ---
 
@@ -2703,13 +2568,14 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 - There is NO retrieval/serve-based contributor payout (anti-game).
 - Validators/stakers earn emissions. LEADERS earn NO emissions.
 - Serve/retrieval counts are excluded from ALL VIBE flows (social-only; see D-SG-1).
-- Leader revenue comes from the org demand leg: members pay the org in VIBE for recall access, settling to the org treasury; the leader withdraws revenue (`MsgWithdrawTreasury`).
+- Leader revenue comes from the org demand leg: members pay the org in VIBE for recall access, and the router enforces the protocol burn `max(n%, floor)`.
 - The org's access/payment MODEL is LEADER-CONFIGURED, not protocol-mandated. The leader sets pricing (market-driven) and the access model — including whether/how contributors pay to recall vs are earn-only — via the HUB ACCOUNTING layer (the CO-047 `org_credits` ledger). The protocol does NOT fix a single subscription cadence or price.
 - Subscription pricing is LEADER-SET / market-driven (orgs compete on price vs memory quality).
-- Protocol economic rule on this leg: a SMALL PROTOCOL BURN is taken from org subscription revenue at on-chain settlement; the remainder accrues to the leader treasury. This burn is the deflationary sink that closes the loop.
-- Moderator compensation is LEADER-DISCRETIONARY from the org treasury (`MsgWithdrawTreasury`); there is no protocol-enforced revenue split.
-- CANONICAL CLOSED LOOP: emission -> contributors (contribution-only) + validators/stakers (mint/sell) -> users buy VIBE -> users pay orgs (hub-accounted, leader-set model & price) -> small protocol burn + remainder to org treasury -> leader -> leader pays moderators -> stake/secure -> repeat.
-- IMPLEMENTATION STATUS: DECIDED, not yet built. CO-047 `org_credits` is the hub skeleton (currently non-VIBE, leader-seeded); wiring VIBE subscriptions -> treasury and the protocol burn is a future hub+chain order.
+- The remainder destination is an OPEN custody question (non-custodial leader wallet vs network-held per-org account; WHITEPAPER §13).
+- The prior Treasury/`MsgWithdrawTreasury` custody model is removed, and no withdrawal path is built.
+- Moderator compensation is LEADER-DISCRETIONARY from that open revenue path; there is no protocol-enforced revenue split.
+- CANONICAL CLOSED LOOP: emission -> contributors (contribution-only) + validators/stakers (mint/sell) -> users buy VIBE -> users pay orgs (hub-accounted, leader-set model & price) -> protocol burn + remainder to an OPEN custody destination (leader wallet vs network-held per-org account) -> leader-discretionary moderator pay -> stake/secure -> repeat.
+- IMPLEMENTATION STATUS: DECIDED, not yet built. CO-047 `org_credits` is the hub skeleton (currently non-VIBE, leader-seeded); wiring VIBE subscriptions -> demand-leg router + burn + custody-resolved destination is a future hub+chain order.
 - Org creation BURNS VIBE (deflationary sink): `x/org` `ComputeBurnPrice` -> `BurnCoins`.
 
 **CODE-REMNANT FLAGS (documentation only):** cleanup targets for a future chain order (NOT changed by this doc pass; verify before acting):
@@ -2720,6 +2586,13 @@ Locked 2026-06-02 (Walter). These thresholds are tuned for low testnet volume so
 ---
 
 ### D-ATTEST-ROADMAP: Future Pluggable Attestation (Post-Mainnet Roadmap)
+
+> **PRIORITY ELEVATED (Walter, 2026-06-07):** session attestation — "**user X using model Y took N turns to solve
+> problem Z**" — plus **memory-extraction-MODEL enforcement** is now the **NEXT MAJOR chain-development milestone
+> ("v2")**, sequenced immediately after the hub-served suggested-default extraction model
+> (`D-EXTRACTION-PROFILE-HUB-SUGGESTED`) ships and is tested. This is the v2 pillar that re-introduces a tamper-evident /
+> auditable extraction + session-provenance layer (and is what would justify moving the extraction profile back
+> on-chain). Still gated on the verification infrastructure below.
 
 **Decision:**
 - Post-mainnet roadmap: evolve optional whitepaper §3.10 Session Attestation + §3.11 Two-Layer Difficulty Scoring into a PLUGGABLE attestation framework.
@@ -3047,30 +2920,61 @@ this is the gating fix to "produce the correct memory object."
 
 ### D-EXTRACTION-PROFILE-ONCHAIN: The org's extraction profile lives fully on-chain; the contributor imports it at extract time
 
-**Decision (Walter FORK B + C, "full chain", "on chain now").** Each org carries a leader-configurable
-**Extraction Profile** as on-chain state (`x/org` `StoredExtractionProfile { org_id, profile_version,
-extraction_model, num_ctx, system_prompt, output_schema, domain_framing, exemplars[], constraints,
-updated_at_height }`), set by a leader-signed `MsgSetExtractionProfile` (auth `signer == LeaderWalletAddress`,
-mirroring `MsgSetServingInfo`; keeper bumps `profile_version`), and read over REST at
-`/wevibe/org/v1/extraction-profile/{org_id}` (auto gRPC-gateway). The FULL profile — including exemplars — is
-on-chain, **size-capped in ValidateBasic** (system_prompt ≤ 8192 B, output_schema ≤ 4096, domain_framing ≤ 1024,
-constraints ≤ 4096, extraction_model ≤ 256, ≤ 5 exemplars each ≤ 4096, num_ctx ≤ 131072, **total string bytes ≤
-16384**, `ErrExtractionProfileTooLarge`). Genesis default = empty.
-- **Resolution path (FORK C): chain is SoT, read directly.** The dashboard `/api/extract` fetches the active org's
-  profile from chain REST and forwards `system_prompt`→`prompt`, `num_ctx`, `extraction_model`→`model` to the
-  MCP `/v1/extract` (which now accepts `prompt`/`num_ctx` alongside `model`/`ollama_url`). The hub stores NOTHING
-  for the profile (mirrors D-CHAIN-RESOLVED-HUB-ENDPOINT, one-path). On no-profile/fetch-failure the MCP falls
-  back to its `DEFAULT_EXTRACTION_PROMPT` (the shipped sane default; env `WEVIBE_EXTRACTION_PROMPT` is the only
-  other fallback).
-- **Leader editor** lives in dashboard Settings (leader-gated), broadcasting `MsgSetExtractionProfile` via
-  `directBroadcast` with the org-account feegrant (the msg URL is on the leader feegrant allowlist), with
-  client-side cap validation mirroring the chain.
+> ⚠ **SUPERSEDED IN FULL (Walter, 2026-06-07) by `D-EXTRACTION-PROFILE-HUB-SUGGESTED` below.** The extraction
+> profile is NO LONGER on-chain. It becomes a HUB-SERVED, *suggested-not-enforced* default, and the on-chain
+> `x/org` `StoredExtractionProfile` + `MsgSetExtractionProfile` + size-cap `ValidateBasic` + REST route + the
+> dashboard's chain-direct read are to be **RIPPED** (R-OVERHAUL, no shim; pre-MVP wipe per D-13.9). The original
+> on-chain decision is retained below as historical context only. Reason: the "auditable pillar" that justified
+> on-chain storage is session/model attestation, which is explicitly DEFERRED — so the chain cost buys nothing now
+> and it blocked the cross-browser-profile test loop (host-MCP reachability + IndexedDB origin split).
 
-**Why.** The extraction prompt is the highest-leverage, WeVibe-controllable lever on recall efficacy
-(D-EXTRACTION-MODEL-STANDARD "the controllable half"): it shapes the embedding, the moderation keyword pass, and
-therefore whether a memory ever earns Earned Trust (D-4.2) instead of idle-decaying. Putting it on-chain makes the
-org's stated quality bar the tamper-evident, forkable source of truth a contributor imports and an auditor can
-verify (attestation pillar).
+*Original on-chain design removed — see the SUPERSEDED banner above and D-EXTRACTION-PROFILE-HUB-SUGGESTED below.*
+
+### D-EXTRACTION-PROFILE-HUB-SUGGESTED: Hub-served, suggested-not-enforced extraction default; simplified preset toggle + advanced custom (SUPERSEDES D-EXTRACTION-PROFILE-ONCHAIN)
+
+**Decision (Walter, 2026-06-07).** The org's extraction profile is a **leader-set default that lives in the HUB** and
+is **served to the contributor at extraction time as a SUGGESTION, not an enforced lock.** It is **NOT on-chain.**
+Supersedes D-EXTRACTION-PROFILE-ONCHAIN in full.
+
+- **Leader sets it via the dashboard → the hub stores it** (per-org hub operational config; not chain state, not a
+  signed verification anchor). The editor writes to a hub endpoint; it NO LONGER broadcasts `MsgSetExtractionProfile`.
+- **The hub serves the default to the contributor on extraction.** The contributor's `/api/extract` fetches the org's
+  suggested default from the HUB (not chain REST, not the host-MCP `/v1/extract/defaults`) and uses it to drive local
+  extraction. Both dashboards (hosted :3000, local :3001) reach the hub identically, so this removes the
+  host-MCP-reachability, Docker-rebuild, and IndexedDB-origin obstacles that made the prior path untestable across the
+  leader/contributor browser-profile split.
+- **Suggested, not enforced.** The contributor SEES the suggested prompt and MAY edit/deviate from it.
+- **Deviation is self-penalizing (soft enforcement).** Off-default extraction yields lower-quality memories; the
+  leader/moderators gate those at approval (D-LEADER-SOLE-SIGNER, D-6.1), so deviating is net-negative for the
+  contributor. Continuity of the org's extraction pipeline emerges from incentive alignment — no hard lock, no chain
+  enforcement needed.
+- **Dramatically simplified UI (Walter, 2026-06-07).** The leader's extraction surface is reduced to **the default
+  preset TOGGLE for now** — the 3 locked presets (`factual-strict` / `guardrail-max` / `balanced-reliable`
+  [recommended], from the WSPS-1 design `design-extraction-presets-101.md`) as a simple pick-one — **plus an
+  "Advanced" path where a leader can author their own** prompt/profile. No exposed grid of raw fields by default;
+  advanced is opt-in. The contributor side likewise shows the active suggested default plainly (which preset / a short
+  prompt fingerprint), not a wall of config.
+- **Contributor visibility.** The contributor's extract surface shows the hub-suggested default and records whether the
+  run **used the default or deviated**, riding the existing `derivation` (D-DERIVATION-FLAG) and `preference_confidence`
+  (D-PREFERENCE-QUALITY-SCORE-CARRIED) signals so the leader/mod sees deviation at approval.
+- **RIP the on-chain profile (R-OVERHAUL, no shim).** Remove `x/org` `StoredExtractionProfile` +
+  `MsgSetExtractionProfile` + ValidateBasic caps + REST route + the dashboard chain-direct read + the
+  `MsgSetExtractionProfile` entry on the D-S32-ORG-FEEGRANT-ALL allowlist. The contributor-signed *content* anchor
+  (D-VR-*) is untouched — only the org's extraction *config* moves off-chain. Pre-MVP wipe per D-13.9 covers field
+  removal.
+
+**v2 — NEXT MAJOR CHAIN ROADMAP ITEM (deferred, explicitly NOT now):** session attestation — "**user X using model Y
+took N turns to solve problem Z**" — together with **memory-extraction-MODEL enforcement**, is the **next major
+chain-development milestone (the "v2" pillar)**. It stays D-ATTEST-ROADMAP / D-ATTEST-TEE-TIER (x/attestation
+disabled-but-wired) and D-EXTRACTION-MODEL-STANDARD (a suggested standard, not enforced). When v2 lands, the chain
+regains a tamper-evident / auditable extraction + session-provenance layer; until then the hub-served suggested default
++ approval-gating is the shipped model.
+
+**Why.** The extraction prompt's value today is continuity + quality guidance, not tamper-evidence. A *suggestion* does
+not need the chain's immutability; the hub (the shared serving plane both clients already reach) is the right-sized home
+and keeps one path across the browser-profile split. Enforcement is unnecessary because the approval gate already makes
+deviation net-negative — the incentive does the work the lock would have. On-chain storage only earns its cost once the
+v2 attestation/auditing pillar exists to consume it; that is deferred, so the profile comes off-chain now.
 
 ### D-PREFERENCE-QUALITY-SCORE-CARRIED: preference_confidence is a carried quality-guidance score (hub-side), surfaced before chain commit [extends D-5.2]
 
@@ -3098,7 +3002,7 @@ NOT signed. **Why.** Completes the attestation half alongside the on-chain profi
 **Cross-references.** D-5.1 (memory schema), D-5.2 (preference flag, now a carried score), D-5.6 (extraction unified
 via MCP), D-EXTRACTION-MODEL-STANDARD (pin model + derivation), D-S32-CO048-MEMORY-TYPE-IMPL (single type — chain
 collapse already done), D-CHAIN-RESOLVED-HUB-ENDPOINT (chain-as-directory pattern reused for the profile),
-D-S32-ORG-FEEGRANT-ALL (the new MsgSetExtractionProfile rides the org-account feegrant). Pre-MVP wipe per D-13.9
+D-EXTRACTION-PROFILE-HUB-SUGGESTED (extraction profile is now hub-served, not on-chain). Pre-MVP wipe per D-13.9
 covers the new chain field + hub columns.
 
 ---
