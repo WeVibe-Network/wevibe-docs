@@ -13,7 +13,7 @@ Last reviewed: Sprint 32 (2026-06)
 - [ ] **Docker + Docker Compose installed** on VPS
 - [ ] **All 9 Docker services running** — postgres, qdrant, wevibe-chain, wevibe-umbral, wevibe-social-graph, wevibe-faucet, wevibe-hub, wevibe-mcp, wevibe-dashboard
 - [ ] **Ollama decision** — either: (a) each tester runs Ollama locally for extraction (250MB model download), or (b) run Ollama on VPS without GPU (slower but removes tester friction). Document choice.
-- [ ] **Uptime monitor** — free tier (UptimeRobot or Healthchecks.io) pinging `https://alpha.wevibe.network/health` and alerting Walter
+- [ ] **Uptime monitor** — free tier (UptimeRobot or Healthchecks.io) pinging `https://alpha.wevibe.network/health` and alerting the on-call operator
 
 ### Chain Genesis
 
@@ -22,8 +22,8 @@ Last reviewed: Sprint 32 (2026-06)
 - [ ] **Chain epoch duration** — 12 hours (testable decay/payout cycles within a day)
 - [ ] **min_gas_price** — 0.01 uvibe
 - [ ] **Daily emission** — set a number (e.g., 1000 VIBE/day). Test tokens, no real value.
-- [ ] **validator_share** — 10% (Walter is sole validator, 90% to org contributor pools)
-- [ ] **Walter's validator stake** — genesis allocation (e.g., 100,000 VIBE)
+- [ ] **validator_share** — 10% (single genesis validator; 90% to org contributor pools)
+- [ ] **Genesis validator stake** — genesis allocation (e.g., 100,000 VIBE)
 - [ ] **Tester faucet allocation** — e.g., 1,000 VIBE per tester for gas fees. Manual transfer or simple faucet script.
 - [ ] **Genesis file generated** — `wevibed init` + genesis params configured + validator created
 - [ ] **Validator key backed up** — separate from VPS (offline copy of validator key + node key)
@@ -34,7 +34,7 @@ Last reviewed: Sprint 32 (2026-06)
 - [ ] **Wallet setup guide** — how to add WeVibe alpha chain to Keplr/Leap (custom chain config with RPC endpoint)
 - [ ] **Plugin installation guide** — how to install wevibe-guard plugin in OpenCode, configure `~/.wevibe/plugin-config.json`
 - [ ] **wevibe-mcp connection config** — how to point wevibe-mcp at `alpha.wevibe.network` instead of localhost
-- [ ] **Org creation** — Walter creates the initial org(s) before testers arrive. Testers join via `/discover` + join request.
+- [ ] **Org creation** — the operator creates the initial org(s) before testers arrive. Testers join via `/discover` + join request.
 - [ ] **Communication channel** — private Discord server or Slack workspace. Channels: #general, #bugs, #feedback
 - [ ] **Known limitations doc** — what works, what doesn't, what's expected to break
 - [ ] **Tester tracking** — spreadsheet or Notion with onboarding status, invite sent, credits allocated, feedback recorded

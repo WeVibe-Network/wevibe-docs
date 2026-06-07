@@ -46,9 +46,10 @@ git clone https://github.com/WeVibe-Network/wevibe-social-graph.git
 git clone https://github.com/WeVibe-Network/wevibe-umbral.git
 git clone https://github.com/WeVibe-Network/wevibe-mcp.git
 git clone https://github.com/WeVibe-Network/wevibe-sdk.git
+git clone https://github.com/WeVibe-Network/wevibe-faucet.git
 ```
 
-Also ensure the faucet service is present at `./faucet` (compose build context: `../faucet`).
+The faucet service is built from `./wevibe-faucet` (compose build context: `../wevibe-faucet`).
 
 ## Bring up the stack
 
