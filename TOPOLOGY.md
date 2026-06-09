@@ -1115,6 +1115,37 @@ benchmark-adversarial/
 
 ---
 
+## wevibe-sim/recall-sim/ — Recall-Alignment Simulation Suite
+
+**Language:** Node.js (ES modules)  
+**Purpose:** Offline, decision-grade validation of recall/extraction quality (DECISIONS.md `D-RECALL-ALIGNMENT`). Lives under `wevibe-sim/` (NOT a git repo). Mirrors the REAL extract→keyword→embed→rank pipeline and reads the REAL shipping extraction prompts from `wevibe-mcp/prompts/`. The ranker (`pipeline/rank.mjs`) is an exact mirror of the hub `retrieval.go` scoring (cosine + γ keyword boost + keyword gate + power-law sampling + new-memory boost + denial decay); `pipeline/retrieve-c3.mjs` replicates the C3 (full-proposal) cell. Embeddings use local `nomic-embed-text` (768-d), identical to production.
+
+### Structure
+
+```
+recall-sim/
+├── config.mjs            # single source of truth: models, scale, watchdog caps, ablation CELLS
+├── lib/                  # prng, parallel worker-pool, isolated-opencode LLM client, watchdog
+├── pipeline/             # prompts, embed, rank (retrieval.go mirror), query, extract, keywords,
+│                         #   retrieve-c3 (C3 top-1), solve, judge
+├── corpus/               # domains, gen-sessions, build-corpus, scenarios
+├── eval/                 # retrieval eval (Recall@k/MRR/nDCG/separation/%lost-to-gate) + ablation matrix;
+│                         #   behavioral eval (3-arm) + metrics
+└── results/<timestamp>/  # matrix.json + summary.md per run
+```
+
+### Two evals
+- **Retrieval eval** (`npm run sim:eval`, CPU-only) — ranks a synthetic corpus against synthetic queries across an ablation matrix (C0 prod-baseline … C3 full-proposal); measures whether the situation-centric `retrieval_card` representation ranks the gold memory highly.
+- **Behavioral eval** (`npm run sim:behavioral`) — 3 arms per (scenario, lower-tier model): no injection / oracle-gold injection / realistic top-1 from the C3 retrieval pipeline; a blind `opus-4.8-fast` judge scores each answer 0–3 against the extracted ground-truth lesson; reports per-arm lift + C3 in-set retrieval hit-rate.
+
+### Parity invariant (Stage-1 anti-drift)
+Because `rank.mjs`/`retrieve-c3.mjs` are hand-ports of the Go retrieval path (note the `// Source: wevibe-sim/ranking-fix.js` citation in `retrieval.go`), sim and product can silently drift. The planned guard is a **cross-language parity harness**: shared golden fixtures (known inputs → known rankings) that BOTH the Go retrieval tests and the JS sim must satisfy, so any divergence fails CI rather than relying on manual vigilance.
+
+### Execution policy
+Every run is MANAGER-run, wrapped in `timeout` + an in-process watchdog (per-call kill, per-stage wall-clock cap, spawn-budget cap, 15s heartbeats). Cloud LLM calls run in an isolated working dir (`--dir`) so the workspace `AGENTS.md` is never injected into generation/extraction; sessions are scrubbed after each run.
+
+---
+
 ## backend/ — Minimal Express Backend
 
 **Language:** Node.js/Express  

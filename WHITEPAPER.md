@@ -305,6 +305,9 @@ Hub retrieval returns memory IDs + metadata + matched keywords. The MCP/plugin t
 #### Selective Re-ranking
 When top-2 scores are within ε=0.20 (contested query), the MCP/plugin can use the host agent's LLM to re-rank. Fallback: original order preserved on error.
 
+#### Validation (offline simulation)
+The situation-centric retrieval direction (DECISIONS.md `D-RECALL-ALIGNMENT`) was validated offline before product implementation. An offline harness that mirrors the extract→embed→rank pipeline (same `nomic-embed-text` model and the production ranking logic) measured, on a model-generated synthetic corpus: embedding a situation-centric **retrieval card** instead of a keyword bag raised Recall@1 from **0.38 to 0.95** (the full proposal — retrieval card + session need-card + boost-not-gate keywords — reached Recall@1 **0.97** / Recall@5 **1.00**). A complementary behavioral test showed that injecting the retrieved memory raised a weaker model's task-correctness by **~0.7 on a 0–3 scale**, capturing ~94% of the perfect-retrieval ceiling, with the pipeline retrieving the correct memory ~96% of the time. These are offline, single-seed, synthetic-corpus results — they validate the direction and gate implementation; they are not production performance guarantees, which await alpha telemetry.
+
 ### 3.6 Side Channel: On-Chain Metadata
 
 With memories stored on-chain and retrieval served by the hub, metadata is observable across two hosted surfaces. On-chain/public observers can see org IDs, contributor pub keys, submission timestamps, memory sizes, keyword terms/weights (plaintext), serve attestation patterns, and reputation scores. In the hub, Qdrant stores embedding vectors plus keyword metadata (`cid`, `org`, `keyword_weights`, `lifecycle`, `type`), while ciphertext is stored in Postgres/chain paths for retrieval.
