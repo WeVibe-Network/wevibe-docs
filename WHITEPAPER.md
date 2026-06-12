@@ -4,7 +4,7 @@
 *Build public coding reputation and collectible badges from daily agent work; shared memory powers your next session as the bonus.*
 
 Draft v2.5 · June 2026 · Architecture Document
-Classification: Confidential — Not for public distribution
+Classification: Public
 
 ---
 
@@ -105,7 +105,7 @@ The plugin is installed in the developer's coding environment (OpenCode, Claude 
 
 **Why not MCP elicitation?** Elicitation is useful in theory, but inconsistent across clients and weak as a hard-interrupt safety surface. The plugin provides deterministic interruption, clear modal UX, and explicit confirmation.
 
-> **Alpha-status honesty.** [Gated approval] is the product contract and the locked default (D-11.5). Current plugin code force-sets the ungated path — a known defect, BLOCKING-FOR-EXTERNAL-USERS, tracked as GAP-MI-1. The invariant above describes the contract; this note flags the code.
+> **Alpha-status honesty.** [Gated approval] is the product contract and the locked default (D-11.5). The injection gate (`gateMemories`) is defined but not yet wired into the recall path, so memory injection is currently ungated — a known defect, BLOCKING-FOR-EXTERNAL-USERS, tracked as GAP-MI-1. The invariant above describes the contract; this note flags the code.
 
 ### 1.5 WeVibe's Architecture: Protocol, Not Platform
 
@@ -546,7 +546,7 @@ Developer works in their coding session
 
 This is the intended alpha model: plugin-side live-signal harvesting for recall query construction, local decrypt/guard checks, and gated injection by default. The product contract above is fixed; implementation sophistication is still being hardened during alpha.
 
-> **Alpha-status honesty.** [Gated approval] is the product contract and the locked default (D-11.5). Current plugin code force-sets the ungated path — a known defect, BLOCKING-FOR-EXTERNAL-USERS, tracked as GAP-MI-1.
+> **Alpha-status honesty.** [Gated approval] is the product contract and the locked default (D-11.5). The injection gate (`gateMemories`) is defined but not yet wired into the recall path, so memory injection is currently ungated — a known defect, BLOCKING-FOR-EXTERNAL-USERS, tracked as GAP-MI-1.
 
 ### 4.5 Contribution Flow
 
