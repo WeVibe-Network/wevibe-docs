@@ -197,10 +197,10 @@ GET    /v1/notifications/unread-count
 POST   /v1/notifications/mark-read                                # Mark notifications as read
 GET    /v1/notifications/ws                                       # WebSocket for real-time notifications
 
-# Internal PRE sidecar calls (CO-218)
-POST   /v1/internal/reencrypt                                     # Sidecar ReEncrypt RPC wrapper
-POST   /v1/internal/epoch-keypair                                 # Sidecar GenerateEpochKeyPair wrapper
-POST   /v1/internal/orgs/{orgID}/kfrags                           # Sidecar RegisterMember kfrag generation
+# PRE sidecar / leader-side kfrag delivery
+POST   /v1/orgs/{orgID}/members/{pubkey}/kfrag                    # Leader-signed StoreKFrag (finished kfrag minted leader-side)
+# (Internal reencrypt happens inside QueryMemories; the hub never mints epoch keys or kfrags —
+#  GenerateEpochKeyPair/RegisterMember + /v1/internal/epoch-keypair + /v1/internal/orgs/{id}/kfrags were RIPPED, D-LEADER-SIDE-UMBRAL-MINT)
 
 # Dev-only billing topup (WEVIBE_DEV_ENDPOINTS=1)
 POST   /v1/billing/topup
@@ -647,7 +647,9 @@ CreateOrgRequest         — org_id, leader_pubkey, leader_x25519_pubkey, org_na
 RotateEpochRequest       — new_pk_mod, signed_by, signature, envelopes []MemberEnvelopePair (+ server-side umbral_pk storage field)
 EpochManifestResponse    — org_id, epoch_id, pk_mod, umbral_pk, signed_by, signature, created_at
 MemberRecord             — org_id, pubkey, x25519_pubkey, role, join_epoch, history_access_from_epoch, authorized_until_epoch, active, joined_at
-InviteMemberRequest     — pubkey, x25519_pubkey, pre_pubkey, role, signed_by, signature, enc_envelope, search_envelope, mod_envelope, epoch_sk
+InviteMemberRequest     — pubkey, x25519_pubkey, pre_pubkey, role, signed_by, signature, enc_envelope, search_envelope, mod_envelope  (NO epoch_sk — kfrags are minted leader-side and delivered via StoreKFrag)
+StoreMemberKFragRequest  — epoch_id, pre_pubkey, kfrag  (leader-signed; POST /v1/orgs/{orgID}/members/{pubkey}/kfrag)
+CreateOrgRequest         — …, umbral_pk (hex, leader-derived epoch public key), org_id, tx_hash  (NO epoch_sk_envelope)
 RemoveMemberRequest      — signed_by, signature
 KeyEnvelopeResponse      — org_id, epoch_id, enc_envelope, search_envelope, mod_envelope *string
 MemberEnvelopePair       — pubkey, enc_envelope, search_envelope, mod_envelope *string
@@ -983,7 +985,7 @@ src/
 ├── retrieval-card.ts    # Q-B retrieval card construction (serializeMemoryText, parseMemoryText, buildRetrievalCard, buildAnticipatedNeed); NeedHarvest for query need-card
 ├── ocr-sanitize.ts      # OCR artifact sanitization for embedding input
 ├── moderation.ts        # Moderation handling — vote, approve, deny; embed-card call with {strictAnticipated:false}
-├── sidecar.ts           # Umbral PRE gRPC sidecar subprocess wrapper (encrypt/decrypt-reencrypted/GenerateKFrags/ReEncrypt/DeleteKFrags)
+├── sidecar.ts           # Umbral PRE sidecar wrapper — CLI: encrypt/decrypt-reencrypted/derive-epoch-keypair/generate-kfrags (leader-side mint); gRPC client to hub sidecar for StoreKFrag/ReEncrypt/DeleteKFrags only
 ├── vault.ts             # Persistent encrypted credential vault (~/.wevibe/vault)
 ├── pending-vault.ts     # In-flight submission vault with encryption + retry
 ├── key-store.ts         # Disk-backed keystore for PRE identity, epoch secrets, Shamir shares
@@ -1545,7 +1547,12 @@ KFrag store updated (kfrags deleted for removed member)
 1. `auth.ts` loads/generates PRE identity and stores secret key hex in keystore account `pre-identity-key`.
 2. On startup, wevibe-mcp loads memberships and calls `POST /v1/orgs/{orgID}/members/{pubkey}/pre-key` for each org.
 3. Query calls send `pre_pubkey` from cached PRE identity.
-4. Invite calls send invitee `pre_pubkey` and leader-supplied `epoch_sk`; create/rotate responses persist `epoch_sk` + `epoch_pk` locally.
+4. Invite/create/rotate: the leader derives the epoch keypair from K_master locally (`epoch_sk = HKDF(K_master, info="wevibe-umbral-epoch-{epoch}")`), mints kfrags locally, and delivers only the finished kfrag (StoreKFrag) + the epoch public key `umbral_pk`. No `epoch_sk` is sent to the hub; no `epoch_sk`/`epoch_pk` is persisted (re-derivable from K_master). See D-LEADER-SIDE-UMBRAL-MINT.
+
+**B2 org-setup bridge (wevibe-mcp host :4450, bearer session-token; dashboard delegates org crypto here — browser cannot run Umbral):**
+- `POST /v1/org-setup {org_name, domain, leader_wallet}` → MCP generates K_master, derives `umbral_pk`, mod identity, seals envelopes, signs the create-org canonical; holds `{masterKey, modPrivkey}` in-process by `setup_id` (30-min TTL); returns `{setup_id, payload, recovery_phrase}` (private keys never returned).
+- `POST /v1/org-setup/finalize {setup_id, org_id}` → MCP persists `master` + `mod-privkey` keystore envelopes under the chain-assigned `org_id` (chain-first; org_id unknown until the Keplr broadcast).
+- `POST /v1/provision-recall {org_id}` → `provisionRecall`: derive epoch_sk, mint kfrag for the member's pre_pubkey, register pre-pubkey, StoreKFrag.
 
 **Retrieval flow (CO-218/CO-221 — PRE re-encryption):**
 1. Consumer posts query with `pre_pubkey` (their secp256k1 PRE public key)
@@ -1556,15 +1563,15 @@ KFrag store updated (kfrags deleted for removed member)
 6. Hub returns cfrag + capsule + umbral_ciphertext to consumer (hub never sees plaintext DEK)
 7. Consumer decrypts locally with `decrypt-reencrypted`
 
-**Hub-owned kfrag lifecycle (CO-218, Option C):**
-- Hub triggers kfrag generation on member invite (calls sidecar `GenerateKFrags` with epoch SK)
+**Leader-side kfrag lifecycle (D-LEADER-SIDE-UMBRAL-MINT — supersedes CO-218 "Option C"):**
+- The LEADER mints kfrags locally (MCP umbral CLI, from the K_master-derived epoch_sk + member pre_pubkey) and StoreKFrags the finished kfrag to the hub sidecar (the hub never holds epoch_sk and never mints).
 - Hub triggers kfrag deletion on member removal (calls sidecar `DeleteKFrags`)
 - No chain event subscription needed for Phase 1
 
-**Internal PRE endpoints (CO-218, was 501):**
-- `POST /v1/internal/reencrypt` — calls `umbralService.ReEncryptForMember`
-- `POST /v1/internal/epoch-keypair` — calls `umbralService.GenerateEpochKeyPair`
-- `POST /v1/internal/orgs/{orgID}/kfrags` — calls `umbralService.RegisterMember`
+**PRE endpoints (hub sidecar keeps ReEncrypt + StoreKFrag + DeleteKFrags + DeleteOrgKFrags + Health only):**
+- `ReEncryptForMember` is called inside `QueryMemories` (recall) — no separate internal endpoint.
+- `POST /v1/orgs/{orgID}/members/{pubkey}/kfrag` — leader-signed → `umbralService.StoreKFrag` (stores a finished kfrag).
+- RIPPED (D-LEADER-SIDE-UMBRAL-MINT): `umbralService.GenerateEpochKeyPair`, `umbralService.RegisterMember`, `POST /v1/internal/epoch-keypair`, `POST /v1/internal/orgs/{orgID}/kfrags`, and the sidecar gRPC `GenerateKeyPair`/`GenerateKFrags` RPCs.
 
 **Denial Attestation Flow (CO-225; consumer loop finalized 2026-05-25 per D-2026-05-25-A):**
 ```
@@ -1655,9 +1662,10 @@ payout_per_memory counted (not payout_per_serve)
 - `ApproveRequest`: `wrapped_dek_enc` replaced by `umbral_capsule` + `umbral_ciphertext`
 - `MemoryResult`: PRE retrieval fields `cfrag`, `capsule`, and `umbral_ciphertext` (wevibe-mcp retrieval path consumes PRE fields only)
 - `QueryResponse`: new field `requires_reencryption` ([]string) — CIDs of old-format memories
-- `InviteMemberRequest`: fields `epoch_sk` + `pre_pubkey`
+- `InviteMemberRequest`: field `pre_pubkey` (NO `epoch_sk` — kfrags minted leader-side, delivered via StoreKFrag)
 - `POST/GET /v1/orgs/{orgID}/members/{pubkey}/pre-key`: member PRE key registration/lookup
-- `CreateOrgResponse` / `RotateEpochResponse`: new fields `epoch_sk` and `epoch_pk` (hex)
+- `POST /v1/orgs/{orgID}/members/{pubkey}/kfrag`: leader-signed StoreKFrag `{epoch_id, pre_pubkey, kfrag}`
+- `CreateOrgRequest`: field `umbral_pk` (HEX, leader-derived epoch public key; was `[]byte`); no `epoch_sk`/`epoch_pk` in any create/rotate response (leader derives locally from K_master). D-LEADER-SIDE-UMBRAL-MINT.
 
 **CO-216-F2 Resolution (CO-217):** Sidecar tests added (9 tests in `tests/integration.rs`)
 **CO-216-F3 Resolution (CO-217):** gRPC stubs generated from proto, hand-written types removed
