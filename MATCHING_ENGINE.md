@@ -163,6 +163,59 @@ The contested path remains the silent-failure-prevention mechanism: when the eng
 
 ---
 
+## The Recall Governor — Consumer-Facing Recall (Walter-locked 2026-06-18)
+
+**Owning decisions:** D-RECALL-INJECTION-VISIBLE, D-RECALL-CONSUMER-MATRIX-2x2, D-RECALL-FEEDBACK-FOUR-BUTTON, D-RECALL-GOVERNOR, D-RECALL-TRAJECTORY (DECISIONS.md). This section governs what happens **after retrieval, before injection** — the layer that turns a ranked candidate set into a tailored, fatigue-aware user experience.
+
+**Implementation status (thin-client / fat-backend overhaul — SHIPPED 2026-06-19):** relevance governing lives in the **hub**, not the client. The hub accepts per-request `relevance_floor` + `surface_budget` knobs, filters below-floor candidates *before* the D-9.4 sampler, caps the governed top-N, and returns the governed set plus the full per-query scoring breakdown. The plugin **sends** its configured floor/budget (`~/.wevibe/plugin-config.json`, default floor 0.55 / budget 3) and trusts the hub-governed set — its old in-plugin floor/sort/budget governor and headless auto-accept were removed. The MCP forwards the knobs and decrypts only the governed set. Live-verified: identical on-topic query governed 6→3, off-topic 6→0 (cross-context bleed eliminated). Still **planned, not shipped:** the δ-cap (D-9.3), plugin consumption of the `contested` flag, and trajectory recall (see below).
+
+**The structural principle (carve this into the design):**
+
+> Retrieval may be generous. Injection is earned by relevance. Interruption is earned by risk. Serve attribution is earned by surfacing past the bar. Quality judgment is earned by deliberate user action. Never fabricate a signal — in either direction — that the human did not give.
+
+The root error the governor corrects: the current implementation treats *retrieval success* as both (1) evidence of relevance and (2) evidence that human review is warranted. Those are different questions. Relevance and risk are **orthogonal axes**:
+
+```
+                  LOW RISK                 HIGH RISK
+HIGH RELEVANCE    auto-inject (serve)      HUMAN GATE (interrupt)
+LOW  RELEVANCE    suppress                 suppress (never surfaced)
+```
+
+Only the high-relevance + high-risk quadrant earns an interruption.
+
+### Injection is earned by relevance (D-RECALL-GOVERNOR)
+
+- **Absolute relevance floor (SHIPPED, hub-side).** Previously there was no floor — Qdrant was queried with no `score_threshold` and `probabilisticRank` returned exactly `limit` items regardless of absolute score. Now the hub accepts a per-request `relevance_floor` and drops candidates whose combined score is below it *before* the sampler. The floor is calibrated and configurable (default 0.55; client-sent). **Zero-injection is a valid, healthy outcome.** Top-K is not relevance; top-K is "the least-bad candidates."
+- **Use the hub score, not substring re-rank (SHIPPED).** The plugin previously discarded the hub's authoritative score and re-sorted by naive `text.includes(promptWord)` substring hits (with a "no hits → inject everything" fallback). That client-side heuristic was removed; the plugin now trusts the hub-governed, hub-ranked set.
+- **δ-cap the keyword boost.** Implement the D-9.3 cap `capped_boost = min(γ·keyword_boost, δ·vector_score)` (γ=0.1, δ=0.15), currently absent from `ranking_core.go`. Update the sim mirror + recall eval together to preserve D-RECALL-ALIGNMENT parity.
+- **Surface budget (attention cap — SHIPPED, hub-side).** The hub accepts a per-request `surface_budget` that caps the governed top-N (client-sent, default 3) — distinct from the arbitrary semantic caps removed earlier. The floor decides *relevance*; the budget protects *cognitive bandwidth*. It survives model/embedding/ranking swaps.
+- **Contested-twin suppression.** Consume the hub's `contested` flag (already returned, currently ignored by the plugin): surface one of a near-tied pair cleanly rather than injecting both. Full LLM disambiguation stays deferred (needs a capable local LLM; would block the non-blocking plugin path).
+
+### Interruption is earned by risk; visibility is mandatory (D-RECALL-INJECTION-VISIBLE, D-RECALL-CONSUMER-MATRIX-2x2)
+
+- **No memory is injected the user cannot see.** The **approval popup** (TUI dialog) is the canonical surfacing surface and shows the full memory + trust/risk detail. OpenCode cannot render plugin-injected text into the visible transcript (issue #885), so the popup — plus a toast + session review log for the direct-inject modes — is how the invariant holds. Hiding injection in the invisible system-prompt path with no visible trail is disallowed.
+- **Popup border is color-coded by risk:** green (safe/trusted/guard-clean) / amber (low-trust or low-confidence) / red (guard-flagged).
+- **Four consumer options (2×2, retires "risk appetite"):** content `[All memories | Negative signals only]` × gate `[Direct inject | Approval gate]`. Default = All + Approval gate.
+- **Non-defeatable safety override:** in ALL four modes a wevibe-guard-flagged candidate forces a one-off popup. "No gate" governs the routine path only; the scanner is never skipped.
+- **Deferred-but-planned:** per-candidate quality labelling, the batched quality tray, and the "gated on risk" smart-gate third mode. For now the four binary options stand, and the floor + surface budget contain fatigue by keeping injected volume small.
+
+### Feedback: Accept / Deny / Block / Report (D-RECALL-FEEDBACK-FOUR-BUTTON)
+
+| Action | Meaning | Local | Corpus (D-4.2) |
+|---|---|---|---|
+| Accept | use it | injected | **serve** (positive) |
+| Deny | "not useful now" | suppress this session/context | **neutral** (context ≠ quality) |
+| Block | "not useful ever" | permanent personal blacklist | **global denial** (aggregate of distinct blockers) |
+| Report | harmful / wrong | block + escalate | on-chain accountability |
+
+The global corpus down-vote moves **Deny → Block** (Deny was previously conflated as both local-forever + global down-vote). The decay FORMULA is unchanged (R-DECAY-FROZEN); only the upstream action that emits a denial event moves. **Auto-injected memories emit a *serve*, never an *approval*** — the relevance floor is what makes that auto-serve an honest D-4.2 signal. The Block/Deny negative path is the load-bearing self-correction once the safe majority auto-serves; keep it cheap, and never fabricate a synthetic negative (an ignored injection is not a denial).
+
+### Anticipatory / "story" recall (D-RECALL-TRAJECTORY — planned, tuning-gated)
+
+Recall evolves from isolated per-prompt queries to **trajectory-aware** retrieval: the session need-card accumulates the direction of the work, position-1 stays the "right-now" answer, and later memories surface progressively as the work moves — recall as a story, anticipating the next need. Recall already re-fires per prompt (so mid-course change already happens); the enhancement is trajectory-carry + progressive non-repeating surfacing, client-side in the need-card. Additive — does not touch the frozen decrypt flow or the frozen decay. Compute is cheap (ranking math); embedding is a cloud API call, Qdrant runs on the hub VPS, and a modest no-GPU box covers alpha unless a local per-turn LLM rerank is later required.
+
+---
+
 ## Recall Flow (end-to-end)
 
 ```
@@ -170,6 +223,7 @@ Agent calls wevibe_recall(query)
         │
         ▼
 MCP extracts keywords + embedding from query (LLM-based)
++ forwards client relevance_floor + surface_budget
         │
         ▼
 Hub → Qdrant: vector similarity + keyword scoring (D-9.3)
@@ -178,17 +232,23 @@ Hub → Qdrant: vector similarity + keyword scoring (D-9.3)
 Hub: candidate set ranked by final_score
         │
         ▼
+Hub: drop candidates below relevance_floor (D-RECALL-GOVERNOR)
+        │
+        ▼
 Hub: position 1 = strict top-1
      positions 2..N = tempered power-law sample by score (D-9.4)
+        │
+        ▼
+Hub: cap governed set to surface_budget (top-N)
         │
         ▼
 Hub: contested check (score gap pos1 vs pos2 < 0.20?)
         │
         ▼
-Hub returns: { results[], contested: bool }
+Hub returns: { results[] (governed set), contested: bool, scoring_breakdown }
         │
         ▼
-MCP decrypts all returned memories (PRE re-encryption flow)
+MCP decrypts the hub-governed set (PRE re-encryption flow)
         │
         ├── NOT contested ──▶ Plugin renders approval UI with top result
         │                     User accepts/denies/reports
@@ -243,8 +303,8 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 | Component | Decides | Does not decide |
 |-----------|---------|-----------------|
 | Chain (`x/memory`) | Per-keyword weight evolution (D-4.2), archive transitions (D-4.4) | Which position a memory was served in, vector similarity |
-| Hub (`internal/retrieval`) | Candidate scoring (D-9.3), position assignment (D-9.4), contested detection | Memory content, decay formula, which memory is "better" |
-| MCP client | Keyword extraction, embedding, disambiguation formatting, encryption/decryption | Scoring, ranking, what to surface |
+| Hub (`internal/retrieval`) | Candidate scoring (D-9.3), position assignment (D-9.4), contested detection, **relevance-floor + surface-budget governing of the surfaced set (D-RECALL-GOVERNOR)**, full per-query scoring breakdown | Memory content, decay formula, which memory is "better" |
+| MCP client | Keyword extraction, embedding, **forwarding the client floor/budget knobs to the hub**, disambiguation formatting, encryption/decryption of the governed set | Scoring, ranking, the floor/budget values, what to surface |
 | Local LLM | Keyword generation, memory summaries, comparison analysis | Approval/denial, ranking |
 | Moderator | Content quality, duplicate resolution, supersession | Keyword weights, scoring parameters |
 | Agent | Which memory to apply based on user context, what clarifying questions to ask | What memories exist, how they scored |
@@ -279,7 +339,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 2. **Does not handle topic drift.** A memory that was correct under React 17 and is wrong under React 19 still requires human supersession through moderation similarity review in the approval flow. Decay catches contradiction at the same point in time; it does not catch deprecation across time.
 
-3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's three-button UX (Accept+Attest, Deny, Report) is the data source. Orgs with `serve_attestation_required = false` and few denials will see slower convergence.
+3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's four-button UX (Accept+Attest, Deny, Block, Report — D-RECALL-FEEDBACK-FOUR-BUTTON) is the data source. Orgs with `serve_attestation_required = false` and few denials will see slower convergence.
 
 4. **Does not eliminate contested ambiguity.** Probabilistic exploration breaks the ranking-loss death spiral but does not make every query unambiguous. The contested path remains the safety net for near-tied scores.
 
