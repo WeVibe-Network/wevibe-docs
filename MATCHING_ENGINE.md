@@ -214,6 +214,14 @@ The global corpus down-vote moves **Deny → Block** (Deny was previously confla
 
 Recall evolves from isolated per-prompt queries to **trajectory-aware** retrieval: the session need-card accumulates the direction of the work, position-1 stays the "right-now" answer, and later memories surface progressively as the work moves — recall as a story, anticipating the next need. Recall already re-fires per prompt (so mid-course change already happens); the enhancement is trajectory-carry + progressive non-repeating surfacing, client-side in the need-card. Additive — does not touch the frozen decrypt flow or the frozen decay. Compute is cheap (ranking math); embedding is a cloud API call, Qdrant runs on the hub VPS, and a modest no-GPU box covers alpha unless a local per-turn LLM rerank is later required.
 
+### Observability: Recall Health dashboard (D-RECALL-OBSERVABILITY — ALPHA-ONLY, privacy-bounded)
+
+The hub persists, per recall query, the ranking inputs it receives (keyword_weights, relevance_floor, surface_budget, model, vector dim) plus the **full per-candidate scoring breakdown tagged with a disposition** (`returned` / `below_floor` / `over_budget_unsampled`) — tables `query_log` + `query_candidate_scores`. The leader-only dashboard "Recall Health" page reads aggregate health from these via `GET /v1/orgs/{org}/recall-health` and renders an at-a-glance gauge strip (floor fidelity / restraint / zero-injection / contested / serve:denial) + a disposition stacked bar, alongside the **sim benchmark** (the C0→C3 `matrix.json` scorecard) as a validated reference.
+
+The honest framing is load-bearing: the **sim has ground truth** (real Recall@k/MRR/nDCG); the **live system does not** — its metrics are behavioral proxies. The page shows whether the deployed system operates in the regime the sim validated, **not** a head-to-head Recall@k. Live "floor fidelity" (returned-vs-below-floor score gap) is the closest cousin of the sim's `mean_separation` but is computed differently and on a different scale — never read them as the same number.
+
+**Privacy boundary (CANONICALUX §0 / D-MISSION-INVARIANT):** `query_log` is durable, hub-only, unanchored, non-re-derivable state — exactly what §0 forbids — permitted ONLY as time-bounded sacrificial fine-tuning telemetry while alpha is single-user (leader = only member = hub operator), and raw query text is **not** logged. Before any multi-tenant / external-operator deployment this persisted view is **replaced by a realtime, non-persisted** observability surface so no future hub operator can read members' recall activity. This replacement is a hard precondition of multi-tenant.
+
 ---
 
 ## Recall Flow (end-to-end)
