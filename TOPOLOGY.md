@@ -1168,6 +1168,21 @@ POST /fund?address=<addr> — sends VIBE tokens, returns tx hash or error
 
 ---
 
+## Personal Memory Layer — Bounded, Pull-Mode Local Memory (Stage 1 LIVE via CodeGraph; Stage 2 design-locked)
+
+**Implementation:** Stage 1 = **CodeGraph** (external `codegraph` CLI + MCP server, MIT, on PATH; index at workspace-root `.codegraph/`). Stage 2 (planned) = a `PersonalMemoryProvider` interface in `wevibe-opencode-plugin`.  
+**Purpose:** Deterministic, on-demand (pull-mode) recall of KNOWN facts about the user's own repo/work — repo/code map, durable project facts/decisions, session-handoff state. Distinct from shared org memory and explicitly NOT a predictive context-injector (that lane is the org recall pipeline, D-RECALL-ALIGNMENT).  
+**Status:** Stage 1 LIVE (CodeGraph wired as a separate opencode MCP, 2026-06-19, telemetry off); Stage 2 DESIGN-LOCKED (D-PERSONAL-MEMORY, GAP-PERSONAL-MEMORY) — not started.
+
+### Design
+- **Partition (load-bearing):** runs OUTSIDE the org-memory security path (PRE decrypt, guard, gate); no third-party engine is fused into the security-critical plugin/hub.
+- **Boundary:** pull/deterministic only; never speculative session-start injection (the over-injection failure mode the boundary exists to prevent).
+- **Stage 1 (LIVE):** **CodeGraph** is the deterministic layer — workspace-root `.codegraph/` graph (768 files / 19.5k nodes / 53.7k edges, all repos, auto-syncs); module `TOPOLOGY.md` files remain the curated narrative layer on top; usage steered in AGENTS.md "CodeGraph — code navigation". Manager + delegates inherit the `codegraph_codegraph_*` MCP tools (verified on `gather`).
+- **Stage 2 (planned):** a stable `PersonalMemoryProvider` interface (store/retrieve/forget/health); predictive-personal recall served through WeVibe's own aligned pipeline as a private corpus (NOT a bolt-on). BYO opt-in note: agentmemory/mem0/supermemory are *predictive* engines (excluded push lane) — a discouraged, out-of-support hatch, NOT the deterministic default (CodeGraph fills that).
+- **Invariant:** local/personal scratch, NOT hub-durable, NOT chain-anchored; excluded from the rebuildable contract (CANONICALUX §15 disposability drill unaffected); exit = re-index from local source.
+
+---
+
 ## wevibe-opencode-plugin — OpenCode TUI Onboarding Plugin
 
 **Language:** TypeScript/React  

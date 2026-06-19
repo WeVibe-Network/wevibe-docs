@@ -3,7 +3,7 @@
 **Social Reputation + Shared Memory for Vibe Coders**
 *Build public coding reputation and collectible badges from daily agent work; shared memory powers your next session as the bonus.*
 
-Draft v2.5 · June 2026 · Architecture Document
+Draft v2.6 · June 2026 · Architecture Document
 Classification: Public
 
 ---
@@ -12,6 +12,7 @@ Classification: Public
 
 | Version | Summary |
 |---|---|
+| v2.6 | Personal-memory layer scoped (D-PERSONAL-MEMORY): a bounded, pull-mode/deterministic local memory distinct from shared org memory; predictive recall for new problems stays the org pipeline's lane; provider interface open, one default packaged, BYO opt-in. Design-locked, not built. |
 | v2.5 | Extraction-provenance honesty pass (DMO-032): trust-circle parity; cloud-mainstream extraction canonized; session-matched default; locality claims scoped. |
 | v2.4 | Mission-integrity pass (DMO-030): exit-guarantees invariant; custody resolved non-custodial; serve-signing target reconciled; direct-broadcast model; semantic-shadow disclosure; settlement-description reconciliation; GAP-MI register cross-refs. |
 | v2.3 | Social-first repositioning for individual vibe coders/small crews; hub is live (not eliminated); public keywords are a discovery feature; chain-resolved hub-endpoint + onboarding posture added. |
@@ -60,6 +61,8 @@ Leaders are domain experts responsible for memory quality, not faceless administ
 Orgs are intentionally broad across experience levels: newer coders join to learn faster; experienced coders contribute high-signal memories, mentor standards, and build reputation. The org remains the container. The vibe coder remains the protagonist.
 
 Public plaintext keywords are part of this model by design. They are discovery labels that help people find relevant memory collections quickly — not secrets, and not treated as a risk narrative in this document.
+
+**Personal memory vs shared org memory (bounded, pull-mode).** Shared org memory — the curated, encrypted, chain-anchored collection described throughout this document — is WeVibe's predictive lane: it answers the *new* problem ("has someone solved something like this?") via situation-matched recall (Section 3.5). A coder's **personal memory** is a deliberately *different and bounded* layer: deterministic, on-demand (pull-mode) recall of KNOWN facts about their own repo and work — a repo/code map, durable project decisions, session-handoff state — retrieved on request, never speculatively injected at session start. The boundary is load-bearing: speculative context-injection for new problems is exactly where general personal-memory tools over-inject and add noise, and it is the lane WeVibe's curated org recall already wins. Personal memory is therefore scoped to *pull, not push*; any predictive/semantic personal recall (a coder's own past solutions, pre-contribution) is served through WeVibe's own aligned pipeline as a private corpus — not a bolted-on engine — which doubles as the on-ramp to contribution. WeVibe commits to a stable personal-memory provider interface with one packaged default and an opt-in bring-your-own engine for power users; the personal store is local scratch (exit = re-index), explicitly outside the chain-rebuildable contract. Design-locked (D-PERSONAL-MEMORY); not yet built.
 
 ### 1.3 The Curator Workbench
 
