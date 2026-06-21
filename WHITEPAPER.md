@@ -110,6 +110,8 @@ The plugin is installed in the developer's coding environment (OpenCode, Claude 
 
 > **Alpha-status honesty.** [Gated approval] is the product contract and the locked default (D-11.5). The injection gate (`gateMemories`) is defined but not yet wired into the recall path, so memory injection is currently ungated — a known defect, BLOCKING-FOR-EXTERNAL-USERS, tracked as GAP-MI-1. The invariant above describes the contract; this note flags the code.
 
+**Injection is per session, not per turn.** Recall is queried on each user prompt, but a recalled memory is injected into the agent's context **once per coding session** (keyed to the session identifier), not re-pushed on every model turn — the plugin tracks what it has already surfaced in the session and a memory's serve attestation is recorded once per session. A recall/inject governor (relevance floor + surface budget) keeps the injected volume small; an internal, default-off measurement mode can widen those bounds for offline benchmarking without changing the gated, per-session production path.
+
 ### 1.5 WeVibe's Architecture: Protocol, Not Platform
 
 WeVibe is a protocol with open, auditable data surfaces — not a single closed SaaS product. In alpha, the chain, hub, local client, and plugin each do one narrow job well.

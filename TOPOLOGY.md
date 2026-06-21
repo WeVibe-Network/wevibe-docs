@@ -1201,6 +1201,8 @@ tui/
 **Installation path:** `npm run build` in wevibe-mcp root copies the compiled plugin to `~/.config/opencode/tui/` and registers it in `tui.json`.
 **Runtime note:** Plugin reads from `~/.wevibe/identity.json` (identity-sidecar) and `~/.wevibe/config` for org pairing state. No long-lived secrets stored by the plugin itself.
 
+**Recall engine (`plugins/wevibe-plugin.ts`) — recall-mode + session-tie (D-RECALL-MODE-FLAG, 2026-06-21):** the recall/inject engine reads **`WEVIBE_RECALL_MODE`** from `process.env` (`prod` default | `test`); the same flag is read independently by the MCP (`http-server.ts`/`retrieve-cli.ts`) and the hub (`config.go` → `handlers.SetRecallMode` → `recallModeIsTest()` in `retrieval.go`, wired into `docker-compose.yml` as `WEVIBE_RECALL_MODE: ${WEVIBE_RECALL_MODE:-prod}`). Mode selects the governor base — `prod` floor 0.55 / budget 3 / limit 3 / hub throttles on; `test` floor 0 / budget 1000 / limit 1000 / hub trial-daily + rate-limit bypassed (trial-EXPIRY still enforced). The plugin no longer mints a process-global random-hex session id (REVERSES D-SESSION-SERVE-DEDUP): it captures OpenCode's real `sessionID` from the `chat.message` and `experimental.chat.system.transform` hook inputs, threads it to `/v1/recall` + `/v1/serves`, and gates injection through a per-session `sessionInjectedCids` set so each memory is injected **once per session** (not every turn). Every injection is logged (`[inject] <ISO> sid=… injected N: …`). In `test` only, persisted Earned-Trust auto-accept is disabled so every recalled candidate re-enters the review gauntlet and is re-counted.
+
 ---
 
 ## wevibe-social-graph — Public Profile + Badge Service
