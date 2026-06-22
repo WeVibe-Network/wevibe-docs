@@ -26,13 +26,12 @@ brew install ollama
 ollama serve
 
 # Pull required models (one-time setup)
-ollama pull qwen3:4b    # For session extraction
 ollama pull nomic-embed-text:v1.5  # For semantic embeddings (PINNED — never :latest)
 ```
 
 Configure environment variables:
 - `WEVIBE_OLLAMA_URL` — Ollama endpoint (default: `http://localhost:11434`)
-- `WEVIBE_EXTRACTION_MODEL` — Extraction model (default: `qwen3:4b`)
+- Extraction model — configure this in Dashboard Settings UI (required, no default)
 - `WEVIBE_EMBEDDING_MODEL` — Embedding model (default: `nomic-embed-text:v1.5`, pinned)
 - `WEVIBE_AUTO_CONTRIBUTE` — Set to `0` to disable auto-extraction (default: `1`)
 
