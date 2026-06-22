@@ -1687,3 +1687,197 @@ payout_per_memory counted (not payout_per_serve)
 **CO-216-F2 Resolution (CO-217):** Sidecar tests added (9 tests in `tests/integration.rs`)
 **CO-216-F3 Resolution (CO-217):** gRPC stubs generated from proto, hand-written types removed
 **CO-216-F4 Resolution (CO-217):** SecretKeyFactory workaround verified sound — full Umbral workflow passes
+
+---
+
+# RECALL → INJECTION PIPELINE — COMPLETE MAP & DEFECT LEDGER (SoT — charted 2026-06-21)
+
+> **This is the single source of truth for the org-memory recall→injection pipeline, root→leaf.** Charted by a 4-slice parallel gather sweep (Opus 4.6 fast) on 2026-06-21 against the live code. It records the LIVE path AND every dead / stubbed / contradictory finding, because the system is being overhauled (suspected DOA after many cumulative pivots). **As code is edited/pruned/added in the overhaul, THIS section is updated in lockstep to match the new code.** Every claim is `file:line`-cited; treat citations as load-bearing.
+>
+> **Layer ownership:** Stage 1 = `wevibe-hub` (Go) · Stage 2 = `wevibe-mcp` (TS) · Stage 3 = `wevibe-opencode-plugin` (TS) · Stage 4 = `opencode` runtime (vendored binary).
+>
+> **✅ Resolved 2026-06-21 (Phase 2 prune):** the older "PRE Retrieval Data Flow" section calls `UpdateMemoryKeywords` and `ScrollApprovedMemories` live. Re-verified workspace-wide: `UpdateMemoryKeywords` IS live (`internal/api/handlers/keywords.go:306,400`) — old section correct; `ScrollApprovedMemories` was dead and has been removed. **Lesson: the G1 gather's "zero callers" was package-scoped, not workspace-scoped — it false-flagged 6 funcs as dead that have callers in `internal/chain`/`handlers`. Always re-verify workspace-wide before deleting (this caught it pre-delete).**
+
+## Pipeline at a glance (4 stages, root → leaf)
+
+```
+USER PROMPT (opencode session)
+   │  plugin hook chat.message  (wevibe-plugin.ts:982)
+   ▼
+[Stage 3a] plugin.loadMemories ── POST 127.0.0.1:4450/v1/recall ──┐
+                                                                   ▼
+[Stage 2]  wevibe-mcp handleRecall (http-server.ts:231)
+           → retrieve() → queryOrgMemories ── POST /v1/orgs/{org}/query ──┐
+                                                                          ▼
+[Stage 1]  wevibe-hub QueryMemories (handlers/retrieval.go:27)
+           → QueryByKeywords → QdrantClient.QueryPoints → ScoreAndRank
+           → relevance-floor + surface-budget → D-9.4 power-law sample
+           → chain attest + Umbral ReEncrypt + contributor stats
+           → QueryResponse{results,…}  ────────────────────────────────┐
+                                                                        ▼
+[Stage 2]  per-memory: fetch ciphertext → Umbral sidecar decrypt (execFile)
+           → AES decryptSymmetric → artifact policy → wevibe-guard scan (annotate only)
+           → {status, memories[]}  ────────────────────────────────────┐
+                                                                        ▼
+[Stage 3b] plugin caches memories → approval gate (TUI popup, if live)
+           → experimental.chat.system.transform: output.system.push(memoryBlock)
+                                                                        │
+                                                                        ▼
+[Stage 4]  opencode LLMRequestPrep.prepare → {role:"system"} message #2
+           (OR providerOptions.instructions on OpenAI-OAuth) → MODEL
+```
+
+---
+
+## Stage 1 — Hub retrieval ROOT (`wevibe-server/wevibe-hub`, Go)
+
+**Route:** `POST /v1/orgs/{orgID}/query` (`cmd/wevibe-hub/main.go:280`), behind `auth.RequireVerifiedMembership` (`main.go:227`). **There is NO `/v1/recall` route on the hub** — `/v1/recall` is the MCP endpoint (Stage 2). Any doc/client referencing a hub `/v1/recall` is wrong.
+
+**Files:** `internal/retrieval/{retrieval.go (1768L), ranking_core.go (246L), querylog.go, stats.go}`, `internal/api/handlers/{retrieval.go (614L), pool.go}`, `internal/config/config.go`, `cmd/wevibe-hub/main.go`, `protocol/types.go`.
+
+**Call chain (verbatim hops):**
+1. `handlers.QueryMemories` (`handlers/retrieval.go:27`) — parse `QueryRequest`; require orgID/agentPubkey/prePubkey; default limit test=1000 / prod=3 (`:64-68`); membership (`:76`); trial+daily gate (`:83-122`); rate limit from `org_recall_rate_limits` (`:124-152`); resolve epochs (`:154-164`).
+2. `retrieval.QueryByKeywords` (`retrieval.go:1106`) — pure passthrough to `client.QueryPoints(...)`.
+3. `QdrantClient.QueryPoints` (`retrieval.go:419`) — build Qdrant filter (org match, `must_not` ARCHIVED, optional DORMANT); `POST {restURL}/collections/{collection}/points/search` (`:478`); search limit = `recallDepth` (5000); dedup by CID; load pending-denial counts from PG `serve_events` (`:545`); build `[]RankCandidate` filtered to authorized epochs (`:578-640`).
+4. `ScoreAndRank` (`ranking_core.go:162`) — the pure scoring engine (math below).
+5. **Relevance floor + surface budget** (`retrieval.go:701-718`) — filter `weightedScore >= relevanceFloor`, then `cap = min(limit, surfaceBudget)`.
+6. **D-9.4 power-law sampler** `probabilisticRank` (`retrieval.go:125-215`) — position 1 = strict argmax; positions 2+ sampled w/o replacement, weight `(score/maxScore)^(1/temp)`, `temp=0.7`.
+7. Contested flag (`retrieval.go:767`, `contestedThreshold=0.20`).
+8. Back in handler (`handlers/retrieval.go:183-416`) — async query-log persist; **session dedup: drop CIDs served in last 24h for same `session_id`** (`:185-208`); chain attest `GetMemoriesBatch` (`:241`); Umbral `ReEncryptForMember` from `pending_submissions` (`:257-346`); banned filter (`:348-370`); contributor stats (`:372-393`); receipt (`:395-405`); emit `QueryResponse` (`:409-416`).
+
+**Scoring math (`ranking_core.go`):** `keywordScore = Σ(queryWeight[kw]·memoryWeight[kw])` (`:102-136`); `gammaBoost = keywordScore·0.1` (`:187`); `cappedBoost = min(gammaBoost, 0.15·vectorScore)` (`:188-194`); `final = vectorScore + cappedBoost` (`:195`); pending denial `final = max(0, final − denials·0.05)` (`:197-199`); new-mem boost `final ·= 1 + 0.5·max(0, 1−age/(grace+window))` (`:201-208`); sort by `final` desc. Constants: `keywordBoostFactor=0.1`, `keywordBoostDelta=0.15` (`retrieval.go:450-451`), `EMBED_DIM=768`, `recallDepth=5000`, `DenialDecayBPS=500`, `ServeBoostBPS=100`.
+
+**Structs (`protocol/types.go`):** `QueryRequest` (`:268`: org_id, agent_pubkey, pre_pubkey, keyword_weights, vector, embedding_model_id, limit, session_id, include_dormant, relevance_floor, surface_budget, agent_sig); `MemoryResult` (`:284`); `ScoringBreakdown` (`:226`: keyword_score, vector_score, gamma, delta, capped_boost, combined_score, keyword_matches, unmatched_query_keywords); `QueryResponse` (`:313`: results, contested, receipt_id, requires_reencryption).
+
+**Recall mode:** `config.go:48` reads `WEVIBE_RECALL_MODE` (default prod); `main.go:75` `SetRecallMode`; `pool.go:33` `recallModeIsTest()`. **Prod vs test differs ONLY in throttles** (default limit 3→1000, trial+rate-limit bypassed `handlers/retrieval.go:64-124`). Scoring/floor/budget/sampler are mode-independent.
+
+**Qdrant layer:** pure HTTP REST client (no gRPC/SDK), `QdrantClient` (`retrieval.go:242`); **new `http.Client` per request, 10s timeout** (no keep-alive/pooling).
+
+**Stage-1 dead/cruft — ✅ PRUNED 2026-06-21 (Phase 2a, retrieval.go 1767→1526, −241L; hub `go build ./...` + `go test ./...` green):**
+- **REMOVED (re-verified truly dead, zero workspace callers):** `computeKeywordScore`, `applyPendingDenialDecay`, `applyNewMemoryBoost` (method), `CountPoints`, `ScrollApprovedMemories` — plus dead collateral `ErrInvalidOffset`, unused imports (`encoding/base64`, `errors`), dead const `MaxServesPerEpoch`, and the dead-only test `retrieval_optimistic_test.go` + dead `applyNewMemoryBoost` cases in `ranking_test.go`.
+- **REMOVED dead `MemoryResult` fields:** `ConfidenceBps`, `RetrievalCount`, `WrappedDekEnc` (`internal/protocol/types.go`).
+- **KEPT — gather was WRONG (these have live callers, NOT dead):** `GetKeywordWeights`, `ApplyServeBoostLocal`, `ApplyDenialDecayLocal` (← `internal/chain/watcher_serve.go`); `ScrollOrgMemoryPayloads`, `UpdateMemoryState` (← `internal/chain/sync.go`); `UpdateMemoryKeywords` (← `internal/api/handlers/keywords.go`).
+- Still present (live, unchanged): `Gate: false` hardcoded (`retrieval.go:643`); Gaussian noise `sigma=0.0` no-op + index-time only; `QueryRequest.EmbeddingSchemaVersion` unused (request field).
+
+---
+
+## Stage 2 — MCP recall MIDDLE (`wevibe-mcp`, TS)
+
+**Endpoint:** `POST /v1/recall` (`http-server.ts:957`) → `handleRecall` (`http-server.ts:231`); Bearer-token auth (`authorize()` `:105`).
+
+**Call chain:**
+1. `handleRecall` (`http-server.ts:231`) — authorize; `flushDenials()` fire-and-forget (`:236`); parse body, apply governor defaults for limit/relevance_floor/surface_budget (`:239-256`); require `query` (`:263`); call `retrieve(input)` (`:281`).
+2. `retrieve()` (`retrieve-cli.ts:262`) — `initCrypto` → `ensureIdentity` (lazy biometric, registers PRE pubkey) → `loadMemberships` (`org-client.ts:240`) → select org → `getActiveHubUrlForOrg` → `buildQueryHarvest` (`:188`) → `buildNeedCard` (`retrieval-card.ts:84`) → `dissect_to_keywords` → `computeLocalEmbedding` (`embedding.ts`) → **`queryOrgMemories`** (`org-client.ts:121`, POSTs `/v1/orgs/{orgId}/query`) → `deserializeMemoryResult` (`deserialize.ts:56`).
+3. **Per-memory decrypt loop** (`retrieve-cli.ts:386-483`) — fetch ciphertext via `hubFetchVerified` `GET /v1/orgs/{orgId}/memories/{cid}` (`:392`); `decryptMemoryBlob` (`org-client.ts:403`): `getOrCreatePreIdentity` → `getEpochUmbralPk` → **`umbralDecryptReencrypted`** (`sidecar.ts:120`) → `decryptSymmetric(ciphertext, dek)` (AES); then `extractArtifacts` / `checkArtifactPolicy` / `transformMemoryContent` / `formatTrustPanel`; build `MemoryOutput`.
+4. Back in `handleRecall` — **`runWeVibeGuard`** per memory (`http-server.ts:302`); provider-policy check (`:321-328`); emit `{status:'ok', memories:[…], reason_code?}` (`:354`).
+
+**Decrypt + guard mechanics:**
+- **Umbral sidecar = `execFile` child process** (`sidecar.ts:54`). Binary from `WEVIBE_UMBRAL_SIDECAR_BIN` — **REQUIRED, no fallback; throws if unset** (`sidecar.ts:14`). Args `--capsule --cfrags --ciphertext --receiving-sk --delegating-pk`; returns `{plaintext}` on stdout. PRE secret key stored in OS keychain via `keytar` (`auth.ts:47`).
+- **wevibe-guard = `spawnSync`** (`guard.ts:43`); binary from `WEVIBE_GUARD_BIN` or relative fallback (`guard.ts:19-29`); JSON stdin → `{passed, detections, flags}`.
+- **Guard does NOT block** — failing memories are still returned with `guard.passed=false` attached (`http-server.ts:314-318`); blocking is delegated to the plugin.
+- **Decrypt failure silently skips the memory** (`retrieve-cli.ts:477-482` `continue`); only if ALL fail does `reason_code:'decrypt_failed'` surface. Partial loss is invisible to the caller.
+
+**Types:** `RetrieveInput` (`retrieve-cli.ts:19`), `MemoryOutput` (`retrieve-cli.ts:41`), `MemoryWithGuard` (`http-server.ts:115`, adds `guard{passed,detections,flags}`), `ScoringBreakdown` (`types.ts:35`), deserialized `MemoryResult` (`types.ts:46`). **No `blocked` and no `source` field exists** anywhere in MCP types. `MemoryType = 'memory'` single value (`types.ts:99`, D-5.1).
+
+**Recall mode:** `getRecallMode()` (`retrieve-cli.ts:93`); `RECALL_MODE_GOVERNORS` (`:80`): prod `{floor 0.55, budget 3, limit 3}`, test `{0, 1000, 1000}`; used as request defaults in `handleRecall` (`http-server.ts:239`).
+
+**Stage-2 dead/cruft:**
+- `agentSig` — **✅ REPLACED 2026-06-21 with real request-body signing.** The dead `agent_sig` body field is gone; the MCP now signs the exact serialized request body with the agent Ed25519 key and sends it in header `X-Agent-Signature` (`org-client.ts` queryOrgMemories); the hub reads raw body bytes, `ed25519.Verify` against the middleware-authenticated pubkey, **401 on missing/invalid**, then unmarshals (`handlers/retrieval.go`), and stores the verified sig in `usage_receipts.agent_signature` (now meaningful, no DB migration). Hub `go build/test` + MCP tsc green. **⚠ WIRE-CONTRACT CHANGE: hub + MCP must be redeployed together** (old MCP → new hub = 401).
+- **✅ PRUNED 2026-06-21 (Phase 2b, server.ts 663→388, −275L; tsc green):** removed the dead old-MCP-tool recall graveyard — `recallTimeScan`, `gateMemories`, `rerankByRelevance`, `disambiguateMemories`, `buildElicitationPreview`, `formatMemoryPresentation`, `FormattedMemory` type, `ALLOW_UNREVIEWED` — plus now-unused imports (`runWeVibeGuard`, `MemoryResult`, `getLlmProvider`) and dead-only test cases in `tests/security/recall-pipeline.test.ts` + `tests/server-tools.test.ts`. (Pre-existing unrelated failures remain in `tests/sidecar.test.ts`: "Invalid SecretKey" — NOT caused by the prune, verified.)
+- **Risk appetite (consumer filter):** LIVE via dashboard settings page + TUI `/wevibe-risk` → `~/.wevibe/plugin-config.json` → plugin `getRiskAppetite()` filters at injection. **✅ 2026-06-21: removed the vestigial MCP path only** (`wevibe_set_risk_appetite` tool + MCP `getRiskAppetite/setRiskAppetite`); kept `getProviderPolicy/setProviderPolicy` (live) and the dashboard/TUI/plugin path (the real one).
+- **✅ 2026-06-21: `loadMemberships` response now verified** — added `hubFetchVerifiedWithKey` (shared verify logic) + cached hub-level `response_pubkey` from `GET /v1/hub/serving-address`; `loadMemberships` no longer uses raw `fetch`. Caveat: the hub-level key is self-reported (not chain-anchored like org keys) — acceptable for the membership list; stronger anchoring is future work.
+- Guard scan passes empty keywords+metadata (`http-server.ts:302`). *(still open)*
+
+---
+
+## Stage 3 — Plugin recall + inject LEAF (`wevibe-opencode-plugin/plugins/wevibe-plugin.ts`, ~1147L + `tui/wevibe.tsx`)
+
+**Hooks returned (`:973`):** `tool.execute.before` (`:974`), `chat.message` (`:982`), `experimental.chat.system.transform` (`:1006`), `experimental.session.compacting` (`:1137`).
+
+**Recall trigger chain:**
+- **Prewarm IIFE** (`:930-946`) at plugin load — `getRecallMode`, `ensureWeVibeMcpRunning`, `loadMemories(queryToUse)` where `queryToUse` is project-derived (`:898-929`, fallback `"project coding standards conventions best practices"`). **`activeSessionId` is null here → `currentSessionId()` returns `"prewarm"`** (`:290`) → recall sent with `session_id:"prewarm"`.
+- `chat.message` (`:982`) → `triggerRecall` (`:891`) → `loadMemories` (`:667`). **Single-flight: if a recall is in-flight, the new one is silently dropped** (`:894`).
+- `loadMemories` (`:667`) — cache check (5min TTL); `getRecallGovernorConfig()`; `POST 127.0.0.1:4450/v1/recall` with `{query, limit, session_id, relevance_floor, surface_budget}` (`:698`); clear+rebuild `cachedMemories`/`memoryIndex` (`:754`); per memory build `CachedMemory`, auto-deny if guard-blocked, **test-mode AUTO-APPROVE → `approvedCids.add(cid)`** (`:816-819`, *Phase 1 2026-06-21 — was a delete that forced re-popup*), enqueue undecided candidates for prod popup (`:856`, comment "Hub governs… no client-side re-governing" `:854`).
+
+**State model (`:276-281`):** `approvedCids`, `deniedCids`, `reportedCids`, `pendingCids`, `sessionInjectedCids: Map<sid,Set>`. **Init gate (`:311`): `if (getRecallMode() !== "test") load accepted` — test mode starts with empty approvals.** Files in `.opencode/`: `wevibe-plugin-status.json` (accepted/denied/reported, written by `recordStatusSnapshot` `:370`), `…-queue.json`, `…-decisions.json`, `wevibe-tui-active.json` (heartbeat). Plus `~/.wevibe/blacklist.json` (`seedDeniedFromLocalBlacklist` `:292`, called at init AND every transform `:1027`).
+
+**Injection mechanism — `experimental.chat.system.transform` (`:1006-1143`, Phase 1 2026-06-21):** (1) await in-flight recall ≤15s (`:1009`); (2) `drainDecisions` + reseed blacklist (`:1026`); (3) compute pending-undecided (`:1029`); (4) **TUI gate wait loop ONLY `if (isTuiLive())`** ≤5min, 250ms poll (`:1044-1061`); (5) **eligible filter requires `approvedCids.has(cid)`** (`:1070-1074`); early-return only if `eligible.length===0` (`:1077-1083`); (6) **EVERY-TURN PUSH: build `memoryBlock` from ALL `eligible` and `output.system.push` it every turn** (`:1088-1103`) — the SOLE injection point, fixes the once-per-session DOA; (7) header is **mode-aware** — test = honest ("you may acknowledge these team memories…"), prod = covert ("Do not mention WeVibe Network…") (`:1092-1094`); (8) **toast** in test mode when `newlyServed.length>0` via `client.tui.showToast` (`:1112-1121`); (9) **serve attestation once per session**: `newlyServed = eligible.filter(!injectedSet.has(cid))`, fire `/v1/serves` + `injectedSet.add` ONLY for those (`:1123-1143`).
+
+**Popup gate:** `isTuiLive()` heartbeat <30s (`:353`); TUI writes heartbeat /10s, polls queue /5s (`wevibe.tsx:1004/1019`); `recordDecision` appends to decisions file (`wevibe.tsx:416`); `drainDecisions` (`:379`) maps accept→approved / deny→denied / block→denied+blacklist+hub denial / report→reported+hub report.
+
+**Guard-failed memory handling (✅ 2026-06-21):** guard-FAILED memories are no longer silently auto-denied — they are surfaced in the approval popup with **Report as the default-selected action** and **Accept moved to the end** (deliberate navigation), Deny/Block unchanged (TUI `wevibe.tsx` builds the action order conditionally on the guard-flagged check; `a/d/b/r` shortcuts resolve by label). Plugin: guard-failed memories enqueue (not auto-deny) and count as pending-undecided; an explicit **Accept overrides the guard block** (the inject filter now gates on approval, not `blocked`); **guard-failed never auto-approves even in test mode**.
+
+**Headless vs TUI behavior (load-bearing; Phase 1 2026-06-21):**
+
+| Scenario | Prod | Test |
+|---|---|---|
+| **TUI live** | gate waits for accepts → approved memories inject, re-pushed every turn | auto-approved on recall → inject + toast, re-pushed every turn |
+| **No TUI (headless `opencode run`)** | only memories approved in a PRIOR session (loaded from status file) inject; NEW memories never inject (popup-gated, by design) | **auto-approve → injects with no popup** (`:816` add), toast confirms; fixes the prior "nothing ever injects" headless/test failure |
+
+**Stage-3 dead/cruft:** **✅ PRUNED 2026-06-21 (Phase 2c, tsc green):** removed `contextPaths` (populated-never-read) + the now-empty `tool.execute.before` hook that only fed it, and `memoryIndex` (populated-never-read). Still present: compaction filter omits `deniedCids`+appetite, inconsistent with inject filter (`:1138`); `"prewarm"` `sessionInjectedCids` entry never cleaned; 3 TUI render harnesses duplicate `parseRetrievalCard`/theme (`tui/_render_*.tsx`). **CORRECTION (2026-06-21): the client-side governor (`PROD/TEST_RECALL_GOVERNOR_DEFAULTS` + `getRecallGovernorConfig`) is NOT vestigial** — it is the SOURCE of `relevance_floor`/`surface_budget`/`limit` sent to MCP→hub, intentionally duplicated across plugin/MCP/hub per D-RECALL-MODE-FLAG. The `:854` "hub governs" comment means "don't RE-filter client-side after the hub returns," NOT that the governor params are dead. Likewise plugin `getRiskAppetite()` (`:1053`) is LIVE (filters at injection); the dashboard settings page + TUI dialog are its real consumer UIs (write `~/.wevibe/plugin-config.json`). Only the **MCP** `wevibe_set_risk_appetite` tool + MCP `getRiskAppetite/setRiskAppetite` are vestigial (a 3rd redundant path; D-RISK-APPETITE-UI: tool "stays registered but is NOT the runtime path").
+
+---
+
+## Stage 4 — Inject → LLM boundary (`opencode` runtime — vendored, v1.16.0)
+
+**Hook type** (`.opencode/node_modules/@opencode-ai/plugin/dist/index.d.ts:265-270`):
+```ts
+"experimental.chat.system.transform"?: (input: { sessionID?: string; model: Model },
+                                         output: { system: string[] }) => Promise<void>
+```
+
+**Dispatch — `LLMRequestPrep.prepare`** (opencode binary, de-minified):
+1. Build `e = [ join([agent.prompt, ...A.system, user.system], "\n") ]` (single string, `e[0]`), save `o = e[0]`.
+2. Call hook with `{system: e}` → plugin does `e.push(memoryBlock)` → `e = [base, memoryBlock]`.
+3. Post-hook consolidation **only if `e.length > 2 && e[0] === o`** (fires when plugin pushed ≥2 entries; our push of 1 → `length===2` → does NOT fire; block stays a separate entry).
+4. Standard path: `messages = [...e.map(s => ({role:"system", content:s})), ...A.messages]` → memory block becomes **system message #2**.
+5. **OpenAI-OAuth path** (`provider.id==="openai" && auth.type==="oauth"`) OR `isWorkflow`: system entries are **NOT** prepended as messages; joined into `providerOptions.instructions` instead. Content still delivered, different channel.
+
+**Delivery verdict:** plugin-pushed `output.system` **IS delivered to the model** (system message on standard path, `instructions` on OAuth). Issue #885 ("not rendered in transcript") is **display-only — still sent to the model**.
+
+**On which turns:** `prepare` + the hook run **every turn**, BUT the plugin's per-session `sessionInjectedCids` dedup pushes the block **only on the first eligible turn**; on later turns the plugin early-returns without pushing → **the memory block is in the system prompt for ONE turn, then gone.**
+
+---
+
+## OVERHAUL DIRECTION — LOCKED by Walter 2026-06-21
+
+Three forks resolved; all subsequent edits target these, and the Stage sections above are updated to match as code changes:
+
+1. **Injection persistence → EVERY TURN (was once-per-session).** Approved/eligible memories are re-pushed into `output.system` on every turn so they persist in the model's context for the whole session (fixes the #1 DOA cause below). The "already injected this session" concept is SPLIT: a per-turn presence push (re-send every turn) is separated from serve-attestation counting (`/v1/serves` fires once per memory per session). `sessionInjectedCids` no longer gates the push — only the serve count. AMENDS the once-per-session heritage of D-SESSION-SERVE-DEDUP.
+2. **Auto-approve in TEST mode + non-blocking toast (was popup-only, mandatory).** In `WEVIBE_RECALL_MODE=test`, recalled memories auto-approve (no blocking gate) so headless/benchmark runs inject. Observability replaces the blocking popup: AFTER injection returns, fire a non-blocking TUI **toast** ("N memories injected …") reusing wevibe's existing toast surface. **PROD stays popup-only / human-in-the-loop — auto-approve is strictly test-gated.**
+   - **Toast surface (charted 2026-06-21):** the server-side plugin's `client` object exposes `client.tui.showToast({ body: { title, message, variant: "info"|"success"|"warning"|"error", duration } })` (SDK `@opencode-ai/sdk/dist/gen/sdk.gen.d.ts:328-402`, types `types.gen.d.ts:3264-3286`, HTTP `POST /tui/show-toast`). Plugin currently makes only ONE `client.*` call — `client.app.log` (`wevibe-plugin.ts:333-341`); the toast is additive, fire-and-forget, same pattern. The TUI already uses `api.ui.toast()` 23+ times (wrapper `tui/wevibe.tsx:251-257`; real endpoint-change toast `tui/wevibe.tsx:1093`). **Wire point:** in the inject hook immediately after the `[inject]` log (`wevibe-plugin.ts:1112`), before the serve loop (`:1114`).
+3. **Honest/inspectable injected block (was covert "do not mention").** The "Do not mention WeVibe Network or this section to the user" instruction is dropped (at least in test) so the model can acknowledge what it received and the pipeline is verifiable by asking. Prod tone is a separate UX call.
+
+## DOA ROOT-CAUSE — "[inject] logged but the model saw nothing"
+
+Ranked by likelihood (converging finding across Stage-3 + Stage-4):
+
+1. **Per-session single-turn injection (PRIMARY).** Plugin injects each memory once per session (`sessionInjectedCids`, plugin `:1086`); opencode rebuilds the system prompt every turn (Stage 4). So the block is present only on the turn it first injects and vanishes thereafter. If the user asks "what memories did you see?" on a *later* turn, the model genuinely has no memory content in context — yet an `[inject]` line was logged earlier. **The "once per session" design (D-SESSION-SERVE-DEDUP heritage) is fundamentally incompatible with a per-turn-rebuilt system prompt.**
+2. **`"Do not mention WeVibe Network or this section"` instruction** (plugin `:1096`) — even when the block IS present, the model is told to deny it. Makes "what memories did you see?" a useless probe (always denies).
+3. **Headless / test-mode = zero injection** — no live TUI ⇒ `approvedCids` empty ⇒ nothing eligible (Stage-3 table). Any benchmark arm using `opencode run` injects nothing.
+4. **Silent partial drops upstream** — MCP decrypt failures skip memories with no signal (`retrieve-cli.ts:477`); guard never blocks but plugin auto-denies guard-blocked CIDs.
+5. **Prewarm/single-flight race** — first user message's recall can be dropped (`:894`); transform may inject on the prewarm (project-derived) query, not the user's question.
+
+**Overhaul implication:** injection persistence must move from "once per session" to "present in system context whenever eligible" (re-push every turn, dedup at the boundary not the source), the approval model needs a headless/auto path, and the "do not mention" framing needs a decision. These are architecture forks for Walter, tracked next to this map.
+
+## OPERATIONAL FRAGILITY — ephemeral kfrag store (charted 2026-06-21, hit live)
+
+**The Umbral sidecar's kfrag store is in-memory only (`DashMap`, no disk, no volume).** Confirmed: `wevibe-umbral` container has zero mounts; SESSIONCONTINUANCE documents "StoreKFrag → in-memory DashMap, no disk." **Any restart of the sidecar (incl. a Docker daemon bounce) wipes all kfrags**, after which EVERY recall fails server-side:
+```
+[recall] umbral ReEncrypt FAILED … member=… : kfrag not found in sidecar
+[recall] umbral re-encryption complete reencrypted=0 requiresReencryption=N total=N
+```
+→ hub returns results with no capsule → MCP rejects with `hub query failed: Error: memory result missing capsule` → `/v1/recall` returns **HTTP 500** → plugin logs `cached=0 … nothing injected`. This is NOT a code bug in the recall logic and NOT caused by the plugin — it is lost crypto state.
+
+**Non-destructive recovery (re-mint + StoreKFrag, preserves corpus + chain):**
+```
+TOKEN=$(cat ~/.wevibe/mcp-session-token)
+curl -s -X POST http://127.0.0.1:4450/v1/provision-recall \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"org_id":"wevibe-org-0"}'   # → {"status":"ok"}  (may prompt Touch ID to unseal master key)
+```
+`provisionRecall` (`wevibe-mcp/src/org-client.ts:644`): loads org master envelope (leader-only) → derives epoch_sk → mints kfrag for the consumer PRE pubkey → registers pre-pubkey → `POST /v1/orgs/{org}/members/{edPubkey}/kfrag` (StoreKFrag). Also exposed as `wevibe-admin provision-recall --org <id>` and the dashboard members-page button. **Do NOT use `make dogfood` to recover — it runs `docker compose down -v` and wipes the corpus + chain.**
+
+**Overhaul candidate (Walter):** either persist the kfrag store to disk/volume, or auto-reprovision on sidecar startup, so a restart doesn't silently kill recall. Tracked as a fragility, not yet fixed.
+
+**✅ FIXED 2026-06-21 (persist-to-disk):** `KFragStore` now loads from disk on `new()` and persists atomically (temp→`0600`→write→fsync→rename→`0600`) on every `insert`/`delete`/`delete_org`; path from env `WEVIBE_UMBRAL_KFRAG_STORE` (default `/data/kfrags.json`); serde_json with hex-encoded binary (exact round-trip); corrupt/missing file → start empty (no crash); startup logs entry count + a loud warning if empty. `docker-compose.yml` adds volume `wevibe_umbral_kfrags:/data` + the env. `cargo build --release` + tests green. **Deploy note:** rebuild the `wevibe-umbral` image with the volume; on first boot after deploy the store is still empty → re-provision ONCE (`POST /v1/provision-recall`), after which it survives all future restarts. `make dogfood` (`down -v`) still wipes intentionally.
