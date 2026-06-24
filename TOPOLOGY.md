@@ -752,7 +752,7 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 
 | Module | Keeper Path | Proto Path | Tests | Purpose |
 |--------|------------|-----------|-------|---------|
-| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Session-attestation storage (NOT merkle — merkle roots live in x/memory). Being neutered: disabled/no-op until verification infra (D-ATTEST-ROADMAP). Optional TEE model-provenance (D-ATTEST-TEE-TIER) is verified OFF-CHAIN first (Phase 0, no chain change); on-chain anchoring here is Phase 1. |
+| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Session-attestation storage (NOT merkle — merkle roots live in x/memory). Being neutered: disabled/no-op until verification infra (D-ATTEST-ROADMAP). Optional TEE model-provenance (D-ATTEST-TEE-TIER) is verified OFF-CHAIN first (Phase 0, no chain change); on-chain anchoring here is Phase 1. Planned generalization → typed proof socket (`proof_type`: tee_receipt/zktls_proof/zkml_proof; D-ATTEST-PROOF-TIER, PENDING-SPIKE). |
 | x/bandwidth | x/bandwidth/keeper/ | proto/wevibe/bandwidth/v1/ | keeper + integration | Bandwidth throttling |
 | x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Emission pool, epoch emission, work scores (32-yr schedule scheduled CO-041) |
 | x/identity | x/identity/keeper/ | proto/wevibe/identity/v1/ | keeper + integration | Passkey identity management; wallet linking aliasing |
@@ -1483,6 +1483,14 @@ post-mainnet extension.
   §3.11 Difficulty Scoring.
 - Enhancement target for the social/economic layers remains TBD.
 - Infrastructure is not yet present; this is a major roadmap item.
+- **Proposed generalization (`D-ATTEST-PROOF-TIER`, PENDING-SPIKE):** the
+  socket generalizes the whitepaper Tier-0/1/2 grades into a single typed
+  proof artifact (`proof_type`: tee_receipt / zktls_proof / zkml_proof),
+  each verified off-chain before on-chain anchoring. The CO-282 spike proved
+  the zkTLS path real for closed frontier models with privacy intact, but a
+  ~6 KB asymmetric MPC sent-cap defers it (defer-and-keep-warm); see
+  `wevibe-meta/workspace/spikes/zktls-attestation/RESULTS.md` and
+  `DECISIONS.md` `D-ATTEST-PROOF-TIER`.
 - Decision reference: `DECISIONS.md` `D-ATTEST-ROADMAP`.
 
 ## Consumer Path (post-CO-260)

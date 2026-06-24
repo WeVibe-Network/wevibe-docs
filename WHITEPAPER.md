@@ -424,6 +424,8 @@ Sessions produce memories. Without provenance attestation, a contributor could p
 
 This is a major roadmap item and the infrastructure is not there yet. It is carried as a forward design, not claimed as live.
 
+**Proof-tier generalization (PROPOSED / PENDING-SPIKE, `D-ATTEST-PROOF-TIER`):** post-mainnet, the on-chain `x/attestation` socket is planned to generalize the Tier-0/1/2 provenance grades below into a single **typed proof artifact** — `{ proof_type, trust_label, … }` where `proof_type` is one of `tee_receipt`, `zktls_proof`, or `zkml_proof` — each **verified off-chain before any on-chain anchoring** (preserving the Phase-0-verify / Phase-1-anchor structure). The **CO-282** spike proved the `zktls_proof` path technically real for closed frontier models with session privacy intact, but defers it on an asymmetric ~6 KB MPC sent-side commitment cap; the tier is carried as a forward design, not built (see DECISIONS `D-ATTEST-PROOF-TIER`).
+
 #### Lineage from the optional subsystem (seed designs)
 
 **Tier 1: CommitLLM Cryptographic Receipts (Open-Weight Models).** CommitLLM (Lambda Class, MIT licensed) is a cryptographic commit-and-audit protocol for open-weight LLM inference. The receipt proves "this response was produced by this exact model with these exact weights." Limitation: only works for open-weight models where the verifier has the public checkpoint.
@@ -1046,7 +1048,7 @@ Seven custom Cosmos SDK modules:
 - `x/emissions` — validator staking rewards, contributor emission distribution from the network pool, protocol-level emission schedule
 - `x/bandwidth` — per-org per-epoch flat rate-limit caps (DDoS guard). This is the **testnet** anti-spam guard (faucet tokens are free, so economic deposits don't deter there); scheduled for **removal at mainnet launch**, when the per-memory storage deposit takes over the anti-spam role
 
-- `x/attestation` — session-attestation storage (CommitLLM receipts / cloud-provider signatures). Present and wired but DISABLED — `MsgSubmitSessionAttestation` is a no-op/reject until the pluggable attestation infra exists (D-ATTEST-ROADMAP); kept so it can be activated before mainnet.
+- `x/attestation` — session-attestation storage (CommitLLM receipts / cloud-provider signatures). Present and wired but DISABLED — `MsgSubmitSessionAttestation` is a no-op/reject until the pluggable attestation infra exists (D-ATTEST-ROADMAP); kept so it can be activated before mainnet. Post-mainnet activation is planned to generalize this socket into a typed proof artifact (`tee_receipt` / `zktls_proof` / `zkml_proof`; D-ATTEST-PROOF-TIER, PROPOSED/PENDING-SPIKE).
 
 Standard SDK modules: `x/staking`, `x/auth`, `x/bank`, `x/gov` (wired for on-chain param updates), `x/slashing`, `x/distribution`.
 
