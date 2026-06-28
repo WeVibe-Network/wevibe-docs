@@ -720,7 +720,7 @@ The reporter's own dashboard view is the one exception: each reporter sees a pri
 
 ### 5.8 Silent Denial as Cheap Negative Signal
 
-The plugin's three-button approval UI (Accept / Deny / Report) gives the consumer two complementary negative paths. Reports — the on-chain filing and, if unresolved, the public escalation — are the high-friction, high-stakes accountability primitive described above. Denials are the low-friction, low-stakes signal that feeds retrieval ranking.
+The plugin's four-button approval UI (Accept + Attest / Deny / Block / Report) gives the consumer two complementary negative paths. Reports — the on-chain filing and, if unresolved, the public escalation — are the high-friction, high-stakes accountability primitive described above. Denials are the low-friction, low-stakes signal that feeds retrieval ranking.
 
 Denials and reports are status/accountability signals, not direct payout triggers. WeVibe keeps the social signal and economic payout paths decoupled.
 

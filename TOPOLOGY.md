@@ -83,14 +83,19 @@ Hub schema at `wevibe-server/db/schema.sql`. Applied on Postgres container init 
 ### Entry Point
 
 #### `cmd/wevibe-hub/main.go`
-**Role:** HTTP server entry point — loads config, connects DB + Qdrant, registers routes, starts server
+**Role:** HTTP server entry point — loads config, applies schema, wires DB/chain/Qdrant/middleware/routes, starts watcher + HTTP server
 
 **Key behavior:**
-- Graceful degradation: starts even if DB or Qdrant unavailable (logs warning)
-- Qdrant init: `retrieval.NewQdrantClient(cfg.QdrantAddr, cfg.QdrantAPIKey)` → `handlers.SetQdrantClient()` → `retrieval.EnsureCollection()`
-- Epoch sync poller: ticker goroutine calls `chain.SyncEpochData(...)` every 60 seconds (Phase 1 interval)
-- Node privkey: `handlers.SetNodePrivkey(cfg.NodePrivkey)`
-- CORS: reads `CORS_ALLOWED_ORIGINS` env var (comma-separated), defaults to `http://*`, `https://*`
+- Startup failure model: DB/chain failures are fatal (`db.NewPool`, chain enabled/config/client checks); only Qdrant degrades gracefully.
+- Response signing: initializes signer (`hubsign.NewFromEnv`), publishes serving pubkey (`handlers.SetResponsePubkeyHex`), and signs all responses via `hubsign.SigningMiddleware`.
+- Schema bootstrap: runs `db.ApplySchema(cfg.DatabaseURL)` before creating the pgx pool.
+- Retrieval init: `retrieval.NewQdrantClient(...)` then `SetRetrievalConfig(...)` + `SetPendingDenialDB(pool)` + `handlers.SetQdrantClient(...)` when available.
+- Startup sync: `chain.SyncEpochData(...)` + `chain.SyncKeywordWeightsFromChain(...)` (when Qdrant is available).
+- Epoch ticker loop: every 60s runs both `chain.SyncEpochData(...)` and `chain.ReconcileMembership(...)`.
+- Handler wiring: `SetPool`, `SetRecallMode`, `SetChainClient`, `SetFaucetURL`, `SetSocialClient`, `SetUmbralService`, `SetNodePrivkey`.
+- Notifications wiring: creates notifications Hub + Dispatcher; registers SMTP channel (if configured) and webhook channel.
+- Chain watcher wiring: builds tx decoder, injects dispatcher, starts watcher goroutine.
+- CORS: reads `CORS_ALLOWED_ORIGINS` env var (comma-separated), defaults to `http://*`, `https://*`; exposes hub signature header.
 
 **Route table:**
 ```
@@ -131,7 +136,6 @@ POST   /v1/orgs/{orgID}/members/{pubkey}/disable-recall          # Disable recal
 POST   /v1/orgs/{orgID}/members/{pubkey}/pre-key                 # Register PRE pubkey
 GET    /v1/orgs/{orgID}/members/{pubkey}/pre-key
 POST   /v1/orgs/{orgID}/members/wallet                           # Link Cosmos wallet to passkey identity
-DELETE /v1/orgs/{orgID}/members/{pubkey}                         # Remove member (leader-only)
 GET    /v1/orgs/{orgID}/keys/envelope
 POST   /v1/orgs/{orgID}/dashboard/keys
 DELETE /v1/orgs/{orgID}/dashboard/keys/{pubkey}
@@ -153,16 +157,23 @@ GET    /v1/orgs/{orgID}/moderation/history
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/vote          # Advisory vote (approve/flag)
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/approve       # Advisory approve
 POST   /v1/orgs/{orgID}/moderation/{submissionHash}/deny          # Terminal deny (leader-only)
+POST   /v1/orgs/{orgID}/contributors/{contributorPubkey}/deny-pending
 POST   /v1/orgs/{orgID}/submissions/{hash}/keyword-vote           # Per-keyword include/exclude vote
 POST   /v1/orgs/{orgID}/moderation/batch-submit                   # Leader stages batch for chain
 
 POST   /v1/orgs/{orgID}/serves                                    # Record serve event (CO-033a)
+PUT    /v1/orgs/{orgID}/recall-rate-limit
+GET    /v1/orgs/{orgID}/recall-rate-limit
+GET    /v1/orgs/{orgID}/recall-queries
+GET    /v1/orgs/{orgID}/recall-queries/{queryID}
+GET    /v1/orgs/{orgID}/recall-health
+POST   /v1/orgs/{orgID}/extracted-sessions
+GET    /v1/orgs/{orgID}/extracted-sessions
 POST   /v1/orgs/{orgID}/denials                                   # Consumer denial attestation
 GET    /v1/orgs/{orgID}/denials/pending-count                     # Leader panel count
 GET    /v1/orgs/{orgID}/denials/pending                           # Leader pending list (newest-first, cap 200)
 
 POST   /v1/orgs/{orgID}/query                                     # PRE retrieval query
-GET    /v1/orgs/{orgID}/memories                                  # Scroll approved memories
 GET    /v1/orgs/{orgID}/memories/{cid}
 
 GET    /v1/orgs/{orgID}/keywords
@@ -176,9 +187,11 @@ POST   /v1/orgs/{orgID}/submit-keyword-results                    # Contributor 
 POST   /v1/orgs/{orgID}/verify-keywords                           # Hub verifies and transitions pending_keyword→pending_chain
 POST   /v1/orgs/{orgID}/submissions/{hash}/rerun-keywords         # Rerun keyword extraction via Ollama (CO-238)
 PUT    /v1/orgs/{orgID}/submissions/{hash}/update-keywords        # Leader updates keyword set on submission
+GET    /v1/orgs/{orgID}/submissions/duplicate-clusters
 DELETE /v1/orgs/{orgID}/submissions/{hash}                        # Remove submission from pipeline (CO-238)
 GET    /v1/orgs/{orgID}/submissions                               # List all submissions (leader/contributor view)
 GET    /v1/orgs/{orgID}/my-submissions                            # Contributor-only own submission status
+GET    /v1/orgs/{orgID}/commit-status
 
 GET    /v1/orgs/{orgID}/health
 GET    /v1/orgs/{orgID}/credits
@@ -207,10 +220,14 @@ POST   /v1/billing/topup
 
 # Test-mode routes (WEVIBE_TEST_MODE=true)
 GET    /v1/test/health
-POST   /v1/test/embed                                             # Test embedding with hub Ollama
+POST   /v1/test/embed                                             # Test embedding with configured provider
 GET    /v1/test/orgs/{orgID}/queue                                # Dump pending_submissions for org
 GET    /v1/test/orgs/{orgID}/serve-queue                          # Dump serve_events queue depth
 ```
+
+**Auth middleware:**
+- `auth.RequireVerifiedIdentity` wraps profile-notification + notification-read routes.
+- `auth.RequireVerifiedMembership` wraps membership-gated org routes under `/v1/orgs/{orgID}`.
 
 ---
 
@@ -223,8 +240,7 @@ GET    /v1/test/orgs/{orgID}/serve-queue                          # Dump serve_e
 Port                       int       // env: WEVIBE_HUB_PORT, default: 4440
 DatabaseURL                string    // env: DATABASE_URL
 QdrantAddr                 string    // env: QDRANT_ADDR, default: "localhost:6333"
-QdrantAPIKey              string    // env: QDRANT_API_KEY (required; panics if < 32 chars)
-OllamaURL                  string    // env: OLLAMA_URL, default: "http://localhost:11434"
+QdrantAPIKey               string    // env: QDRANT_API_KEY (required; panics if < 32 chars)
 StripeSecretKey            string    // env: STRIPE_SECRET_KEY
 S3Bucket                   string    // env: WEVIBE_S3_BUCKET, default: "wevibe-memories"
 NodePrivkey                string    // env: HUB_NODE_PRIVKEY (Ed25519, hex)
@@ -242,6 +258,7 @@ RetrievalNewMemBoostMult   float64   // env: RETRIEVAL_NEW_MEM_BOOST_MULT, defau
 RetrievalNewMemBoostWindow uint64    // env: RETRIEVAL_NEW_MEM_BOOST_WINDOW, default: 30
 RetrievalVectorNoiseSigma  float64   // env: RETRIEVAL_VECTOR_NOISE_SIGMA, default: 0.0 (D-9.5)
 RetrievalRecallDepth       uint64    // env: RETRIEVAL_RECALL_DEPTH, default: 5000
+RecallMode                 string    // env: WEVIBE_RECALL_MODE, default: "prod" ("test" accepted)
 ```
 **Known issues:** None
 **CO-219:** Hub panics at startup if `QDRANT_API_KEY` is missing or < 32 chars.
@@ -258,12 +275,21 @@ var pool *pgxpool.Pool
 var qdrantClient *retrieval.QdrantClient
 var nodePrivkeyHex string
 var chainClient *chain.GrpcClient
+var faucetURL string
 var umbralService *umbral.Service        // CO-218 — PRE sidecar service (gRPC)
+var socialClient *social.Client
+var recallMode string
+
 func SetPool(p *pgxpool.Pool)
+func GetPool() *pgxpool.Pool
 func SetQdrantClient(c *retrieval.QdrantClient)
+func SetRecallMode(m string)
 func SetNodePrivkey(key string)
 func SetChainClient(c *chain.GrpcClient)
+func SetFaucetURL(url string)
 func SetUmbralService(s *umbral.Service) // CO-218
+func SetSocialClient(c *social.Client)
+func GetSocialClient() *social.Client
 ```
 
 #### `internal/api/handlers/health.go`
@@ -273,7 +299,6 @@ func SetUmbralService(s *umbral.Service) // CO-218
 #### `internal/api/handlers/orgs.go`
 **Exports:**
 ```go
-func notImplemented(w, name)     // utility — still used by SessionLookup, GetReceipts
 func CreateOrg(w, r)            // POST /v1/orgs — sig verified, leader-only; persists epoch umbral_pk and synchronously calls RegisterOrgOnChain
 func GetOrg(w, r)               // GET /v1/orgs/{orgID}
 func RotateEpoch(w, r)          // POST — sig verified, leader-only; persists epoch umbral_pk
@@ -288,10 +313,13 @@ func InviteMember(w, r)     // POST — sig verified, leader-only
 func GetMember(w, r)        // GET — no auth (follows GET pattern)
 func RegisterPreKey(w, r)   // POST /v1/orgs/{orgID}/members/{pubkey}/pre-key (CO-221)
 func GetPreKey(w, r)        // GET /v1/orgs/{orgID}/members/{pubkey}/pre-key (CO-221)
-func RemoveMember(w, r)     // DELETE — sig verified, leader-only
 func GetKeyEnvelope(w, r)   // GET — reads from key_envelopes table, auth required
 func ListMembers(w, r)      // GET — no auth
 func GetMemberOrgs(w, r)    // GET /v1/members/{pubkey}/orgs — lists all orgs a member belongs to
+func LinkWallet(w, r)       // POST /v1/orgs/{orgID}/members/wallet
+func EnableMemberRecall(w, r)
+func DisableMemberRecall(w, r)
+func StoreMemberKFrag(w, r) // POST /v1/orgs/{orgID}/members/{pubkey}/kfrag
 ```
 **Known issues:** None
 
@@ -306,12 +334,14 @@ func GetProfile(w, r)    // GET /v1/profile/{wallet} — public profile endpoint
 **Exports:**
 ```go
 func SubmitMemory(w, r)        // POST — calls moderation.SubmitToQueue(), handles rotation buffering
+func SubmitMemoryBatch(w, r)   // POST /submit/batch — batch ingest path
 func GetPendingQueue(w, r)     // GET — caller pubkey from auth header (leader or can_moderate)
 func VoteOnSubmission(w, r)    // POST — advisory vote (approve/flag); advisory only, no quorum
 func ApproveSubmission(w, r)   // POST — advisory approve (leader or can_moderate)
 func DenySubmission(w, r)      // POST — calls moderation.DenySubmission() with reason
 func VoteOnKeyword(w, r)       // POST — per-keyword include/exclude vote on a submission
 func GetModerationHistory(w,r) // GET — last 24h of moderation decisions (leader or can_moderate)
+func PrepareBatchForChain(w,r) // POST /moderation/batch-submit
 ```
 **Known issues:** None
 
@@ -320,6 +350,7 @@ func GetModerationHistory(w,r) // GET — last 24h of moderation decisions (lead
 ```go
 func TopUpCredits(w, r)   // POST /v1/billing/topup — reads {org_id, amount, signed_by} (dev-only)
 func GetOrgCredits(w, r)  // GET /v1/orgs/{orgID}/credits — returns balance + transactions
+func GetOrgFinances(w, r) // GET /v1/orgs/{orgID}/finances — hub credits + chain treasury
 ```
 **Known issues:**
 - `TopUpCredits` does NOT verify signature — anyone can top up any org (low risk: adds credits, doesn't remove them)
@@ -329,8 +360,7 @@ func GetOrgCredits(w, r)  // GET /v1/orgs/{orgID}/credits — returns balance + 
 #### `internal/api/handlers/retrieval.go`
 **Exports:**
 ```go
-func QueryMemories(w, r)       // POST — keyword + vector query, creates receipt, deducts credit, returns PRE payload from PostgreSQL
-func ListMemories(w, r)        // GET — scroll through approved memories with pagination (keyword_weights/lifecycle_state from Qdrant payload)
+func QueryMemories(w, r)       // POST — keyword + vector query, enforces recall gates/rate limits, returns PRE payload + usage receipt
 func GetMemory(w, r)          // GET — retrieves a single memory by CID
 ```
 **Known issues:** None
@@ -353,6 +383,7 @@ func IsDashboardKey(ctx, orgID, pubkey) bool  // helper — checks if pubkey is 
 **Exports:**
 ```go
 func ListKeywords(w, r)         // GET — any active member can read org keyword vocabulary
+func ListKeywordCandidates(w,r) // GET — leader review queue for suggested keywords
 func AddKeyword(w, r)          // POST — leader only
 func MergeKeywords(w, r)       // PUT — leader only, merges source into target
 func RenameKeyword(w, r)        // PUT — leader only, renames keyword
@@ -360,7 +391,7 @@ func DeprecateKeyword(w, r)    // DELETE — leader only
 ```
 **Known issues:** None
 
-#### `internal/api/handlers/submissions.go` (CO-238)
+#### `internal/api/handlers/keyword_extraction.go` (CO-238)
 **Exports:**
 ```go
 func SubmitKeywordResults(w, r)  // POST /submit-keyword-results — contributor submits verified keywords
@@ -392,31 +423,56 @@ func GetRecoveryShare(w, r)    // GET — holder retrieves their share by holder
 ```
 **Known issues:** None
 
+#### Additional handler files (previously undocumented)
+- `balance.go` — `GetBalance` endpoint proxying chain bank balance lookups.
+- `ban.go` — leader `DenyPendingForContributor` moderation shortcut.
+- `batch_submit.go` — `OrgHealth` endpoint summarizing org pipeline/queue health.
+- `chain_config.go` — `GetOrgChainConfig` chain/org config read endpoint.
+- `commit_status.go` — authenticated pending-chain/commit-error status endpoint.
+- `dedup.go` — `DuplicateClusters` near-duplicate cluster inspection over stored embeddings.
+- `denials.go` — pending denial count/list endpoints.
+- `discovery.go` — public org discovery endpoint.
+- `errors.go` — shared JSON error envelope helper (`WriteError`).
+- `extracted_sessions.go` — record/list extracted contributor sessions.
+- `extraction.go` — extraction profile read/write + extraction preset catalog.
+- `faucet.go` — dev faucet funding endpoint.
+- `identity_blobs.go` — passkey identity blob store/retrieve endpoints.
+- `join.go` — join-request submit/list/approve/cancel/deny flow.
+- `keyword_extraction.go` — keyword submission/verification/update/removal/listing.
+- `notification_emit.go` — shared helper that emits persisted + live notifications.
+- `pairing_blobs.go` — pairing blob store/retrieve endpoints.
+- `profile_notifications.go` — get/update per-user notification preferences.
+- `ratelimit.go` — set/get org recall rate-limit policy.
+- `recall_inspector.go` — recall query list/detail/health inspection endpoints.
+- `reports.go` — report create/list/get/update/vote/commit handlers.
+- `serves.go` — serve/denial ingest + asynchronous relay batching to chain.
+- `serving.go` — serving-address endpoint + response-pubkey setter.
+- `social_names.go` — social-graph display-name resolution helper for wallets.
+- `testing.go` — `WEVIBE_TEST_MODE`-gated health/embed/queue debug endpoints.
+
 ---
 
 ### Internal Packages
 
 #### `internal/chain/grpc_client.go`
 **Role:** gRPC connection to wevibe-chain node, signing key derivation, query client stubs
-**Exports:** `New(grpcURL, chainID, mnemonic) (*Client, error)`, `Close()`, `SubmitterAddress()`
+**Exports:** `NewGrpcClient(grpcURL, chainID, mnemonic)`, `Close()`, `SubmitterAddress()`, and query/signing accessors (`GetOrgQueryClient`, `GetMemoryQueryClient`, `GetServeQueryClient`, `GetAttestationQueryClient`, `GetBandwidthQueryClient`, `GetEmissionsQueryClient`, `GetReputationQueryClient`, `GetCodec`, `GetRegistry`, `GetKeyring`, `GetSubmitterAddress`, `GetTxConfig`, `GetChainID`).
 
 #### `internal/chain/submit.go`
 **Role:** Internal hub chain submission helpers for operational flows (not a dashboard delegate relay path)
 **Exports:**
 ```go
-func (c *GrpcClient) SubmitMemoryToChain(ctx, orgID string, mem BatchMemory) (string, error)
-func (c *GrpcClient) SubmitMemoryBatch(ctx, orgID string, memories []BatchMemory) ([]string, error)
-func (c *GrpcClient) SubmitServeBatch(ctx, orgID string, epoch uint64, entries []ServeEntryInput) (string, error)
-func (c *GrpcClient) SubmitMemoryReport(ctx, orgID string, input ReportMemoryInput, contributorWalletAddress string) (string, error)
+func (c *GrpcClient) SubmitMemoryBatchAtomic(ctx context.Context, db *pgxpool.Pool, faucetURL, orgID string, memories []BatchMemory) (txHash string, committedCIDs []string, err error)
+func (c *GrpcClient) SubmitRelayBatch(ctx context.Context, db *pgxpool.Pool, faucetURL, orgID string, msgs []types.Msg) (txHash string, err error)
+func (c *GrpcClient) SubmitServeBatch(ctx context.Context, db *pgxpool.Pool, faucetURL, orgID string, epoch uint64, entries []ServeEntryInput) (string, error)
+func (c *GrpcClient) SubmitDenialBatch(ctx context.Context, db *pgxpool.Pool, faucetURL, orgID string, epoch uint64, entries []DenialEntryInput) (string, error)
+func (c *GrpcClient) BuildServeBatchMsg(orgID string, epoch uint64, entries []ServeEntryInput) (*servetypes.MsgSubmitServeBatch, error)
+func (c *GrpcClient) BuildDenialBatchMsg(orgID string, epoch uint64, entries []DenialEntryInput) (*servetypes.MsgSubmitDenialBatch, error)
 ```
-**Chain-side reputation fanout (CO-213):** Each submit function now includes reputation increment messages:
-- `SubmitMemoryToChain` broadcasts `MsgIncrementContribution` with contributor wallet (or pubkey fallback)
-- `SubmitServeBatch` broadcasts `MsgIncrementServe` for each serve entry
-- `SubmitMemoryReport` (ban path) broadcasts `MsgRecordBan` with contributor wallet when provided
 
 #### `internal/chain/query.go`
 **Role:** On-chain state queries for org/memory/reputation verification and retrieval metadata reconciliation
-**Exports:** `IsOrgRegistered`, `GetOrgFromChain`, `GetEpochMerkleRoot`, `GetServeParams`, `GetEpochServeStats`, `GetAttestationParams`, `GetSessionAttestation`, `GetBandwidth`, `GetEmissionsParams`, `GetReputationStats`, `GetContributorProfile`, `GetMemoriesBatch`
+**Exports:** `IsOrgRegistered`, `GetOrgFromChain`, `GetOrgMembersFromChain`, `GetOrgConfigFromChain`, `GetOrgAccountFromChain`, `GetOrgTreasuryBalanceFromChain`, `GetEpochMerkleRoot`, `GetServeParams`, `GetEpochServeStats`, `GetAttestationParams`, `GetSessionAttestation`, `GetBandwidth`, `GetEmissionsParams`, `GetReputationStats`, `GetContributorProfile`, `GetMemoriesBatch`
 
 **Memory batch parity (CO-224):** `MemoryBatchResult` includes `Keywords`, `Epoch`, `State`, and `MemoryType` copied from chain `StoredMemoryCommitment` so hub can reconcile Qdrant payload metadata.
 
@@ -424,10 +480,10 @@ func (c *GrpcClient) SubmitMemoryReport(ctx, orgID string, input ReportMemoryInp
 
 #### `internal/chain/sync.go`
 **Role:** Epoch metadata sync loop implementation for retrieval parity (CO-224)
-**Exports:** `SyncEpochData(ctx, chainClient, qdrantClient, pool) error`
+**Exports:** `SyncEpochData(ctx, chainClient, qdrantClient, pool) error`, `SyncKeywordWeightsFromChain(ctx, chainClient, qdrantClient, pool) error`
 
 **Sync flow (CO-224):**
-- Loads orgs with approved memories from PostgreSQL (`pending_submissions.status='approved'`)
+- Loads orgs with committed memories from PostgreSQL (`pending_submissions.status='committed'`)
 - Scrolls org memory payloads from Qdrant (`cid`, `keyword_weights`, `lifecycle_state`, `memory_type`)
 - Batch-queries chain via `GetMemoriesBatch`
 - Updates changed Qdrant payloads via `retrieval.UpdateMemoryState`
@@ -437,6 +493,20 @@ func (c *GrpcClient) SubmitMemoryReport(ctx, orgID string, input ReportMemoryInp
 **Role:** Binary SHA-256 Merkle tree computation over approved memory hashes
 **Exports:** `ComputeMerkleRoot(leaves [][]byte) string`, `HashContribution(content []byte) []byte`
 
+#### Additional chain files (previously undocumented)
+- `accounts.go` — `OrgKeyRole`/`OrgKeyServing` signer-role constants used by broadcast paths.
+- `balance.go` — chain balance query helper (`GetBalance`).
+- `broadcast.go` — tx simulation/broadcast engine (gas strategy, signer state, faucet top-up, commit/sync modes).
+- `cometbft_subscriber.go` — CometBFT subscribe/block/status wrapper used by the chain watcher.
+- `faucet.go` — faucet funding client (`FundAddressFromFaucet`).
+- `reconcile.go` — periodic hub↔chain membership reconciliation (`ReconcileMembership`).
+
+#### Watcher subsystem (`internal/chain/watcher*.go`)
+- `watcher.go` — main chain watcher loop: subscribe/catch-up/reconnect, per-tx decode + routing, last-seen cursor persistence (`watcher_state`).
+- `watcher_memory.go` — approved-memory commit bookkeeping + commit-error recording.
+- `watcher_serve.go` — serve/denial batch bookkeeping after on-chain confirmation.
+- `watcher_report_org.go` — report bookkeeping and org-level side effects.
+
 ---
 
 ### Business Logic
@@ -444,7 +514,7 @@ func (c *GrpcClient) SubmitMemoryReport(ctx, orgID string, input ReportMemoryInp
 #### `internal/orgs/orgs.go`
 **Exports:**
 ```go
-func CreateOrg(ctx, pool, req) (*OrgInfo, error)
+func CreateOrg(ctx, pool, orgID string, req protocol.CreateOrgRequest) (*OrgInfo, error)
 func GetOrg(ctx, pool, orgID) (*OrgInfo, error)
 func SetRotationPending(ctx, pool, orgID) error
 func ClearRotationPending(ctx, pool, orgID) error
@@ -459,7 +529,7 @@ func GetCurrentEpoch(ctx, pool, orgID) (int, error)
 func OrgExists(ctx, pool, orgID) (bool, error)
 func EpochExists(ctx, pool, orgID, epochID) (bool, error)
 ```
-**Key detail:** `CreateOrg` calls `billing.EnsureOrgLedger()` after commit — new orgs get a credit ledger automatically  
+**Key detail:** `CreateOrg` calls `billing.ProvisionOrgLedger(ctx, pool, orgID, req.FeeModel.MonthlyCredits, req.LeaderPubkey)` after commit.
 **Known issues:** None
 
 #### `internal/members/members.go`
@@ -470,8 +540,12 @@ func SetPrePubkey(ctx, pool, orgID, pubkey string, prePubkey []byte) error   // 
 func GetPrePubkey(ctx, pool, orgID, pubkey string) ([]byte, error)            // CO-221
 func GetMember(ctx, pool, orgID, pubkey) (*MemberRecord, error)
 func RemoveMember(ctx, pool, orgID, pubkey, currentEpoch) error
+func LinkWallet(ctx, pool, orgID, pubkey, walletAddress string) error
 func ListMembers(ctx, pool, orgID) ([]MemberRecord, error)
 func VerifyMemberAccess(ctx, pool, orgID, pubkey, requestedEpoch) (bool, error)
+func GetMemberCapabilities(ctx, pool, orgID, pubkey) (canContribute bool, canModerate bool, err error)
+func GetMemberRole(ctx, pool, orgID, pubkey) (string, error)
+func GetTrialStatus(ctx, pool, orgID, pubkey) (bool, *time.Time, error)
 func IsLeader(ctx, pool, orgID, pubkey) (bool, error)
 func ListOrgsForMember(ctx, pool, pubkey) ([]MemberOrgEntry, error)
 ```
@@ -480,16 +554,19 @@ func ListOrgsForMember(ctx, pool, pubkey) ([]MemberOrgEntry, error)
 #### `internal/moderation/moderation.go`
 **Exports:**
 ```go
-func SubmitToQueue(ctx, pool, req) error
+func SubmitToQueue(ctx, pool, req, sanitizationFindings []byte) error
   // verifies: Ed25519 sig over submission_hash bytes, SHA256(ciphertext||wrapped_dek) == submission_hash
   // stores ciphertext in ciphertext_hex column (encrypted, opaque)
 
 func GetPendingQueue(ctx, pool, orgID, moderatorPubkey) ([]PendingQueueItem, error)
   // checks: must be leader or have can_moderate capability
 
-func ApproveSubmission(ctx, pool, qdrantClient, orgID, submissionHash, moderatorPubkey, req) error
-  // advisory approve (leader or can_moderate); updates status, writes audit log, indexes in Qdrant
-  // requires vector (768 dim), indexes keywords in org_keywords + memory_keywords
+func CastApprovalVote(ctx, pool, orgID, submissionHash, moderatorPubkey, vote string) (approveCount int, flagCount int, err error)
+func ApproveSubmission(ctx, pool, orgID, submissionHash, moderatorPubkey, memoryType string, vector []float32, embeddingModelID string, embeddingSchemaVersion string) error
+func CastKeywordVote(ctx, pool, orgID, submissionHash, keyword, moderatorPubkey, vote string) (includeCount int, excludeCount int, err error)
+func GetSubmissionVoteTallies(ctx, pool, orgID string, submissionHashes []string) (map[string]SubmissionVoteTally, error)
+func GetKeywordVoteTallies(ctx, pool, orgID string, submissionHashes []string) (map[string]map[string]KeywordVoteTally, error)
+func GetModeratorRecommendations(ctx, pool, orgID string, submissionHashes []string) (map[string][]ModeratorRecommendation, error)
 
 func DenySubmission(ctx, pool, orgID, submissionHash, moderatorPubkey, reason) error
   // updates status + denial_reason; leader-only (deny is terminal)
@@ -502,19 +579,26 @@ func DenySubmission(ctx, pool, orgID, submissionHash, moderatorPubkey, reason) e
 // Client
 func NewQdrantClient(addr string, apiKey string) (*QdrantClient, error)  // strips http:// prefix, requires apiKey
 func (c *QdrantClient) Close() error
-func (c *QdrantClient) EnsureCollection(ctx, vectorSize) error
-func (c *QdrantClient) UpsertPoint(ctx, entry) error  // stored-vector noise DISABLED by default (σ=0, D-9.5); injectGaussianNoise is a no-op at σ=0
-func (c *QdrantClient) QueryPoints(ctx, orgID, epochs, vector, keywordWeights, embeddingModelID, limit, includeDormant) ([]MemoryResult, bool, error)
-func (c *QdrantClient) CountPoints(ctx) (int64, error)
+func (c *QdrantClient) SetRetrievalConfig(vectorNoiseSigma float64, recallDepth uint64)
+func (c *QdrantClient) SetPendingDenialDB(db DBQueryer)
+func (c *QdrantClient) EnsureCollection(ctx, orgID string, vectorSize uint64) error
+func (c *QdrantClient) UpsertPoint(ctx, entry) error
+func (c *QdrantClient) QueryPoints(ctx, orgID string, epochs []int32, vector []float32, keywordWeights []protocol.KeywordWithWeight, embeddingModelID string, limit uint64, includeDormant bool, relevanceFloor float64, surfaceBudget int) ([]protocol.MemoryResult, bool, []CandidateScore, error)
+func (c *QdrantClient) NearestExistingMemories(ctx, orgID string, vector []float32, limit int) ([]NearDupMatch, error)
+func (c *QdrantClient) DeletePointByCID(ctx, orgID, memoryCID string) error
+func (c *QdrantClient) UpdateKeywordWeights(ctx, orgID, memoryCID string, weights map[string]float64) error
 
 // Package-level wrappers
+func SetRetrievalRanker(r *ProbabilisticRanker)
 func AddToIndex(ctx, client, entry) error
-func EnsureCollection(ctx, client) error
-func QueryByKeywords(ctx, client, orgID, accessibleEpochs, keywordWeights, vector, embeddingModelID, limit, includeDormant) ([]MemoryResult, bool, error)
+func EnsureCollection(ctx, client, orgID string) error
+func QueryByKeywords(ctx context.Context, client *QdrantClient, orgID string, accessibleEpochs []int32, keywordWeights []protocol.KeywordWithWeight, vector []float32, embeddingModelID string, limit uint64, includeDormant bool, relevanceFloor float64, surfaceBudget int) ([]protocol.MemoryResult, bool, []CandidateScore, error)
 func ScrollOrgMemoryPayloads(ctx, client, orgID) ([]OrgMemoryPayload, error)
-func ScrollApprovedMemories(ctx, client, orgID, limit, offset) ([]MemoryResult, string, error)
 func UpdateMemoryKeywords(ctx, client, orgID, oldKeywords, newKeyword) error
 func UpdateMemoryState(ctx, client, orgID, memoryCID, lifecycleState) error
+func ApplyServeBoostLocal(ctx, db, memoryCID, orgID string) error
+func ApplyDenialDecayLocal(ctx, db, memoryCID, orgID string) error
+func GetKeywordWeights(ctx, db, orgID, memoryCID string) (map[string]float64, error)
 ```
 **Constants:** `EMBED_DIM = 768`, `contestedThreshold = 0.20`
 **Key detail:** `UpsertPoint` calls `injectGaussianNoise`, but stored-vector noise is **DISABLED by default (σ=0)** per D-9.5 (it was inherited Echo code that cost ~20pp good-memory recall). `QueryPoints` fetches up to `recallDepth` (default 5000) candidates, then applies keyword-overlap boost, optimistic pending-denial decay, and new-memory boost, then assigns positions with D-9.4 tempered power-law sampling (strict top-1; positions 2..N sampled without replacement).
@@ -545,11 +629,12 @@ func GetContributorStats(ctx, pool, chainClient ChainQuerier, orgID, contributor
 #### `internal/billing/billing.go`
 **Exports:**
 ```go
-const QueryCost = int64(1)
-func EnsureOrgLedger(ctx, pool, orgID) error              // INSERT ON CONFLICT DO NOTHING
+func ProvisionOrgLedger(ctx, pool, orgID string, initialBalance int64, actor string) error
+func Subscribe(ctx, pool, orgID, memberPubkey, actor string) error
+func GrantFreeRecall(ctx, pool, orgID, memberPubkey, actor string) error
+func RevokeRecall(ctx, pool, orgID, memberPubkey, actor string) error
 func GetBalance(ctx, pool, orgID) (int64, error)
 func TopUp(ctx, pool, orgID, actor, amount) error         // transactional: update balance + record txn
-func DeductQueryCredit(ctx, pool, orgID, receiptID) error  // transactional: decrement + record txn
 func GetTransactions(ctx, pool, orgID, limit) ([]Transaction, error)
 ```
 **Key detail:** `org_credits.balance` has `CHECK (balance >= 0)` at DB level — solvency enforced  
@@ -577,21 +662,30 @@ func RequestSignature(pubkeyHex, sigHex string, message []byte) error
 **Role:** secp256k1 wallet signature verification for leader-gated actions (CO-233)
 **Exports:**
 ```go
-func VerifyWalletSignature(walletAddress, signature, message []byte) error
+func VerifyCosmosArbitrarySignature(signerAddress string, message []byte, pubkeyBytes, signatureBytes []byte) error
+func ParsePubkeyBytes(pubkeyBase64 string) ([]byte, error)
+func ParseSignatureBytes(signatureBase64 string) ([]byte, error)
+func BuildCommitCanonicalMessage(orgID, reportID, txHash string) string
+func BuildConfigUpdateCanonicalMessage(orgID string, updates map[string]interface{}) string
 ```
-**Key detail:** Verifies signatures produced by Cosmos wallet `signArbitrary` (EIP-712 structured data or plain bytes). Used for: report chain commitment (`POST /v1/orgs/{orgID}/reports/{reportID}/commit`). (The former `PATCH /v1/orgs/{orgID}/config` for `required_approvals`/`report_vote_threshold` was removed with the moderation-quorum model — D-MODERATION-ADVISORY.) Canonical message format: `{action}|{orgID}|{field1}|{field2}|...`
+**Key detail:** Verifies signatures produced by Cosmos wallet `signArbitrary` (EIP-712 structured data or plain bytes). Used for report chain commitment (`POST /v1/orgs/{orgID}/reports/{reportID}/commit`); canonical builders emit newline-delimited envelopes (e.g., `wevibe.commit_report.v1` + keyed lines).
 **Known issues:** None
 
 #### `internal/verify/canonical.go`
 **Exports:**
 ```go
-func CreateOrgMessage(orgID, leaderPubkey, leaderX25519Pubkey, orgName, domain, encEnvelope, searchEnvelope, modEnvelope, pkMod string, feeModel map[string]any) []byte
-func InviteMemberMessage(orgID, pubkey, x25519Pubkey, role, signedBy, encEnvelope, searchEnvelope, modEnvelope string) []byte
+func CreateOrgMessage(leaderPubkey, leaderX25519Pubkey, orgName, domain, encEnvelope, searchEnvelope, modEnvelope, pkMod string, feeModel protocol.FeeModel) []byte
+func InviteMemberMessage(orgID, pubkey, x25519Pubkey, role, signedBy, encEnvelope, searchEnvelope, modEnvelope string, canContribute, canModerate bool) []byte
 func RotateEpochMessage(orgID, newPkMod, signedBy string, envelopes []protocol.MemberEnvelopePair) []byte
 func RemoveMemberMessage(orgID, pubkey, signedBy string) []byte
-func ApproveSubmissionMessage(orgID, submissionHash string, epochID int32, approvedCID, wrappedDekEnc, signedBy string, keywords []protocol.KeywordWithWeight) []byte
+func TransferLeadershipMessage(orgID, newLeaderPubkey, signedBy string) []byte
+func CloseOrgMessage(orgID, signedBy string) []byte
+func SubmitMemoryMessage(orgID string, epochID int, submissionHash string, contributorPubkey string, memoryType string, ciphertextHash string, plaintextHash string, salt string, wrappedDekHash string) []byte
+func ApproveSubmissionMessage(orgID, submissionHash string, epochID int32, approvedCID, umbralCapsule, umbralCiphertext, memoryType, signedBy string, keywords []protocol.KeywordWithWeight) []byte
+func ApproveSubmissionMessageSimple(orgID, submissionHash string, epochID int32, memoryType, signedBy string) []byte
 func DenySubmissionMessage(orgID, submissionHash, reason, signedBy string) []byte
-func feeModelHash(feeModel map[string]any) string
+func BanContributorMessage(orgID, contributorPubkey, signedBy string) []byte
+func feeModelHash(feeModel protocol.FeeModel) string
 func envelopesHash(envelopes []protocol.MemberEnvelopePair) string
 func keywordsHash(keywords []protocol.KeywordWithWeight) string
 ```
@@ -600,9 +694,15 @@ func keywordsHash(keywords []protocol.KeywordWithWeight) string
 #### `internal/embed/embed.go`
 **Exports:**
 ```go
-func GetEmbedding(ctx, ollamaURL, text) ([]float32, error)
+type EmbeddingConfig struct {
+    BaseURL string
+    APIKey  string
+    Model   string
+}
+func ResolveEmbeddingConfig() (EmbeddingConfig, error)
+func GetEmbedding(ctx context.Context, text string) (vector []float32, modelID string, err error)
 ```
-**Key detail:** Calls Ollama `/api/embeddings` with `nomic-embed-text`. Returns zero vector on failure (graceful fallback).  
+**Key detail:** Embedding config resolves from dashboard config (`WEVIBE_DASHBOARD_CONFIG` or `~/.config/wevibe/dashboard.json`), then calls the selected provider endpoint.  
 **Constants:** `EMBED_DIM = 768`  
 **Known issues:** None
 
@@ -631,9 +731,38 @@ func ParseWeVibeSigned(r *http.Request) (*SignedTimestampAuth, error)
 **Exports:**
 ```go
 func NewPool(ctx, connStr) (*pgxpool.Pool, error)
-func RunMigrations(ctx, pool) error  // creates org_keywords, memory_keywords tables
 ```
+#### `internal/db/migrate.go`
+**Exports:** `ApplySchema(databaseURL string) error`
 **Known issues:** None
+
+#### `internal/hubsign/`
+**Role:** Hub response-signature subsystem.
+**Core exports:** `hubsign.NewFromEnv()`, `Signer.PublicKeyHex()`, `Signer.SignBody(...)`, `hubsign.SigningMiddleware(...)`.
+
+#### `internal/notifications/`
+**Role:** Notification persistence + websocket fanout + channel dispatch.
+**Core exports:** `notifications.NewHub()`, `notifications.NewPreferenceStore(...)`, `notifications.NewDispatcher(...)`, `notifications.EmitUserNotification(...)`, plus SMTP/webhook channels.
+
+#### `internal/reports/reports.go`
+**Role:** Report domain operations behind handler layer.
+**Core exports:** `Create`, `List`, `Get`, `Update`, `GetReportRecommendations`.
+
+#### `internal/serves/serves.go`
+**Role:** Serve/denial event persistence + relay bookkeeping helpers.
+**Core exports:** `RecordServe`, `RecordDenial`, `GetPendingServes`, `GetPendingDenials`, `MarkSubmitted`, `MarkFailed`, `CountPending`, `HasPendingEvents`.
+
+#### `internal/sanitize/`
+**Role:** Plaintext sanitization scanner used during submission processing.
+**Core exports:** `sanitize.ScanContent(text)` returning findings for control chars, bidi overrides, homoglyphs, etc.
+
+#### `internal/social/client.go`
+**Role:** Hub client for wevibe-social-graph profile/display-name lookups.
+**Core exports:** `social.NewClient(...)`, `ResolveNames(...)`, `GetProfile(...)`.
+
+#### `internal/umbral/`
+**Role:** Hub-side Umbral sidecar client/service wrapper (gRPC) for PRE kfrag storage + re-encryption.
+**Core exports:** `umbral.NewClient(...)`, `umbral.NewService(...)`, `StoreKFrag`, `ReEncryptForMember`, `OnMemberRemoved`, `RemoveOrgKFrags`, `Health`.
 
 ---
 
@@ -642,40 +771,19 @@ func RunMigrations(ctx, pool) error  // creates org_keywords, memory_keywords ta
 #### `internal/protocol/types.go`
 **All types:**
 ```
-OrgInfo                  — org public info (org_id, org_name, domain, leader_pubkey, current_epoch, egress_mode, allowed_providers, status, rotation_status, created_at)
-CreateOrgRequest         — org_id, leader_pubkey, leader_x25519_pubkey, org_name, domain, fee_model, pk_mod, signature, enc_envelope, search_envelope, mod_envelope (+ server-side umbral_pk storage field)
-RotateEpochRequest       — new_pk_mod, signed_by, signature, envelopes []MemberEnvelopePair (+ server-side umbral_pk storage field)
-EpochManifestResponse    — org_id, epoch_id, pk_mod, umbral_pk, signed_by, signature, created_at
-MemberRecord             — org_id, pubkey, x25519_pubkey, role, join_epoch, history_access_from_epoch, authorized_until_epoch, active, joined_at
-InviteMemberRequest     — pubkey, x25519_pubkey, pre_pubkey, role, signed_by, signature, enc_envelope, search_envelope, mod_envelope  (NO epoch_sk — kfrags are minted leader-side and delivered via StoreKFrag)
-StoreMemberKFragRequest  — epoch_id, pre_pubkey, kfrag  (leader-signed; POST /v1/orgs/{orgID}/members/{pubkey}/kfrag)
-CreateOrgRequest         — …, umbral_pk (hex, leader-derived epoch public key), org_id, tx_hash  (NO epoch_sk_envelope)
-RemoveMemberRequest      — signed_by, signature
-KeyEnvelopeResponse      — org_id, epoch_id, enc_envelope, search_envelope, mod_envelope *string
-MemberEnvelopePair       — pubkey, enc_envelope, search_envelope, mod_envelope *string
-SubmitMemoryRequest      — org_id, epoch_id, ciphertext, wrapped_dek_mod, submission_hash, contributor_pubkey, contributor_sig, stack_hint
-SubmitMemoryResponse     — submission_hash, status
-PendingQueueItem         — submission_hash, org_id, epoch_id, contributor_pubkey, ciphertext_hex, wrapped_dek_mod, stack_hint, created_at, status
-KeywordWithWeight        — keyword string, weight float64
-KeywordMatchDetail       — keyword, query_weight, memory_weight, product
-ScoringBreakdown         — keyword_score, vector_score, gamma, delta, capped_boost, combined_score, keyword_matches, unmatched_query
-ApproveRequest           — epoch_id, approved_cid, umbral_capsule, umbral_ciphertext, content_flags, keywords, keyword_weights, vector, embedding_model_id, embedding_schema_version, vector_dim, moderator_sig, signed_by
-DenyRequest              — reason, signed_by, signature
-QueryRequest             — org_id, agent_pubkey, pre_pubkey (CO-218), keyword_weights, vector, embedding_model_id, embedding_schema_version, limit, include_dormant (CO-224), agent_sig
-MemoryResult             — cid, org_id, epoch_id, confidence_bps (CO-224), lifecycle_state (CO-224), wrapped_dek_enc, umbral_ciphertext (CO-221), cfrag (CO-218), capsule (CO-218), content_flags, retrieval_count, acceptance_count, contributor_stats, keywords, scoring_breakdown
-QueryResponse           — results, contested, receipt_id, requires_reencryption (CO-218)
-RejectRequest            — cid, org_id, reason, agent_pubkey, signature
-RegisterPreKeyRequest    — pre_pubkey
-MemberPreKeyResponse     — pre_pubkey
-IndexEntry               — cid, org_id, epoch_id, keywords, keyword_weights, content_flags, vector, confidence_bps (CO-224), lifecycle_state (CO-224), embedding_model_id, embedding_schema_version, vector_dim
-MemberOrgEntry           — org_id, org_name, role, current_epoch, history_access_from_epoch, egress_mode, allowed_providers, mod_pubkey
-MemberOrgsResponse       — orgs []MemberOrgEntry
-UsageReceipt             — receipt_id, org_id, billing_epoch, access_epochs, agent_pubkey, query_commitment, result_commitment, agent_signature, node_signature
-StoreRecoverySharesRequest — shares, signed_by, signature
-RecoveryShareEntry       — share_index, holder_pubkey, sealed_share
-RecoveryShareResponse    — org_id, share_index, sealed_share
-RegisterDashboardKeyRequest — pubkey, label, signed_by, signature
-DashboardKeyRecord       — org_id, pubkey, label, registered_by, active, created_at
+OrgInfo, DiscoverOrg, CreateOrgRequest, RotateEpochRequest, EpochManifestResponse
+MemberRecord, InviteMemberRequest, RemoveMemberRequest, TransferLeadershipRequest, CloseOrgRequest
+LinkWalletRequest, EnableMemberRecallRequest, RegisterPreKeyRequest, MemberPreKeyResponse
+KeyEnvelopeResponse, MemberEnvelopePair
+SubmitMemoryRequest, SubmitMemoryBatchRequest, SubmitMemoryResponse
+Finding, PendingQueueItem, KeywordWithWeight, KeywordCandidate, KeywordMatchDetail, ScoringBreakdown
+ApproveRequest, DenyRequest, FeeModel
+QueryRequest, MemoryResult, ContributorStats, QueryResponse, RejectRequest
+IndexEntry, MemberOrgEntry, MemberOrgsResponse, UsageReceipt
+StoreRecoverySharesRequest, RecoveryShareEntry, RecoveryShareResponse
+RegisterDashboardKeyRequest, DashboardKeyRecord
+CreateReportRequest, EscalationVote, ReportRecommendation, ReportRecord
+UpdateReportRequest, VoteOnReportRequest, VoteOnReportResponse, ReportListResponse
 ```
 
 ---
@@ -685,42 +793,77 @@ DashboardKeyRecord       — org_id, pubkey, label, registered_by, active, creat
 #### `db/schema.sql`
 **Tables:**
 ```
+hub_instance             — singleton hub instance UUID for client reset detection across DB wipes.
 orgs                  — PK: org_id. Includes stripe_customer_id, stripe_subscription_id, egress_mode CHECK, status CHECK, rotation_status CHECK, rotation_pending_since, chain_registered, trial_days (CO-266)
+org_recall_rate_limits   — per-org recall throttle policy (max_requests/window_seconds).
 members               — PK: (org_id, pubkey). FK: orgs. Role CHECK (leader|member). Includes `can_contribute BOOLEAN`, `can_moderate BOOLEAN` (per-member capabilities, chain-mirrored), `pre_pubkey BYTEA`, `is_trial BOOLEAN`, `trial_expires_at TIMESTAMPTZ` (CO-266). ON DELETE CASCADE.
 epoch_manifests       — PK: (org_id, epoch_id). FK: orgs. Includes `umbral_pk BYTEA`. ON DELETE CASCADE.
-pending_submissions   — PK: submission_hash. FK: orgs. Includes `umbral_capsule BYTEA`, `umbral_ciphertext BYTEA`. Status CHECK (pending|approved|denied|escalated).
+pending_submissions   — PK: submission_hash. FK: orgs. Includes `umbral_capsule BYTEA`, `umbral_ciphertext BYTEA`. Status CHECK (`pending_keyword|pending_chain|committed|denied`), default `pending_keyword`.
+extracted_sessions       — contributor session IDs that already completed extraction.
+submission_mod_votes     — per-submission moderator approve/flag votes.
+keyword_mod_votes        — per-keyword include/exclude votes on pending submissions.
+reports                  — report records + resolution state.
+report_votes             — per-report votes from moderators/leaders.
 rotation_buffer       — PK: buffer_id (gen_random_uuid). FK: orgs. Submissions buffered during rotation_pending state.
 usage_receipts        — PK: receipt_id (gen_random_uuid). FK: orgs.
 audit_log             — PK: id (BIGSERIAL). FK: orgs.
 org_credits           — PK: org_id. FK: orgs ON DELETE CASCADE. balance CHECK (>= 0).
+org_extraction_profile   — per-org extraction profile (prompt/ctx/model/preset).
 credit_transactions   — PK: txn_id (BIGSERIAL). FK: orgs.
 key_envelopes         — PK: (org_id, pubkey). Stores enc/search/mod envelopes per member.
+identity_blobs           — passkey identity blob storage keyed by (pubkey, credential_id).
+pairing_blobs            — pairing blob storage keyed by pairing_id.
 recovery_shares       — PK: (org_id, share_index). Stores sealed Shamir shares.
 dashboard_keys        — PK: (org_id, pubkey). Authorized dashboard identities per org.
-org_keywords          — PK: id. UNIQUE: (org_id, keyword). Created via RunMigrations.
+serve_events             — pending/submitted serve + denial attestations for relay batching.
+session_served_memories  — per-session dedupe memory ledger for recall injection.
+query_log                — recall query telemetry rows.
+query_candidate_scores   — per-candidate scoring/disposition rows for each query.
+watcher_state            — chain watcher resume cursor (`chain_watcher` row).
+org_keywords          — PK: id. UNIQUE: (org_id, keyword). Declared in `schema.sql` and applied via `db.ApplySchema`.
+keyword_candidates       — contributor-suggested non-vocabulary keywords.
 memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERENCES org_keywords.
 ```
-**Indexes:** `idx_orgs_leader`, `idx_orgs_status`, `idx_members_active`, `idx_members_pubkey`, `idx_members_pubkey_active`, `idx_pending_org_status`, `idx_pending_contributor`, `idx_receipts_org_epoch`, `idx_audit_org_epoch`, `idx_credit_txn_org`, `idx_envelopes_org`, `idx_recovery_shares_holder`, `idx_dashboard_keys_pubkey`, `idx_org_keywords_org` (WHERE NOT deprecated), `idx_memory_keywords_keyword`
+**Indexes:** `idx_orgs_leader`, `idx_orgs_status`, `idx_members_active`, `idx_members_membership_active`, `idx_members_pubkey`, `idx_members_wallet`, `idx_pending_org_status`, `idx_pending_contributor`, `idx_extracted_sessions_contributor`, `idx_submission_mod_votes_sub`, `idx_keyword_mod_votes_sub`, `idx_reports_org_status`, `idx_report_votes_report`, `idx_receipts_org_epoch`, `idx_audit_org_epoch`, `idx_credit_txn_org`, `idx_envelopes_org`, `idx_identity_blobs_credential`, `idx_recovery_shares_holder`, `idx_dashboard_keys_pubkey`, `idx_serve_events_org_status`, `idx_query_log_org_created`, `idx_query_candidate_scores_query`, `idx_org_keywords_org`, `idx_keyword_candidates_org_kw`, `idx_memory_keywords_keyword`, `idx_notifications_recipient_unread`, `idx_join_requests_org_pending`
 
 ---
 
 ### Test Files Summary
 
-| Test file | Tests | Requires |
+| Test file | Summary | Requires |
 |---|---|---|
-| `handlers/health_test.go` | `TestHealthReturns200` | Nothing (in-memory) |
-| `billing/billing_test.go` | 5 tests (EnsureOrgLedger, TopUp, Deduct, InsufficientBalance, GetTransactions) | DATABASE_URL |
-| `moderation/moderation_test.go` | 5 tests (SubmitVerifySig, SubmitVerifyHash, GetPendingQueueRequiresMod, ApproveUpdatesStatus, DenyRecordsReason, HubNeverStoresPlaintext) | DATABASE_URL |
-| `retrieval/retrieval_test.go` | 6 tests (AddToIndex, QueryByKeywords, AddAndQueryRoundtrip, NewQdrantClient_AddressParsing, Constants, ContestedThreshold) | Qdrant on localhost:6333 |
-| `orgs/orgs_test.go` | 6 tests (CreateOrg_GetOrg, GetOrg_NotFound, OrgExists, GetLeaderPubkey, GetCurrentEpoch, FullOrgLifecycle) | DATABASE_URL |
-| `members/members_test.go` | 7 tests (InviteMember_GetMember, GetMember_NotFound, RemoveMember, ListMembers, VerifyMemberAccess, IsLeader, FullMemberLifecycle) | DATABASE_URL |
-| `receipts/receipts_test.go` | 1 test (ReceiptCreation) | DATABASE_URL |
-| `verify/sig_test.go` | 5 tests (Valid, Tampered, InvalidPubkey, InvalidSig, WrongPubkey) | Nothing (in-memory) |
-| `verify/canonical_test.go` | (not read) | DATABASE_URL |
-| `embed/embed_test.go` | 2 tests (Fallback, Dim) | Nothing (in-memory) |
-| `api/handlers/moderation_test.go` | (not read) | DATABASE_URL |
-| `api/handlers/member_orgs_test.go` | (not read) | DATABASE_URL |
-| `auth/header_test.go` | (not read) | Nothing (in-memory) |
+| `internal/api/handlers/errors_test.go` | Verifies JSON error envelope with/without optional detail fields. | Nothing (in-memory) |
+| `internal/api/handlers/health_test.go` | Health endpoint smoke test. | Nothing (in-memory) |
+| `internal/api/handlers/keyword_extraction_verify_test.go` | Verifies `/verify-keywords` fail-closed gates and pending_keyword→pending_chain transition persistence. | DATABASE_URL |
+| `internal/api/handlers/member_orgs_test.go` | Verifies signed member-org listing auth, timestamp window checks, inactive filtering, and multi-org aggregation. | DATABASE_URL |
+| `internal/api/handlers/moderation_test.go` | Verifies submit epoch validation and advisory moderation vote tallies remain advisory-only. | DATABASE_URL |
+| `internal/api/handlers/reports_test.go` | Exercises report create/list/get/update/auth paths (including escalation/resolution flows). | DATABASE_URL |
+| `internal/api/handlers/serves_test.go` | Verifies serve-relay batching, epoch ordering, tx-size cap flushing, and status marking behavior. | Nothing (in-memory fakes) |
+| `internal/auth/header_test.go` | Verifies `WeVibe-Signed` header parser for valid, malformed, and scheme/error cases. | Nothing (in-memory) |
+| `internal/billing/billing_test.go` | Covers ledger provisioning/top-up/subscription and transaction history behaviors. | DATABASE_URL |
+| `internal/chain/broadcast_test.go` | Validates gas-estimation/retry strategy and invalid gas strategy handling. | Nothing (in-memory mocks) |
+| `internal/chain/merkle_test.go` | Validates Merkle root behavior (empty/single/even/odd/deterministic). | Nothing (in-memory) |
+| `internal/chain/submit_test.go` | Verifies commit/serve/denial message builders map fields and reject invalid entries. | Nothing (in-memory) |
+| `internal/chain/watcher_test.go` | Covers watcher initialization/resume cursor behavior. | Nothing (in-memory mocks) |
+| `internal/embed/embed_test.go` | Covers embedding config resolution and retry behavior for transient provider failures. | Config fixtures; optional live provider for live subtest |
+| `internal/hubsign/hubsign_test.go` | Verifies deterministic signer derivation + Ed25519 sign/verify roundtrip. | Nothing (in-memory) |
+| `internal/hubsign/middleware_test.go` | Verifies response-signing middleware preserves response body/status and emits signature header. | Nothing (in-memory) |
+| `internal/members/members_test.go` | Covers invite/get/remove/list/access/leader/member-org lifecycle behavior. | DATABASE_URL |
+| `internal/moderation/moderation_test.go` | Covers queue admission checks, vote/deny persistence, and plaintext non-retention guarantees. | DATABASE_URL |
+| `internal/orgs/orgs_test.go` | Covers org create/read/exists/leader/epoch lifecycle behavior. | DATABASE_URL |
+| `internal/receipts/receipts_test.go` | Receipt creation/signing persistence checks. | DATABASE_URL |
+| `internal/retrieval/matched_keywords_test.go` | Verifies per-result matched keyword extraction/overlap handling. | Nothing (mocked Qdrant responses) |
+| `internal/retrieval/parity_test.go` | Verifies ranking parity against fixture corpus expectations. | Fixture files only |
+| `internal/retrieval/ranking_core_test.go` | Self-test parity for the extracted ranking core. | Nothing (in-memory) |
+| `internal/retrieval/ranking_test.go` | Exercises probabilistic ranker determinism/temperature/limit edge cases. | Nothing (in-memory) |
+| `internal/retrieval/retrieval_test.go` | Qdrant integration + query behavior tests (including contested threshold and model filter behavior). | Qdrant on localhost:6333 |
+| `internal/sanitize/scanner_test.go` | Validates scanner findings for zero-width chars, bidi controls, homoglyphs, and clean text. | Nothing (in-memory) |
+| `internal/serves/serves_test.go` | Verifies serve-event persistence and matched-keyword validation. | DATABASE_URL |
+| `internal/umbral/client_test.go` | Sidecar integration tests for leader-minted kfrag lifecycle + org purge idempotence. | Built `wevibe-umbral` binary + local sidecar |
+| `internal/umbral/service_edge_test.go` | Edge-case tests for service wrappers (reencrypt/store/delete/health/close). | Nothing (stubbed sidecar client) |
+| `internal/verify/canonical_test.go` | Verifies deterministic canonical message bodies/hashes and cross-language fee-model vectors. | Fixture vectors (`wevibe-sdk/protocol/test_vectors`) |
+| `internal/verify/noble_compat_test.go` | Confirms hub signature verification compatibility with Noble-generated signatures. | Nothing (in-memory) |
+| `internal/verify/sig_test.go` | Ed25519 request-signature verification success/failure cases. | Nothing (in-memory) |
 
 ---
 
@@ -741,12 +884,12 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 #### `app/app.go`
 **Role:** Cosmos SDK BaseApp — registers all keepers, mounts KV stores, wires gRPC/RPC
 **Key behavior:**
-- 7 custom WeVibe modules + standard SDK modules (staking, auth, bank, gov, slashing, distribution, mint, epochs)
+- 8 custom WeVibe modules + standard SDK modules (staking, auth, bank, gov, slashing, distribution, mint, epochs)
 - Module ordering: InitGenesis, ExportGenesis, EndBlockers all explicitly set
-- maccPerms includes operator module with Burner permission
+- maccPerms includes org module with Burner permission
 - Chain foundation pins `github.com/cosmos/cosmos-sdk v0.53.5` and `github.com/cometbft/cometbft v0.38.20` (see `DECISIONS.md` D-S29-SDK-V053)
 
-### Custom Modules (7)
+### Custom Modules (8)
 
 > **FORWARD NOTE (Sprint 32, storage-market overhaul — DECISIONS.md `D-ECON-STORAGE-MARKET`, brief `wevibe-meta/workspace/reports/design-storage-market-economy.md`):** landed: `x/org` slot registry + ascending-price acquisition auction; `x/emissions` org-treasury payout subsystem removed (Treasury/`MsgWithdrawTreasury` removed); `x/attestation` neutered (disabled-but-wired); `x/bandwidth` memory-cap wired as the testnet DDoS guard. Remaining unbuilt: on-chain demand-leg router; self-assessed-value (Harberger) rent + forced-sale-in-window; Dutch resale of freed slots; full per-memory storage-deposit activation (parameterized ~0 on testnet).
 
@@ -812,7 +955,7 @@ x/{module}/
 │   ├── keeper.go           # Keeper struct, state access, business logic
 │   ├── msg_server.go       # MsgServer implementation
 │   ├── grpc_query.go       # gRPC query handlers
-│   ├── epoch_hooks.go      # Epoch hooks (emissions, challenge, serving only)
+│   ├── epoch_hooks.go      # Epoch hooks (emissions, memory only)
 │   └── keeper_test.go      # Keeper tests
 ├── module/
 │   ├── module.go           # AppModule, RegisterServices, EndBlocker
@@ -830,12 +973,21 @@ x/{module}/
     └── params.pb.go        # Proto-generated Params
 ```
 
+### Earned-Trust Decay Code Anchors
+
+- `x/serve/keeper/keeper.go` — `GetMatchedKeywordsForEpoch(ctx, orgID, memoryCID, epoch)` returns the matched-keyword set for one memory+epoch; memory decay consumes this as the keyword-activity signal.
+- `x/memory/keeper/lifecycle.go` — `applyDecay(...)` is the canonical earned-trust decay function (serve/denial/idle deltas, trust-weighting, clamp/archive behavior).
+- `x/memory/keeper/lifecycle.go` — `ApplyEpochDecay(ctx, epoch)` iterates active memories and applies `applyDecay` once per memory at epoch end.
+- `proto/wevibe/memory/v1/state.proto` — `StoredMemoryCommitment` is the persisted memory-state proto (including `keywords`, `serve_count_total`, `denial_count_total`, `last_active_epoch`, `state`, `archived_epoch`, and provenance/hash fields).
+
 ### Tests
 
 | Test file | Tests | Requires |
 |---|---|---|
 | tests/integration/wevibe_txs_test.go | 9 tx pipeline tests | In-memory MemDB app |
 | tests/integration/wevibe_queries_test.go | 11 gRPC query tests | In-memory MemDB app |
+| tests/integration/wevibe_modules_test.go | Cross-module integration/query wiring tests (attestation, bandwidth, memory, serve) | In-memory MemDB app |
+| tests/integration/helpers.go | Shared integration harness/bootstrap (`TestSuite`, genesis setup, live msg delivery helper) | In-memory MemDB app |
 | x/*/keeper/keeper_test.go | Per-module keeper tests | In-memory |
 
 ### Scripts
@@ -844,6 +996,8 @@ x/{module}/
 |---|---|
 | scripts/init-chain.sh | Idempotent genesis init with wevibe_epoch config |
 | scripts/smoke-test.sh | RPC health + block production verification |
+| scripts/protocgen.sh | Legacy local proto codegen helper script (`buf generate` + copy generated tree) |
+| scripts/dev-mnemonics.env | Public test-only dev mnemonic seed(s) for local chain submitter wiring |
 
 ### Docker
 
@@ -865,37 +1019,57 @@ app/
 ├── layout.tsx                    # Root layout + providers
 ├── page.tsx                      # Landing/redirect → /dashboard or /discover
 ├── globals.css
-├── api/                          # Next.js API routes (server-side)
-│   └── [...route]/               # Catch-all for hub proxy if needed
+├── api/
+│   ├── extract/route.ts
+│   ├── identity/
+│   │   └── adopt-local/route.ts
+│   ├── lmstudio-models/route.ts
+│   ├── ollama-models/route.ts
+│   ├── openrouter-embedding-models/route.ts
+│   ├── openrouter-models/route.ts
+│   ├── org-setup/
+│   │   ├── route.ts
+│   │   └── finalize/route.ts
+│   ├── provision-recall/route.ts
+│   ├── sessions/
+│   │   ├── route.ts
+│   │   └── [id]/messages/route.ts
+│   └── settings/
+│       ├── route.ts
+│       ├── embedding-readiness/route.ts
+│       ├── readiness/route.ts
+│       └── risk-appetite/route.ts
 ├── (auth)/
-│   └── login/page.tsx           # Login page
+│   ├── adopt/page.tsx            # Local identity adoption flow
+│   └── login/page.tsx            # Login page
 ├── (dashboard)/
-│   ├── layout.tsx                # Dashboard layout with sidebar/topbar + OrgProvider
-│   ├── activity/page.tsx         # Activity feed / notifications log
-│   ├── billing/page.tsx          # Billing + credits management
-│   ├── buy-org/page.tsx          # Purchase / create new org
-│   ├── chain-submit/page.tsx     # Leader batch commit to chain (denial batches, memory commits)
-│   ├── create-org/page.tsx       # Org creation flow
-│   ├── discover/page.tsx         # Public org discovery / browse
-│   ├── epoch/page.tsx            # Epoch rotation management
-│   ├── faucet/page.tsx           # Dev faucet access page
-│   ├── health/page.tsx           # Hub/chain health diagnostics
-│   ├── join-requests/page.tsx    # Pending join request queue (leader)
-│   ├── keywords/page.tsx         # Vocabulary + keyword management
-│   ├── members/page.tsx          # Member list with capability pills
-│   ├── memories/page.tsx         # Committed memory browser
-│   ├── moderation/page.tsx       # Moderation queue with expandable per-memory dropdown
-│   ├── my-org/page.tsx           # Current org overview
-│   ├── my-submissions/page.tsx   # Contributor's own submission status view
-│   ├── notifications/page.tsx    # Notification center
-│   ├── profile/page.tsx          # Own profile settings
-│   ├── recovery/page.tsx         # Shamir recovery share management
-│   ├── reports/page.tsx          # Memory report queue + voting
-│   ├── sessions/page.tsx         # Session list with per-memory org destination (CO-247)
-│   └── settings/page.tsx         # Extraction model, extraction profile config
-└── u/
-    └── [wallet]/
-        └── page.tsx              # Public profile — standalone, no sidebar (served by hub /v1/profile/{wallet})
+│   ├── layout.tsx                 # Dashboard layout with sidebar/topbar + OrgProvider
+│   ├── activity/page.tsx
+│   ├── billing/page.tsx
+│   ├── buy-org/page.tsx
+│   ├── create-org/page.tsx
+│   ├── discover/page.tsx
+│   ├── discover/[orgId]/page.tsx
+│   ├── epoch/page.tsx
+│   ├── faucet/page.tsx
+│   ├── health/page.tsx
+│   ├── join-requests/page.tsx
+│   ├── members/page.tsx
+│   ├── moderation/
+│   │   ├── new/page.tsx
+│   │   ├── reported/page.tsx
+│   │   └── history/page.tsx
+│   ├── my-org/page.tsx
+│   ├── my-submissions/page.tsx
+│   ├── notifications/page.tsx
+│   ├── profile/page.tsx
+│   ├── recall-inspect/page.tsx    # Recall Health
+│   ├── recovery/page.tsx
+│   ├── sessions/
+│   │   ├── page.tsx
+│   │   └── extracted/page.tsx
+│   └── settings/page.tsx
+└── u/[wallet]/page.tsx            # Public profile — standalone, no sidebar
 ```
 
 ### `components/`
@@ -903,10 +1077,31 @@ app/
 ```
 components/
 ├── layout/
+│   ├── mcp-connection-guard.tsx
+│   ├── notification-bell.tsx
+│   ├── org-switcher.tsx
 │   ├── sidebar.tsx
-│   ├── topbar.tsx
-│   └── org-switcher.tsx          # Multi-org dropdown switcher (CO-247)
+│   ├── tab-nav.tsx
+│   └── topbar.tsx
+├── memory/
+│   └── preference-score-card.tsx
+├── moderation/
+│   ├── leader-pipeline-panel.tsx
+│   └── moderator-review-panel.tsx
+├── onboarding/
+│   └── identity-onboarding.tsx
+├── pairing/
+│   └── pair-plugin.tsx
+├── sessions/
+│   └── memory-review.tsx
+├── wallet-connect-button.tsx
 └── ui/
+    ├── client-time.tsx
+    ├── modal.tsx
+    ├── searchable-model-combobox.tsx
+    ├── spinner.tsx
+    ├── states.tsx
+    ├── tooltip.tsx
     ├── badge.tsx
     ├── button.tsx
     └── card.tsx
@@ -916,36 +1111,78 @@ components/
 
 ```
 lib/
-├── types.ts          # TypeScript type definitions
-├── hub-client.ts     # API client for wevibe-hub (includes getProfile since CO-247)
-├── wevibe-auth.ts      # WeVibe signed auth utilities
-├── wevibe-signing.ts   # Request signing utilities
-├── mcp-client.ts     # MCP client for wevibe-mcp
-├── wallet-connect.ts # Wallet connection (includes getOfflineSigner since CO-214)
-├── chain-client.ts   # CosmJS direct-broadcast + WeVibe message builders
-├── org-context.tsx   # Multi-org context provider + useOrgContext hook (CO-247)
-└── settings.ts      # Dashboard settings persistence
+├── types.ts
+├── config.ts
+├── errors.ts
+├── format.ts
+├── toast.ts
+├── settings.ts
+├── settings-defaults.ts
+├── nav-config.ts
+├── deployment.ts
+├── use-dashboard-state.ts
+├── mcp-errors.ts
+├── hub-error.ts
+├── error-remediation.ts
+├── mcp-client.ts
+├── hub-client.ts
+├── social-graph-client.ts
+├── org-bridge.ts
+├── org-context.tsx
+├── org-pricing.ts
+├── org-role.ts
+├── role-colors.tsx
+├── chain-client.ts
+├── verify-queue.ts
+├── extraction-queue.ts
+├── draft-store.ts
+├── session-types.ts
+├── keyword-weights.ts
+├── preference-score.ts
+├── provider-readiness.ts
+├── canonical-body.ts
+├── merkle.ts
+├── passkey.ts
+├── wallet-connect.ts
+├── wevibe-auth.ts
+├── wevibe-signing.ts
+├── wevibe-crypto.ts
+├── wevibe-submit.ts
+├── identity-context.tsx
+├── sim-benchmark.json
+└── __tests__/chain-client.test.ts + merkle.test.ts
 ```
 
 ### `e2e/` — Playwright tests
 
 ```
 e2e/
+├── billing.spec.ts
+├── connection.spec.ts
+├── leader-member-management.spec.ts
+├── leader-org-management.spec.ts
+├── leader-settings.spec.ts
+├── moderation.spec.ts
+├── navigation.spec.ts
+├── reports.spec.ts
+├── sessions.spec.ts
+├── mcp-tools.test.ts
 ├── global-setup.ts
 ├── fixtures.ts
-├── author-memory.spec.ts
-├── connection.spec.ts
-├── mcp-tools.test.ts
-└── navigation.spec.ts
+├── helpers/
+│   ├── mock-hub.ts
+│   └── test-data.ts
+└── page-objects/
+    └── index.ts
 ```
 
 ### `package.json` — Key dependencies
 - `next` (framework)
 - `react`, `react-dom`
-- `@radix-ui/*` (UI primitives)
-- `tailwindcss` (styling)
-- `@playwright/test` (e2e testing)
 - `@cosmjs/stargate`, `@cosmjs/proto-signing`, `@cosmjs/amino`, `@cosmjs/crypto`, `@cosmjs/encoding`, `cosmjs-types` (Cosmos chain signing + direct broadcast from dashboard)
+- `@noble/curves`, `@noble/ed25519`, `@noble/hashes` (crypto)
+- `better-sqlite3`, `sonner`, `wevibe-sdk-wasm`
+- **devDependencies:** `@playwright/test`, `tailwindcss`
 
 ---
 
@@ -959,119 +1196,125 @@ e2e/
 
 ```
 src/
-├── server.ts              # MCP server entry point; LAZY boot in main() (initCrypto + non-prompting existence check; membership sync + PRE-pubkey registration deferred to first use)
-├── dashboard-server.ts    # Dashboard integration server — exposes tools for wevibe-dashboard Next.js
-├── config.ts              # Central URLs/ports/models configuration
-├── types.ts               # TypeScript shared type definitions
-├── session.ts             # Session management (contribution sessions + extraction pass)
-├── crypto.ts              # Core cryptographic utilities (encrypt/decrypt, key derivation)
-├── crypto-utils.ts        # Additional crypto helpers (hashing, encoding)
-├── pair-crypto.ts         # Pairing v1 crypto (import/export, both directions)
-├── auth.ts                # Authentication + PRE identity lifecycle (CO-222)
-├── biometric.ts           # Biometric prompt integration (passkey/WebAuthn)
-├── identity-sidecar.ts    # Non-secret `~/.wevibe/identity.json`: public keys + timestamps + per-org map
-├── identity-runtime.ts    # Memoized `ensureIdentity()` runtime gate; passkey enrollment
-├── contribution.ts        # Memory contribution flow (contributor-side extraction + submit)
-├── extraction.ts          # Content extraction (Pass 1: memory extraction, Pass 2: vocab-constrained keyword classification — CO-236); routeKeywordCandidates + normalizeOrRankDecay for fallback weights
-├── extraction-presets.ts  # Named extraction preset profiles (leader-configurable model selection per use-case)
-├── guard.ts               # YARA-X prompt injection detection via wevibe-guard subprocess
-├── blacklist.ts           # Consumer denial blacklist management (~/.wevibe/blacklist.json)
-├── llm.ts               # LLM provider interface + getLlmProvider/setLlmProvider singleton
-├── llm-ollama.ts        # Ollama REST API chat/embeddings provider
-├── llm-openai-compat.ts  # OpenAI-compatible API provider (OpenRouter, etc.)
-├── llm-sampling.ts      # MCP sampling-based LLM provider (for OpenCode integration)
-├── embedding.ts         # nomic-embed-text embeddings via Ollama /api/embeddings; EMBEDDING_MODEL pinned in config
-├── embed-card.ts        # buildRetrievalCard + buildAnticipatedNeed + computeLocalEmbedding; C1/C2 at Verify
-├── retrieval-card.ts    # Q-B retrieval card construction (serializeMemoryText, parseMemoryText, buildRetrievalCard, buildAnticipatedNeed); NeedHarvest for query need-card
-├── ocr-sanitize.ts      # OCR artifact sanitization for embedding input
-├── moderation.ts        # Moderation handling — vote, approve, deny; embed-card call with {strictAnticipated:false}
-├── sidecar.ts           # Umbral PRE sidecar wrapper — CLI: encrypt/decrypt-reencrypted/derive-epoch-keypair/generate-kfrags (leader-side mint); gRPC client to hub sidecar for StoreKFrag/ReEncrypt/DeleteKFrags only
-├── vault.ts             # Persistent encrypted credential vault (~/.wevibe/vault)
-├── pending-vault.ts     # In-flight submission vault with encryption + retry
-├── key-store.ts         # Disk-backed keystore for PRE identity, epoch secrets, Shamir shares
-├── keychain.ts          # OS keychain integration (macOS Keychain / Linux secret-service) for biometric-gated keys
-├── org-client.ts        # Hub API client — submit, query, moderation, keyword ops + getOrgKeywords() vocab lookup; PRE registration flow
-├── hub-fetch.ts         # Typed HTTP client helpers for wevibe-hub REST API
-├── hub-resolver.ts      # Chain-RPC → hub endpoint resolution (D-CHAIN-RESOLVED-HUB-ENDPOINT design-only)
-├── artifact-policy.ts   # Artifact policy enforcement — which memories can be served to consumer
-├── artifact-extract.ts  # Artifact extraction from session context + LLM enrichment
-├── artifact-transform.ts # Artifact transformation for different output formats
-├── deserialize.ts       # Deserialization of PRE retrieval payloads (cfrag, capsule, umbral_ciphertext)
-├── recovery.ts          # Shamir recovery share operations; epoch rotation recovery flow
-├── canonical.ts         # Canonical message generation for WeVibe-Signed auth headers
-├── buffer.ts            # Submission buffering with rotation-pending staging
-├── denial-queue.ts      # Denial queue management — ~/.wevibe/pending-denials.json flush to hub
-├── trust-panel.ts       # Trust panel formatting for contributor stats (serve count, XP, badges)
-├── retrieve-cli.ts      # Importable retrieval module: query → decrypt → sanitize → artifact policy → trust panel; exports retrieve()
-├── http-server.ts       # Standalone HTTP API server on 127.0.0.1:4450 (CO-244); Bearer token auth; serves /v1/recall, /v1/serves, /v1/reports
-├── session-token.ts     # Ephemeral MCP session token management (~/.wevibe/mcp-session-token)
-├── risk-appetite.ts     # Consumer recall risk appetite filter ("lowest" vs "neutral")
-├── serve-signing.ts     # Serve event signing utilities for consumer-side attestation
-└── admin.ts             # Admin CLI: install-opencode/uninstall-opencode (idempotent cross-OS), identity-status, setup-identity --json, export-pairing
+├── server.ts
+├── dashboard-server.ts
+├── config.ts
+├── types.ts
+├── types/               # Directory (`index.ts`) for shared MCP type exports
+├── session.ts
+├── crypto.ts
+├── crypto-utils.ts
+├── pair-crypto.ts
+├── pairing-export.ts
+├── auth.ts
+├── biometric.ts
+├── identity-sidecar.ts
+├── identity-runtime.ts
+├── contribution.ts
+├── extraction.ts
+├── extraction-presets.ts
+├── attestation.ts
+├── guard.ts
+├── blacklist.ts
+├── llm.ts
+├── llm-ollama.ts
+├── llm-openai-compat.ts
+├── llm-sampling.ts
+├── embedding.ts
+├── embedding-config.ts
+├── embed-card.ts
+├── retrieval-card.ts
+├── moderation.ts
+├── sidecar.ts
+├── vault.ts
+├── pending-vault.ts
+├── key-store.ts
+├── keychain.ts
+├── org-client.ts
+├── hub-fetch.ts
+├── hub-resolver.ts
+├── artifact-policy.ts
+├── artifact-extract.ts
+├── artifact-transform.ts
+├── deserialize.ts
+├── recovery.ts
+├── canonical.ts
+├── denial-queue.ts
+├── trust-panel.ts
+├── manifest.ts
+├── retrieve-cli.ts
+├── http-server.ts
+├── session-token.ts
+├── risk-appetite.ts
+├── serve-signing.ts
+└── admin.ts             # Admin CLI (identity/setup/org moderation/recovery ops)
 ```
 
-- **Repo-root (NOT under `src/`):** `opencode-plugin/wevibe.tsx` — OpenCode 1.16 TUI onboarding plugin; canonical source, installed by `wevibe-admin install-opencode` to `~/.config/opencode/tui/wevibe.tsx` and registered in `~/.config/opencode/tui.json`.
+- **Separate plugin repo (NOT under `wevibe-mcp/src/`):**
+  - `wevibe-opencode-plugin/plugins/wevibe-plugin.ts` (server/plugin runtime hook)
+  - `wevibe-opencode-plugin/tui/wevibe.tsx` (TUI onboarding UI)
+  - Installed via `wevibe-opencode-plugin/bin/install-opencode.ts` (`npm run install-opencode`) into `~/.config/opencode/tui/wevibe.tsx` with `tui.json`/`opencode.json` merge.
 
 - **Built path runtime note:** no biometric prompt at process boot (LAZY boot), and PRE membership sync/registration are first-use deferred (`D-SIDECAR-PLUGIN-OWNS-STATE`, `D-PLUGIN-ONBOARDING-HOOK`).
-
-### `wevibe_mcp/` — Python MCP (legacy path, not actively used)
-
-```
-wevibe_mcp/
-├── __init__.py
-├── server_legacy.py     # Legacy Python MCP wrapper
-├── contribution.py      # Contribution helpers
-└── ...
-```
 
 ### `tests/`
 
 ```
 tests/
 ├── integration/
-│   ├── e2e-flow.test.ts       # Full contribution → moderation → approval → query pipeline
-│   └── capstone.test.ts       # End-to-end milestone test
+│   ├── capstone.test.ts
+│   ├── e2e-flow.test.ts
+│   ├── http-auth.test.ts
+│   ├── http-reports.test.ts
+│   └── http-serves.test.ts
+├── security/
+│   ├── attack-scenarios.test.ts
+│   └── recall-pipeline.test.ts
 ├── production/
-│   ├── hub-resilience.test.ts  # Hub downtime graceful degradation
+│   ├── hub-resilience.test.ts
 │   ├── sampling-provider.test.ts
 │   └── embedding-quality.test.ts
-├── wasm-crypto.test.ts         # WASM crypto bindings (Rust SDK ↔ TS)
-├── contribution.test.ts        # Extraction pass, keyword candidates, submit flow
-├── guard.test.ts               # YARA-X prompt injection detection
-├── llm.test.ts                 # LLM provider interface / Ollama fallback behavior
-├── moderation.test.ts          # Submit → queue → vote → approve/deny flow
-├── moderation-approval.test.ts # Full approval with embed-card + PRE re-encryption
-├── retrieval-card.test.ts      # buildRetrievalCard, buildAnticipatedNeed, parseMemoryText
-├── retrieve-cli-harvest.test.ts # NeedHarvest building from session context
-├── risk-appetite.test.ts       # Risk appetite filtering (lowest vs neutral)
-├── serve-signing-parity.test.ts # Serve event signing parity with hub canonical.go
-├── session-token.test.ts       # Ephemeral token rotation
-├── session.test.ts             # Contribution session lifecycle
-├── vault.test.ts               # Encrypted credential vault CRUD
-├── pending-vault.test.ts       # In-flight submission buffer
-├── key-store.test.ts           # Disk keystore account management
-├── pair-crypto.test.ts         # Pairing v1 import/export round-trips
-├── pair-crypto-reverse.test.ts # Reverse-direction pairing crypto
-├── rotation.test.ts            # Epoch rotation + recovery share lifecycle
-├── threshold-recovery.test.ts  # Shamir 2-of-3 threshold reconstruction
-├── recovery-status.test.ts     # Recovery status / share verification
-├── blacklist.test.ts           # Denial queue → hub flush cycle
-├── canonical.test.ts           # WeVibe-Signed header canonical message generation
-├── deserialize.test.ts         # PRE payload deserialization (cfrag, capsule fields)
-├── egress-policy.test.ts       # Artifact policy + provider leakage enforcement
-├── extraction.test.ts          # Full Pass 1 memory extraction via Ollama
-├── extract-defaults.test.ts    # Extraction weight defaults and normalizeOrRankDecay fallback
-├── extraction-presets.test.ts  # Named preset CRUD
-├── artifact-extract.test.ts    # Artifact extraction from session context
-├── artifact-policy.test.ts     # Memory serve eligibility policy
-├── artifact-transform.test.ts  # Output format transformation
-├── hub-fetch.test.ts           # Hub API client request/response handling
-├── hub-resolver.test.ts        # Chain-RPC hub endpoint resolution (design-only)
-├── install-opencode.test.ts    # OpenCode plugin installer idempotency
-├── manifest.test.ts            # Org manifest loading / caching
-├── ocr-sanitize.test.ts        # OCR artifact sanitization for embedding input
-├── org-client.test.ts          # Org API client — submit, query, moderation calls
-└── steg-scan.test.ts           # Steganography detection in session artifacts
+├── embedding.test.ts
+├── embedding-config.test.ts
+├── embedding-prefix.test.ts
+├── server-tools.test.ts
+├── sidecar.test.ts
+├── contribution.test.ts
+├── moderation.test.ts
+├── moderation-approval.test.ts
+├── retrieval-card.test.ts
+├── retrieve-cli-harvest.test.ts
+├── extraction.test.ts
+├── extract-defaults.test.ts
+├── extraction-presets.test.ts
+├── artifact-extract.test.ts
+├── artifact-policy.test.ts
+├── artifact-transform.test.ts
+├── deserialize.test.ts
+├── llm.test.ts
+├── guard.test.ts
+├── risk-appetite.test.ts
+├── canonical.test.ts
+├── manifest.test.ts
+├── org-client.test.ts
+├── hub-fetch.test.ts
+├── hub-resolver.test.ts
+├── session-token.test.ts
+├── session.test.ts
+├── serve-signing-parity.test.ts
+├── blacklist.test.ts
+├── key-store.test.ts
+├── vault.test.ts
+├── pending-vault.test.ts
+├── pair-crypto.test.ts
+├── pair-crypto-reverse.test.ts
+├── recovery.test.ts
+├── recovery-status.test.ts
+├── rotation.test.ts
+├── threshold-recovery.test.ts
+├── egress-policy.test.ts
+├── steg-scan.test.ts
+└── wasm-crypto.test.ts
 ```
 
 ---
@@ -1087,6 +1330,8 @@ tests/
 src/
 ├── lib.rs            # Library entry
 ├── main.rs          # Binary entry
+├── rules/
+│   └── injection.yar # YARA rule source
 ├── scanner.rs       # Main scanner implementation
 ├── flags.rs         # Flag handling
 ├── credentials.rs   # Credential detection
@@ -1105,14 +1350,17 @@ benches/
 ```
 tests/
 ├── unit_tests.rs
-└── fixture_compliance.rs
+├── fixture_compliance.rs
+├── fixtures_good.json
+├── fixtures_bad.json
+└── fixtures_redteam.json
 ```
 
 ---
 
-## WeVibe/wevibe-sdk — Rust + Python Crypto SDK
+## WeVibe/wevibe-sdk — Rust Crypto SDK
 
-**Languages:** Rust, Python  
+**Languages:** Rust  
 **Purpose:** Crypto primitives + WASM bindings
 
 ### `crates/wevibe-sdk-core/` — Core Rust library
@@ -1122,6 +1370,7 @@ crates/wevibe-sdk-core/src/
 ├── lib.rs           # Library entry
 ├── crypto.rs        # Cryptographic operations
 ├── identity.rs      # Identity management
+├── secp256k1.rs     # secp256k1 key/signature helpers
 ├── types.rs         # Type definitions
 └── errors.rs        # Error types
 ```
@@ -1131,18 +1380,6 @@ crates/wevibe-sdk-core/src/
 ```
 crates/wevibe-sdk-wasm/src/
 └── lib.rs           # WASM bindings
-```
-
-### `wevibe_sdk/` — Python SDK
-
-```
-wevibe_sdk/
-├── __init__.py
-├── crypto.py
-├── identity.py
-├── key_store.py
-├── pending_vault.py
-└── keyword_filter.py
 ```
 
 ---
@@ -1156,15 +1393,94 @@ wevibe_sdk/
 ### Entry Point
 
 #### `main.go`
-**Role:** Minimal HTTP faucet server; funds a given wallet address from a pre-seeded mnemonic up to a configured maximum per-request and per-day cap.
+**Role:** Bootstraps config + Cosmos broadcaster, starts HTTP server, and serves the dev/test faucet API.
 
 ```
-GET  /health              — returns {"status":"ok","balance":...}
-POST /fund?address=<addr> — sends VIBE tokens, returns tx hash or error
+GET  /v1/health — returns {"status":"ok","faucet_address":...,"chain_id":...}
+POST /v1/fund   — JSON body {"address":...,"amount":...}; returns {"tx_hash":...,"funded":...}
 ```
+
+- **Rate limiting:** per-address sliding-window limiter in `internal/faucet/faucet.go` (default **1 request / 60s**), configurable via `RATE_LIMIT_WINDOW_SECONDS` + `RATE_LIMIT_MAX`.
+- **Request sizing:** per-request amount is caller-provided (`amount` in JSON body) and must be `> 0`.
+- **Rate-limit response:** HTTP `429` with JSON `{ "error": "rate limit exceeded for address ..." }`.
+
+### `internal/`
+
+```
+internal/
+├── config/
+│   └── config.go          # Env loading/defaults
+├── faucet/
+│   ├── faucet.go          # Cosmos tx build+broadcast + sliding-window limiter
+│   └── faucet_test.go     # Idempotency, rate-limit, sequence-retry tests
+└── server/
+    └── server.go          # HTTP route handlers (/v1/health, /v1/fund)
+```
+
+### Config (`internal/config/config.go`)
+
+- `CHAIN_RPC` (default `tcp://wevibed:26657`)
+- `CHAIN_ID` (optional; if empty, chain ID is fetched from RPC status)
+- `FAUCET_MNEMONIC` (**required**)
+- `LISTEN_ADDR` (default `:4470`)
+- `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
+- `RATE_LIMIT_MAX` (default `1`)
 
 **Auth:** Dev-only endpoint (the hub gates access via `WEVIBE_DEV_ENDPOINTS=1` before forwarding); faucet itself has no auth in dev mode.
 **Known issues:** Not a production service; never ships to mainnet.
+
+---
+
+## wevibe-umbral — Umbral PRE Sidecar
+
+**Language:** Rust (edition 2021)  
+**License:** GPL-3.0 (kept as an isolated sidecar process for GPL/Apache boundary separation)  
+**Crate layout:** single crate with lib `wevibe_umbral` (`src/lib.rs`) + bin `wevibe-umbral` (`src/main.rs`)  
+**Default gRPC endpoint:** `127.0.0.1:4460` (`wevibe-umbral serve --addr`; Docker runs `0.0.0.0:4460`)
+
+### `src/`
+
+```
+src/
+├── lib.rs           # Library exports (service, store, crypto, cli, generated)
+├── main.rs          # CLI entry + gRPC server boot/subcommands
+├── service.rs       # UmbralSidecarService gRPC implementation
+├── crypto.rs        # Umbral serialize/deserialize helpers
+├── store.rs         # KFragStore (DashMap-backed, disk persistence)
+├── cli.rs           # CLI crypto commands (encrypt/reencrypt/decrypt/keypair/kfrags)
+└── generated.rs     # Checked-in prost/tonic generated bindings
+```
+
+**KFrag store persistence:** `store.rs` persists the in-memory DashMap to disk at `WEVIBE_UMBRAL_KFRAG_STORE` (default `/data/kfrags.json`).
+
+### gRPC contract
+
+- **Proto:** `proto/umbral/v1/sidecar.proto`
+- **Service RPCs:** `StoreKFrag`, `ReEncrypt`, `DeleteKFrags`, `DeleteOrgKFrags`, `Health`
+- **CLI-only crypto commands (not RPCs):** `derive-epoch-keypair`, `generate-kfrags`, `encrypt`, `reencrypt`, `decrypt-reencrypted`
+
+### `tests/`
+
+```
+tests/
+├── epoch_kfrag.rs
+├── integration.rs
+└── roundtrip.rs
+```
+
+### Key dependencies (`Cargo.toml`)
+
+- `umbral-pre`
+- `tonic`, `tonic-prost`, `prost`
+- `dashmap`
+- `clap`
+
+### Docker
+
+- `Dockerfile` builds release binary and exposes port `4460`
+- Container command: `wevibe-umbral serve --addr 0.0.0.0:4460`
+
+**Role in WeVibe:** PRE boundary service. The hub owns kfrag lifecycle (store/delete keyed by org/epoch/member) and calls `ReEncrypt` during retrieval.
 
 ---
 
@@ -1205,38 +1521,54 @@ tui/
 
 ---
 
-## wevibe-social-graph — Public Profile + Badge Service
+## wevibe-social-graph — Public Profile Service
 
 **Language:** Go  
-**Purpose:** Serves public contributor/org profiles at `/:wallet` and renders badges (serve-milestone, rarity-tier, contribution-volume). Reads exclusively from chain RPC; no hub DB dependency.
+**Purpose:** Serves public profile CRUD + contributor stats APIs. Persists profiles in a local SQLite store and enriches contributor stats from chain REST.
+
+**HTTP routes (`internal/server/server.go`):**
+- `GET /v1/health`
+- `POST /v1/profiles`
+- `GET /v1/profiles/batch?wallets=...`
+- `GET /v1/profiles/{wallet}`
+- `PATCH /v1/profiles/{wallet}` (requires Cosmos `signArbitrary` proof verified in `internal/server/signature.go`)
+- `GET /v1/stats/contributor/{pubkey}`
 
 ### Structure
 
 ```
 cmd/server/
-└── main.go               # HTTP server entry point; serves profile pages + badge SVGs
+└── main.go               # HTTP server entry point; wires SQLite store + chain client
 internal/
-├── chain/                # Chain RPC query client for on-chain state (contribution_count, serve_count, reputation tier)
-└── store/                # Badge criteria computation from chain data; in-memory cache with TTL
+├── server/
+│   ├── server.go         # Route registration + handlers
+│   ├── signature.go      # Cosmos arbitrary-signature verification for PATCH auth
+│   └── signature_test.go
+├── store/
+│   └── store.go          # SQLite-backed profile persistence (`profiles` table): Create/Get/Update/ListBatch
+└── chain/
+    └── client.go         # Chain REST client: GetContributorStats + GetContributorReward
 ```
 
 **Default port:** 4470 inside Docker (`wevibe-social-graph:4470`); hub config `SocialGraphURL` points here.
-**CORS:** public read endpoint — no auth required for profile/badges.
-**Badge families (from canonical spec):**
-- serve-milestone: derived from chain `serve_count`
-- rarity-tier: derived from on-chain rarity tier (per-memory keyword supply/demand at commit time)
-- contribution-volume: derived from chain `contribution_count`
+**Storage:** SQLite file path from `SOCIAL_GRAPH_DB_PATH` (default `/data/social-graph.db`).
+**CORS/auth:** CORS middleware wraps all routes; reads are public, while profile PATCH requires wallet ownership proof.
 
 ---
 
 ## WeVibe/protocol — Protocol Definitions
 
 ```
-protocol/
+wevibe-protocol/
 ├── openapi.yaml           # OpenAPI specification
 ├── README.md
 ├── contract_test.sh
-└── test_vectors/          # Protocol test vectors
+├── test-vectors/          # Protocol test vectors
+├── codegen/               # Proto/codegen helpers
+├── js/                    # Generated JS protocol bindings
+├── docs/                  # Protocol docs
+├── buf.gen.yaml           # Buf generation config
+└── package.json
 ```
 
 ---
@@ -1565,7 +1897,7 @@ KFrag store updated (kfrags deleted for removed member)
    - exclude `DORMANT` unless `include_dormant=true`
    - apply keyword overlap boost, optimistic pending-denial decay, and D-9.4 new-memory boost
    - assign positions using tempered power-law sampling (strict top-1, sampled positions 2..N)
-4. Epoch poller (`SyncEpochData`) runs on a ticker, loads approved orgs from PostgreSQL, compares Qdrant payload vs chain `GetMemoriesBatch`, and updates changed lifecycle state values.
+4. Epoch poller (`SyncEpochData`) runs on a ticker, loads orgs with committed memories from PostgreSQL (`pending_submissions.status='committed'`), compares Qdrant payload vs chain `GetMemoriesBatch`, and updates changed lifecycle state values.
 5. `ScrollApprovedMemories` reads `keyword_weights` and `lifecycle_state` directly from Qdrant payload (no PostgreSQL keyword join).
 
 **wevibe-mcp PRE identity + registration flow (CO-222):**
@@ -1637,18 +1969,16 @@ wevibe-hub POST /v1/orgs/{orgID}/denials (D-2026-05-25-A)
        │
        │ Pending denials accumulate at the hub. Leader chooses when to settle.
        ▼
-Dashboard denial-batch panel (on /chain-submit)
+Dashboard denial-batch panel (on /chain-submit) — **DEAD/REMOVED UI stage**
        │
-       │ Shows: "N denials awaiting on-chain submittal."
-       │ No per-denial review. No automatic trigger. Leader's choice.
-       │ If N > 200: "200 of N are shown; submit additional batches as needed."
+       │ `app/(dashboard)/chain-submit/page.tsx` is gone, and there is no
+       │ in-dashboard MsgSubmitDenialBatch submit path.
        │
-       │ Leader clicks Submit:
-       │   GET /v1/orgs/{orgID}/denials/pending  (newest-first, max 200)
-       │   Dashboard builds MsgSubmitDenialBatch.
-       │   Leader signs with WALLET (Category A per D-1.3 — same pattern as
-       │     MsgApproveMemory).
-       │   Dashboard broadcasts directly to chain RPC (NOT via hub relay).
+       │ Hub + chain pieces remain live:
+       │   GET /v1/orgs/{orgID}/denials/pending (hub)
+       │   MsgSubmitDenialBatch handler (chain)
+       │
+       │ Settlement currently requires a non-dashboard submitter path.
        ▼
 wevibe-chain x/serve MsgSubmitDenialBatch handler
        │
@@ -1702,6 +2032,8 @@ payout_per_memory counted (not payout_per_serve)
 
 > **This is the single source of truth for the org-memory recall→injection pipeline, root→leaf.** Charted by a 4-slice parallel gather sweep (Opus 4.6 fast) on 2026-06-21 against the live code. It records the LIVE path AND every dead / stubbed / contradictory finding, because the system is being overhauled (suspected DOA after many cumulative pivots). **As code is edited/pruned/added in the overhaul, THIS section is updated in lockstep to match the new code.** Every claim is `file:line`-cited; treat citations as load-bearing.
 >
+> Line citations approximate as of 2026-06-21; structure verified, exact lines drift with edits.
+>
 > **Layer ownership:** Stage 1 = `wevibe-hub` (Go) · Stage 2 = `wevibe-mcp` (TS) · Stage 3 = `wevibe-opencode-plugin` (TS) · Stage 4 = `opencode` runtime (vendored binary).
 >
 > **✅ Resolved 2026-06-21 (Phase 2 prune):** the older "PRE Retrieval Data Flow" section calls `UpdateMemoryKeywords` and `ScrollApprovedMemories` live. Re-verified workspace-wide: `UpdateMemoryKeywords` IS live (`internal/api/handlers/keywords.go:306,400`) — old section correct; `ScrollApprovedMemories` was dead and has been removed. **Lesson: the G1 gather's "zero callers" was package-scoped, not workspace-scoped — it false-flagged 6 funcs as dead that have callers in `internal/chain`/`handlers`. Always re-verify workspace-wide before deleting (this caught it pre-delete).**
@@ -1710,7 +2042,7 @@ payout_per_memory counted (not payout_per_serve)
 
 ```
 USER PROMPT (opencode session)
-   │  plugin hook chat.message  (wevibe-plugin.ts:982)
+   │  plugin hook chat.message  (wevibe-plugin.ts:959)
    ▼
 [Stage 3a] plugin.loadMemories ── POST 127.0.0.1:4450/v1/recall ──┐
                                                                    ▼
@@ -1741,11 +2073,11 @@ USER PROMPT (opencode session)
 
 **Route:** `POST /v1/orgs/{orgID}/query` (`cmd/wevibe-hub/main.go:280`), behind `auth.RequireVerifiedMembership` (`main.go:227`). **There is NO `/v1/recall` route on the hub** — `/v1/recall` is the MCP endpoint (Stage 2). Any doc/client referencing a hub `/v1/recall` is wrong.
 
-**Files:** `internal/retrieval/{retrieval.go (1768L), ranking_core.go (246L), querylog.go, stats.go}`, `internal/api/handlers/{retrieval.go (614L), pool.go}`, `internal/config/config.go`, `cmd/wevibe-hub/main.go`, `protocol/types.go`.
+**Files:** `internal/retrieval/{retrieval.go (1768L), ranking_core.go (246L), querylog.go, stats.go}`, `internal/api/handlers/{retrieval.go (614L), pool.go}`, `internal/config/config.go`, `cmd/wevibe-hub/main.go`, `internal/protocol/types.go`.
 
 **Call chain (verbatim hops):**
 1. `handlers.QueryMemories` (`handlers/retrieval.go:27`) — parse `QueryRequest`; require orgID/agentPubkey/prePubkey; default limit test=1000 / prod=3 (`:64-68`); membership (`:76`); trial+daily gate (`:83-122`); rate limit from `org_recall_rate_limits` (`:124-152`); resolve epochs (`:154-164`).
-2. `retrieval.QueryByKeywords` (`retrieval.go:1106`) — pure passthrough to `client.QueryPoints(...)`.
+2. `retrieval.QueryByKeywords` (`retrieval.go:990`) — pure passthrough to `client.QueryPoints(...)`.
 3. `QdrantClient.QueryPoints` (`retrieval.go:419`) — build Qdrant filter (org match, `must_not` ARCHIVED, optional DORMANT); `POST {restURL}/collections/{collection}/points/search` (`:478`); search limit = `recallDepth` (5000); dedup by CID; load pending-denial counts from PG `serve_events` (`:545`); build `[]RankCandidate` filtered to authorized epochs (`:578-640`).
 4. `ScoreAndRank` (`ranking_core.go:162`) — the pure scoring engine (math below).
 5. **Relevance floor + surface budget** (`retrieval.go:701-718`) — filter `weightedScore >= relevanceFloor`, then `cap = min(limit, surfaceBudget)`.
@@ -1755,7 +2087,7 @@ USER PROMPT (opencode session)
 
 **Scoring math (`ranking_core.go`):** `keywordScore = Σ(queryWeight[kw]·memoryWeight[kw])` (`:102-136`); `gammaBoost = keywordScore·0.1` (`:187`); `cappedBoost = min(gammaBoost, 0.15·vectorScore)` (`:188-194`); `final = vectorScore + cappedBoost` (`:195`); pending denial `final = max(0, final − denials·0.05)` (`:197-199`); new-mem boost `final ·= 1 + 0.5·max(0, 1−age/(grace+window))` (`:201-208`); sort by `final` desc. Constants: `keywordBoostFactor=0.1`, `keywordBoostDelta=0.15` (`retrieval.go:450-451`), `EMBED_DIM=768`, `recallDepth=5000`, `DenialDecayBPS=500`, `ServeBoostBPS=100`.
 
-**Structs (`protocol/types.go`):** `QueryRequest` (`:268`: org_id, agent_pubkey, pre_pubkey, keyword_weights, vector, embedding_model_id, limit, session_id, include_dormant, relevance_floor, surface_budget, agent_sig); `MemoryResult` (`:284`); `ScoringBreakdown` (`:226`: keyword_score, vector_score, gamma, delta, capped_boost, combined_score, keyword_matches, unmatched_query_keywords); `QueryResponse` (`:313`: results, contested, receipt_id, requires_reencryption).
+**Structs (`internal/protocol/types.go`):** `QueryRequest` (`:268`: org_id, agent_pubkey, pre_pubkey, keyword_weights, vector, embedding_model_id, limit, session_id, include_dormant, relevance_floor, surface_budget, agent_sig); `MemoryResult` (`:284`); `ScoringBreakdown` (`:226`: keyword_score, vector_score, gamma, delta, capped_boost, combined_score, keyword_matches, unmatched_query_keywords); `QueryResponse` (`:313`: results, contested, receipt_id, requires_reencryption).
 
 **Recall mode:** `config.go:48` reads `WEVIBE_RECALL_MODE` (default prod); `main.go:75` `SetRecallMode`; `pool.go:33` `recallModeIsTest()`. **Prod vs test differs ONLY in throttles** (default limit 3→1000, trial+rate-limit bypassed `handlers/retrieval.go:64-124`). Scoring/floor/budget/sampler are mode-independent.
 
@@ -1771,7 +2103,7 @@ USER PROMPT (opencode session)
 
 ## Stage 2 — MCP recall MIDDLE (`wevibe-mcp`, TS)
 
-**Endpoint:** `POST /v1/recall` (`http-server.ts:957`) → `handleRecall` (`http-server.ts:231`); Bearer-token auth (`authorize()` `:105`).
+**Endpoint:** `POST /v1/recall` (`http-server.ts:953`) → `handleRecall` (`http-server.ts:231`); Bearer-token auth (`authorize()` `:105`).
 
 **Call chain:**
 1. `handleRecall` (`http-server.ts:231`) — authorize; `flushDenials()` fire-and-forget (`:236`); parse body, apply governor defaults for limit/relevance_floor/surface_budget (`:239-256`); require `query` (`:263`); call `retrieve(input)` (`:281`).
@@ -1800,7 +2132,7 @@ USER PROMPT (opencode session)
 
 ## Stage 3 — Plugin recall + inject LEAF (`wevibe-opencode-plugin/plugins/wevibe-plugin.ts`, ~1147L + `tui/wevibe.tsx`)
 
-**Hooks returned (`:973`):** `tool.execute.before` (`:974`), `chat.message` (`:982`), `experimental.chat.system.transform` (`:1006`), `experimental.session.compacting` (`:1137`).
+**Hooks returned:** `chat.message` (`:959`), `experimental.chat.system.transform` (`:983`), `experimental.session.compacting` (`:1122`).
 
 **Recall trigger chain:**
 - **Prewarm IIFE** (`:930-946`) at plugin load — `getRecallMode`, `ensureWeVibeMcpRunning`, `loadMemories(queryToUse)` where `queryToUse` is project-derived (`:898-929`, fallback `"project coding standards conventions best practices"`). **`activeSessionId` is null here → `currentSessionId()` returns `"prewarm"`** (`:290`) → recall sent with `session_id:"prewarm"`.
@@ -1822,7 +2154,7 @@ USER PROMPT (opencode session)
 | **TUI live** | gate waits for accepts → approved memories inject, re-pushed every turn | auto-approved on recall → inject + toast, re-pushed every turn |
 | **No TUI (headless `opencode run`)** | only memories approved in a PRIOR session (loaded from status file) inject; NEW memories never inject (popup-gated, by design) | **auto-approve → injects with no popup** (`:816` add), toast confirms; fixes the prior "nothing ever injects" headless/test failure |
 
-**Stage-3 dead/cruft:** **✅ PRUNED 2026-06-21 (Phase 2c, tsc green):** removed `contextPaths` (populated-never-read) + the now-empty `tool.execute.before` hook that only fed it, and `memoryIndex` (populated-never-read). Still present: compaction filter omits `deniedCids`+appetite, inconsistent with inject filter (`:1138`); `"prewarm"` `sessionInjectedCids` entry never cleaned; 3 TUI render harnesses duplicate `parseRetrievalCard`/theme (`tui/_render_*.tsx`). **CORRECTION (2026-06-21): the client-side governor (`PROD/TEST_RECALL_GOVERNOR_DEFAULTS` + `getRecallGovernorConfig`) is NOT vestigial** — it is the SOURCE of `relevance_floor`/`surface_budget`/`limit` sent to MCP→hub, intentionally duplicated across plugin/MCP/hub per D-RECALL-MODE-FLAG. The `:854` "hub governs" comment means "don't RE-filter client-side after the hub returns," NOT that the governor params are dead. Likewise plugin `getRiskAppetite()` (`:1053`) is LIVE (filters at injection); the dashboard settings page + TUI dialog are its real consumer UIs (write `~/.wevibe/plugin-config.json`). Only the **MCP** `wevibe_set_risk_appetite` tool + MCP `getRiskAppetite/setRiskAppetite` are vestigial (a 3rd redundant path; D-RISK-APPETITE-UI: tool "stays registered but is NOT the runtime path").
+**Stage-3 dead/cruft:** **✅ PRUNED 2026-06-21 (Phase 2c, tsc green):** removed `contextPaths` (populated-never-read) + the now-empty `tool.execute.before` hook that only fed it, and `memoryIndex` (populated-never-read). Still present: compaction filter omits `deniedCids`+appetite, inconsistent with inject filter (`:1138`); `"prewarm"` `sessionInjectedCids` entry never cleaned; 3 TUI render harnesses duplicate `parseRetrievalCard`/theme (`tui/_render_*.tsx`). **CORRECTION (2026-06-21): the client-side governor (`PROD/TEST_RECALL_GOVERNOR_DEFAULTS` + `getRecallGovernorConfig`) is NOT vestigial** — it is the SOURCE of `relevance_floor`/`surface_budget`/`limit` sent to MCP→hub, intentionally duplicated across plugin/MCP/hub per D-RECALL-MODE-FLAG. The `:854` "hub governs" comment means "don't RE-filter client-side after the hub returns," NOT that the governor params are dead. Likewise plugin `getRiskAppetite()` (`:124`) is LIVE (filters at injection); the dashboard settings page + TUI dialog are its real consumer UIs (write `~/.wevibe/plugin-config.json`). Only the **MCP** `wevibe_set_risk_appetite` tool + MCP `getRiskAppetite/setRiskAppetite` are vestigial (a 3rd redundant path; D-RISK-APPETITE-UI: tool "stays registered but is NOT the runtime path").
 
 ---
 
@@ -1853,7 +2185,7 @@ Three forks resolved; all subsequent edits target these, and the Stage sections 
 
 1. **Injection persistence → EVERY TURN (was once-per-session).** Approved/eligible memories are re-pushed into `output.system` on every turn so they persist in the model's context for the whole session (fixes the #1 DOA cause below). The "already injected this session" concept is SPLIT: a per-turn presence push (re-send every turn) is separated from serve-attestation counting (`/v1/serves` fires once per memory per session). `sessionInjectedCids` no longer gates the push — only the serve count. AMENDS the once-per-session heritage of D-SESSION-SERVE-DEDUP.
 2. **Auto-approve in TEST mode + non-blocking toast (was popup-only, mandatory).** In `WEVIBE_RECALL_MODE=test`, recalled memories auto-approve (no blocking gate) so headless/benchmark runs inject. Observability replaces the blocking popup: AFTER injection returns, fire a non-blocking TUI **toast** ("N memories injected …") reusing wevibe's existing toast surface. **PROD stays popup-only / human-in-the-loop — auto-approve is strictly test-gated.**
-   - **Toast surface (charted 2026-06-21):** the server-side plugin's `client` object exposes `client.tui.showToast({ body: { title, message, variant: "info"|"success"|"warning"|"error", duration } })` (SDK `@opencode-ai/sdk/dist/gen/sdk.gen.d.ts:328-402`, types `types.gen.d.ts:3264-3286`, HTTP `POST /tui/show-toast`). Plugin currently makes only ONE `client.*` call — `client.app.log` (`wevibe-plugin.ts:333-341`); the toast is additive, fire-and-forget, same pattern. The TUI already uses `api.ui.toast()` 23+ times (wrapper `tui/wevibe.tsx:251-257`; real endpoint-change toast `tui/wevibe.tsx:1093`). **Wire point:** in the inject hook immediately after the `[inject]` log (`wevibe-plugin.ts:1112`), before the serve loop (`:1114`).
+   - **Toast surface (charted 2026-06-21):** the server-side plugin's `client` object exposes `client.tui.showToast({ body: { title, message, variant: "info"|"success"|"warning"|"error", duration } })` (SDK `@opencode-ai/sdk/dist/gen/sdk.gen.d.ts:328-402`, types `types.gen.d.ts:3264-3286`, HTTP `POST /tui/show-toast`). Plugin currently makes only ONE `client.*` call — `client.app.log` (`wevibe-plugin.ts:333-341`); the toast is additive, fire-and-forget, same pattern. The TUI already uses `api.ui.toast()` 23+ times (wrapper `tui/wevibe.tsx:251-257`; real endpoint-change toast `tui/wevibe.tsx:1093`). **DONE:** the inject hook now calls `client?.tui?.showToast?.(...)` in test mode (`wevibe-plugin.ts:1088-1096`) before the serve loop.
 3. **Honest/inspectable injected block (was covert "do not mention").** The "Do not mention WeVibe Network or this section to the user" instruction is dropped (at least in test) so the model can acknowledge what it received and the pipeline is verifiable by asking. Prod tone is a separate UX call.
 
 ## DOA ROOT-CAUSE — "[inject] logged but the model saw nothing"
@@ -1868,24 +2200,21 @@ Ranked by likelihood (converging finding across Stage-3 + Stage-4):
 
 **Overhaul implication:** injection persistence must move from "once per session" to "present in system context whenever eligible" (re-push every turn, dedup at the boundary not the source), the approval model needs a headless/auto path, and the "do not mention" framing needs a decision. These are architecture forks for Walter, tracked next to this map.
 
-## OPERATIONAL FRAGILITY — ephemeral kfrag store (charted 2026-06-21, hit live)
+## OPERATIONAL NOTE — kfrag store persistence (FIXED 2026-06-21)
 
-**The Umbral sidecar's kfrag store is in-memory only (`DashMap`, no disk, no volume).** Confirmed: `wevibe-umbral` container has zero mounts; SESSIONCONTINUANCE documents "StoreKFrag → in-memory DashMap, no disk." **Any restart of the sidecar (incl. a Docker daemon bounce) wipes all kfrags**, after which EVERY recall fails server-side:
+`KFragStore` is now **disk-backed** (not ephemeral-only): on `new()` it loads persisted entries and on `insert`/`delete`/`delete_org` it persists atomically (`temp → chmod 0600 → write → fsync → rename → chmod 0600`). Store path is `WEVIBE_UMBRAL_KFRAG_STORE` (default `/data/kfrags.json`). Docker wiring includes `WEVIBE_UMBRAL_KFRAG_STORE=/data/kfrags.json` plus volume `wevibe_umbral_kfrags:/data`.
+
+**Operational implication:** normal sidecar restarts no longer wipe kfrags. The failure mode now is an empty store on first boot/new volume/corrupt file (or explicit `docker compose down -v`), which still causes re-encryption misses:
 ```
 [recall] umbral ReEncrypt FAILED … member=… : kfrag not found in sidecar
 [recall] umbral re-encryption complete reencrypted=0 requiresReencryption=N total=N
 ```
-→ hub returns results with no capsule → MCP rejects with `hub query failed: Error: memory result missing capsule` → `/v1/recall` returns **HTTP 500** → plugin logs `cached=0 … nothing injected`. This is NOT a code bug in the recall logic and NOT caused by the plugin — it is lost crypto state.
 
 **Non-destructive recovery (re-mint + StoreKFrag, preserves corpus + chain):**
 ```
 TOKEN=$(cat ~/.wevibe/mcp-session-token)
 curl -s -X POST http://127.0.0.1:4450/v1/provision-recall \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"org_id":"wevibe-org-0"}'   # → {"status":"ok"}  (may prompt Touch ID to unseal master key)
+  -d '{"org_id":"wevibe-org-0"}'   # → {"status":"ok"}
 ```
-`provisionRecall` (`wevibe-mcp/src/org-client.ts:644`): loads org master envelope (leader-only) → derives epoch_sk → mints kfrag for the consumer PRE pubkey → registers pre-pubkey → `POST /v1/orgs/{org}/members/{edPubkey}/kfrag` (StoreKFrag). Also exposed as `wevibe-admin provision-recall --org <id>` and the dashboard members-page button. **Do NOT use `make dogfood` to recover — it runs `docker compose down -v` and wipes the corpus + chain.**
-
-**Overhaul candidate (Walter):** either persist the kfrag store to disk/volume, or auto-reprovision on sidecar startup, so a restart doesn't silently kill recall. Tracked as a fragility, not yet fixed.
-
-**✅ FIXED 2026-06-21 (persist-to-disk):** `KFragStore` now loads from disk on `new()` and persists atomically (temp→`0600`→write→fsync→rename→`0600`) on every `insert`/`delete`/`delete_org`; path from env `WEVIBE_UMBRAL_KFRAG_STORE` (default `/data/kfrags.json`); serde_json with hex-encoded binary (exact round-trip); corrupt/missing file → start empty (no crash); startup logs entry count + a loud warning if empty. `docker-compose.yml` adds volume `wevibe_umbral_kfrags:/data` + the env. `cargo build --release` + tests green. **Deploy note:** rebuild the `wevibe-umbral` image with the volume; on first boot after deploy the store is still empty → re-provision ONCE (`POST /v1/provision-recall`), after which it survives all future restarts. `make dogfood` (`down -v`) still wipes intentionally.
+`provisionRecall` (`wevibe-mcp/src/org-client.ts:644`) derives epoch keys from leader material and re-stores the member kfrag via hub StoreKFrag. Also exposed as `wevibe-admin provision-recall --org <id>` and the dashboard members-page button. `make dogfood` (`docker compose down -v`) still intentionally wipes volume-backed kfrags/corpus/chain state.
