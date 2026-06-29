@@ -11,7 +11,7 @@ WeVibe Network is designed so that compromised validators and public chain obser
 - Wrapped DEKs (pending-review wraps to `PK_mod`; approved-memory wraps to `K_enc(e)`)
 - Plaintext keyword terms and weights (public discovery metadata)
 - Retrieval confidence values, lifecycle state, and timestamps
-- Serve attestations (content hash, org id, serve key, nullifier)
+- Serve receipts (content hash, org id, serve key, nullifier)
 
 **What validators never see:**
 - Decrypted memory content

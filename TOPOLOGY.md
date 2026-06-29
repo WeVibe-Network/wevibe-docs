@@ -169,7 +169,7 @@ GET    /v1/orgs/{orgID}/recall-queries/{queryID}
 GET    /v1/orgs/{orgID}/recall-health
 POST   /v1/orgs/{orgID}/extracted-sessions
 GET    /v1/orgs/{orgID}/extracted-sessions
-POST   /v1/orgs/{orgID}/denials                                   # Consumer denial attestation
+POST   /v1/orgs/{orgID}/denials                                   # Consumer denial receipt
 GET    /v1/orgs/{orgID}/denials/pending-count                     # Leader panel count
 GET    /v1/orgs/{orgID}/denials/pending                           # Leader pending list (newest-first, cap 200)
 
@@ -815,7 +815,7 @@ identity_blobs           — passkey identity blob storage keyed by (pubkey, cre
 pairing_blobs            — pairing blob storage keyed by pairing_id.
 recovery_shares       — PK: (org_id, share_index). Stores sealed Shamir shares.
 dashboard_keys        — PK: (org_id, pubkey). Authorized dashboard identities per org.
-serve_events             — pending/submitted serve + denial attestations for relay batching.
+serve_events             — pending/submitted serve + denial receipts for relay batching.
 session_served_memories  — per-session dedupe memory ledger for recall injection.
 query_log                — recall query telemetry rows.
 query_candidate_scores   — per-candidate scoring/disposition rows for each query.
@@ -902,7 +902,7 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 | x/memory | x/memory/keeper/ | proto/wevibe/memory/v1/ | keeper + integration | Memory commitments |
 | x/org | x/org/keeper/ | proto/wevibe/org/v1/ | keeper + integration | Org registration, membership |
 | x/reputation | x/reputation/keeper/ | proto/wevibe/reputation/v1/ | keeper | Contributor reputation |
-| x/serve | x/serve/keeper/ | proto/wevibe/serve/v1/ | keeper + integration | Serve attestations |
+| x/serve | x/serve/keeper/ | proto/wevibe/serve/v1/ | keeper + integration | Serve receipts |
 
 - **Design-only (not yet built):** `x/org` `StoredOrg` gains `hub_endpoints` + leader-signed setter (`MsgSetServingInfo` extending `MsgSetServingKey`, or `MsgSetOrgConfig`); proto updates regenerate via Docker `make proto-gen` (never hand-edit `.pb.go`). See D-CHAIN-RESOLVED-HUB-ENDPOINT.
 
@@ -1834,7 +1834,7 @@ KFrag store updated (kfrags deleted for removed member)
 - `POST /v1/orgs/{orgID}/members/{pubkey}/kfrag` — leader-signed → `umbralService.StoreKFrag` (stores a finished kfrag).
 - RIPPED (D-LEADER-SIDE-UMBRAL-MINT): `umbralService.GenerateEpochKeyPair`, `umbralService.RegisterMember`, `POST /v1/internal/epoch-keypair`, `POST /v1/internal/orgs/{orgID}/kfrags`, and the sidecar gRPC `GenerateKeyPair`/`GenerateKFrags` RPCs.
 
-**Denial Attestation Flow (CO-225; consumer loop finalized 2026-05-25 per D-2026-05-25-A):**
+**Denial Receipt Flow (CO-225; consumer loop finalized 2026-05-25 per D-2026-05-25-A):**
 ```
 Consumer plugin (wevibe-plugin.ts)
        │
@@ -2045,7 +2045,7 @@ USER PROMPT (opencode session)
 
 **State model (`:276-281`):** `approvedCids`, `deniedCids`, `reportedCids`, `pendingCids`, `sessionInjectedCids: Map<sid,Set>`. **Init gate (`:311`): `if (getRecallMode() !== "test") load accepted` — test mode starts with empty approvals.** Files in `.opencode/`: `wevibe-plugin-status.json` (accepted/denied/reported, written by `recordStatusSnapshot` `:370`), `…-queue.json`, `…-decisions.json`, `wevibe-tui-active.json` (heartbeat). Plus `~/.wevibe/blacklist.json` (`seedDeniedFromLocalBlacklist` `:292`, called at init AND every transform `:1027`).
 
-**Injection mechanism — `experimental.chat.system.transform` (`:1006-1143`, Phase 1 2026-06-21):** (1) await in-flight recall ≤15s (`:1009`); (2) `drainDecisions` + reseed blacklist (`:1026`); (3) compute pending-undecided (`:1029`); (4) **TUI gate wait loop ONLY `if (isTuiLive())`** ≤5min, 250ms poll (`:1044-1061`); (5) **eligible filter requires `approvedCids.has(cid)`** (`:1070-1074`); early-return only if `eligible.length===0` (`:1077-1083`); (6) **EVERY-TURN PUSH: build `memoryBlock` from ALL `eligible` and `output.system.push` it every turn** (`:1088-1103`) — the SOLE injection point, fixes the once-per-session DOA; (7) header is **mode-aware** — test = honest ("you may acknowledge these team memories…"), prod = covert ("Do not mention WeVibe Network…") (`:1092-1094`); (8) **toast** in test mode when `newlyServed.length>0` via `client.tui.showToast` (`:1112-1121`); (9) **serve attestation once per session**: `newlyServed = eligible.filter(!injectedSet.has(cid))`, fire `/v1/serves` + `injectedSet.add` ONLY for those (`:1123-1143`).
+**Injection mechanism — `experimental.chat.system.transform` (`:1006-1143`, Phase 1 2026-06-21):** (1) await in-flight recall ≤15s (`:1009`); (2) `drainDecisions` + reseed blacklist (`:1026`); (3) compute pending-undecided (`:1029`); (4) **TUI gate wait loop ONLY `if (isTuiLive())`** ≤5min, 250ms poll (`:1044-1061`); (5) **eligible filter requires `approvedCids.has(cid)`** (`:1070-1074`); early-return only if `eligible.length===0` (`:1077-1083`); (6) **EVERY-TURN PUSH: build `memoryBlock` from ALL `eligible` and `output.system.push` it every turn** (`:1088-1103`) — the SOLE injection point, fixes the once-per-session DOA; (7) header is **mode-aware** — test = honest ("you may acknowledge these team memories…"), prod = covert ("Do not mention WeVibe Network…") (`:1092-1094`); (8) **toast** in test mode when `newlyServed.length>0` via `client.tui.showToast` (`:1112-1121`); (9) **serve receipt once per session**: `newlyServed = eligible.filter(!injectedSet.has(cid))`, fire `/v1/serves` + `injectedSet.add` ONLY for those (`:1123-1143`).
 
 **Popup gate:** `isTuiLive()` heartbeat <30s (`:353`); TUI writes heartbeat /10s, polls queue /5s (`wevibe.tsx:1004/1019`); `recordDecision` appends to decisions file (`wevibe.tsx:416`); `drainDecisions` (`:379`) maps accept→approved / deny→denied / block→denied+blacklist+hub denial / report→reported+hub report.
 
