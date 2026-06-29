@@ -1572,63 +1572,6 @@ anchor/wevibe-identity/
 
 ---
 
-## benchmark/ — Enrichment Benchmark Suite
-
-**Language:** Node.js  
-**Purpose:** Tests LLM enrichment quality across scenarios
-
-### Structure
-
-```
-benchmark/
-├── package.json
-├── run.sh / run-all.sh / run-full.sh
-├── README.md
-├── lib/
-│   ├── seed.mjs         # Test data seeding
-│   ├── extract.py       # Result extraction
-│   └── score.py         # Scoring logic
-├── scenarios/
-│   ├── SCHEMA.md
-│   ├── 01-nginx-upload.json
-│   ├── 02-sse-reverse-proxy.json
-│   ├── 03-postgres-pgbouncer.json
-│   ├── 04-docker-node-build.json
-│   ├── 05-redis-session-failover.json
-│   ├── 06-websocket-nginx.json
-│   ├── 07-k8s-probes.json
-│   ├── 08-graphql-dataloader.json
-│   ├── 09-cors-credentials.json
-│   └── 10-rate-limit-redis.json
-├── backend/
-│   ├── package.json
-│   └── src/index.js     # Minimal Express server
-└── results/             # Timestamped results
-    └── 20260412-*/
-```
-
----
-
-## benchmark-adversarial/ — Adversarial Retrieval Benchmark
-
-**Language:** Node.js  
-**Purpose:** Tests security of retrieval system against adversarial inputs
-
-### Structure
-
-```
-benchmark-adversarial/
-├── package.json
-├── run.sh
-├── eval.mjs
-├── test_small.mjs
-├── scenarios.jsonl
-├── results/
-└── run.log / run_final.log
-```
-
----
-
 ## wevibe-sim/recall-sim/ — Recall-Alignment Simulation Suite
 
 **Language:** Node.js (ES modules)  
@@ -1660,18 +1603,6 @@ Every run is MANAGER-run, wrapped in `timeout` + an in-process watchdog (per-cal
 
 ---
 
-## backend/ — Minimal Express Backend
-
-**Language:** Node.js/Express  
-**Purpose:** File upload server for benchmark
-
-```
-backend/
-└── src/routes/upload.js
-```
-
----
-
 ## Dependencies Summary
 
 | Package | Language | Direct Deps |
@@ -1681,7 +1612,6 @@ backend/
 | wevibe-mcp | TypeScript | (many npm packages) |
 | wevibe-guard | Rust | yara-x |
 | wevibe-sdk | Rust | (core crypto) |
-| benchmark | Node.js | express, multer |
 
 ---
 
@@ -1701,13 +1631,10 @@ backend/
                                  │                        │(Cosmos)  │
            ┌─────────────────────┼──────────────┐         │Port:9090 │
            │                     │              │         └──────────┘
-     ┌─────▼─────┐        ┌─────▼─────┐ ┌──────▼──────┐
-     │wevibe-mcp   │        │wevibe-sdk   │ │wevibe-guard   │
-     │(TypeScript)│        │(Rust/Py)  │ │(Rust)       │
-     └───────────┘        └───────────┘ └─────────────┘
-
-      benchmark/ ──────────► wevibe-hub (tests API)
-      benchmark-adversarial/ ──────────► wevibe-mcp, wevibe-sdk (tests security)
+      ┌─────▼─────┐        ┌─────▼─────┐ ┌──────▼──────┐
+      │wevibe-mcp   │        │wevibe-sdk   │ │wevibe-guard   │
+      │(TypeScript)│        │(Rust/Py)  │ │(Rust)       │
+      └───────────┘        └───────────┘ └─────────────┘
 ```
 
 ## Canonical 5-Layer Architecture (Chain → RPC → Social Graph → Economy → Attestation)
