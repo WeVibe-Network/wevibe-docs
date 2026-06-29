@@ -1858,7 +1858,7 @@ wevibe-hub POST /v1/orgs/{orgID}/denials (D-2026-05-25-A)
        │
        │ 1. Verify consumer signature + org membership.
        │ 2. Insert into serve_events (event_type='denial', status='pending',
-       │    org_id, epoch_id, memory_content_hash, nullifier, reason).
+       │    org_id, epoch_id, memory_content_hash, serve_key_pubkey, serve_sig, serve_fingerprint, nonce, reason).
        │ 3. Pending counts are derived from serve_events at query time;
        │    no separate counter table is required.
        │ 4. Return 200 OK.
