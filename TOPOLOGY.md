@@ -28,7 +28,7 @@ any new Docker image in the image-pins block at the top of the Makefile.
 
 **Rule:** never invoke local `protoc`/`buf`/`protoc-gen-*` binaries. All
 proto generation runs inside Docker images pinned by exact tag. See
-DECISIONS.md D-14.21, R-PROTO-REGEN.
+R-PROTO-REGEN.
 
 ---
 
@@ -62,11 +62,11 @@ A second compose mode for empirical replay against sim Steady-State will land in
 - **Activation:** `docker compose -f docker-compose.yml -f docker-compose.fast.yml up -d` via the `dogfood-fast` Makefile target in `wevibe-meta`.
 - **Production mode:** unchanged. Production deployments leave `WEVIBE_EPOCH_DURATION_SECONDS` unset; the chain default applies.
 
-Used by the empirical replay harness at `wevibe-meta/scripts/empirical_replay/` (CO-034) to measure the Sprint 32 contract: `chain.gap ≥ 75pp vs sim Steady-State, |Δ| ≤ 5pp`.
+Used by the empirical replay harness at `wevibe-meta/scripts/empirical_replay/` (CO-034). See DECISIONS for the Sprint 32 replay contract.
 
 ### Chain Broadcast (CO-258)
 
-Leader/member chain tx broadcast is dashboard wallet-direct (`directBroadcast` to chain RPC). Per DECISIONS amendment 13 (D-ECON-STORAGE-MARKET), the hub does not relay leader-signed txs or expose a delegate-key relay path.
+Leader/member chain tx broadcast is dashboard wallet-direct (`directBroadcast` to chain RPC). Hub does not relay leader-signed txs or expose a delegate-key relay path (see DECISIONS D-ECON-STORAGE-MARKET).
 
 ### Schema Bootstrap
 
@@ -600,8 +600,8 @@ func ApplyServeBoostLocal(ctx, db, memoryCID, orgID string) error
 func ApplyDenialDecayLocal(ctx, db, memoryCID, orgID string) error
 func GetKeywordWeights(ctx, db, orgID, memoryCID string) (map[string]float64, error)
 ```
-**Constants:** `EMBED_DIM = 768`, `contestedThreshold = 0.20`
-**Key detail:** `UpsertPoint` calls `injectGaussianNoise`, but stored-vector noise is **DISABLED by default (σ=0)** per D-9.5 (it was inherited Echo code that cost ~20pp good-memory recall). `QueryPoints` fetches up to `recallDepth` (default 5000) candidates, then applies keyword-overlap boost, optimistic pending-denial decay, and new-memory boost, then assigns positions with D-9.4 tempered power-law sampling (strict top-1; positions 2..N sampled without replacement).
+**Constants:** `EMBED_DIM = 768`, `contestedThreshold` (see DECISIONS D-9.4)
+**Key detail:** `UpsertPoint` calls `injectGaussianNoise`, but stored-vector noise is **DISABLED by default (σ=0)** per D-9.5. `QueryPoints` fetches up to `recallDepth` (default per DECISIONS D-RECALL-MODE-FLAG) candidates, then applies keyword-overlap boost, optimistic pending-denial decay, and new-memory boost, then assigns positions with D-9.4 tempered power-law sampling (strict top-1; positions 2..N sampled without replacement).
 **Noise injection:** `injectGaussianNoise(vector, sigma)` — present but **inert by default (σ=0, D-9.5)**; configurable via `RETRIEVAL_VECTOR_NOISE_SIGMA`
 **Lifecycle filtering (CO-224):** `ARCHIVED` is always excluded; `DORMANT` is excluded unless `includeDormant=true`
 **Qdrant payload fields:** `cid`, `org_id`, `epoch_id`, `content_flags`, `keyword_weights`, `lifecycle_state`, `memory_type`, `embedding_model_id`, `embedding_schema_version`, `vector_dim`
@@ -624,7 +624,7 @@ func GetContributorStats(ctx, pool, chainClient ChainQuerier, orgID, contributor
 - `serve_count`: from chain `serve_count`
 - `account_age_days`: from chain `first_seen_timestamp` if available, else from hub `joined_at`
 - `reports_upheld`/`false_reports_against`: always from hub (hub-only per CO-211)
-**Known issues:** `GetContributorStats` currently PREFERS a member's linked wallet address over their Ed25519 pubkey when querying chain reputation — this strands pubkey-earned reputation the instant a wallet is linked. Locked fix (DESIGN-LOCKED, `D-REPUTATION-KEYED-BY-PUBKEY`): query by passkey pubkey and become alias-aware (resolve the pubkey→wallet alias post-migration) rather than wallet-preferring.
+**Known issues:** `GetContributorStats` currently PREFERS a member's linked wallet address over their Ed25519 pubkey when querying chain reputation — this strands pubkey-earned reputation the instant a wallet is linked. See DECISIONS D-REPUTATION-KEYED-BY-PUBKEY.
 
 #### `internal/billing/billing.go`
 **Exports:**
@@ -649,7 +649,7 @@ func CreateReceipt(ctx, pool, nodePrivkeyHex, orgID, billingEpoch, accessEpochs,
 **Known issues:** None
 
 #### `internal/verify/sig.go`
-> **FORWARD NOTE (Sprint 32, identity overhaul — DECISIONS.md `D-IDENTITY-PROGRESSIVE-CUSTODY`, brief `wevibe-meta/workspace/reports/design-identity-onboarding-migration.md`):** the Ed25519 `WeVibe-Signed` verification below stays, but the identity it authenticates is being reworked. Incoming: identity is a **client-held key created at first run and protected by a passkey (WebAuthn)** — no wallet required to participate; the dashboard moves from its current Keplr-signature-derived Ed25519 identity (`lib/wevibe-auth.ts`) and the plugin/MCP from its random on-device keypair onto a **single shared passkey-wrapped client-key scheme** (the two must mint the same identity). The key's ciphertext may be backed up to the hub but the **hub never holds a usable signing key** (non-custodial). A Cosmos wallet becomes an **optional linked authority** (staged handover, not migration) needed only to claim rewards / pay mainnet fees. Members are keyed by pubkey (`wallet_address` nullable), so wallet-free contribution already works at the hub layer. This section updates as it lands. Reputation/XP is keyed by the **passkey pubkey**, not the wallet: memory-contribution XP already keys by the contributor pubkey on-chain, and serve XP must be fixed to do the same (`x/serve` currently keys serve XP by the wallet address and skips it when none is linked — a bug against wallet-free participation). Carrying reputation onto a wallet is a deliberate **on-chain, dual-signed alias** (passkey pubkey → wallet address) with an `is_migrated` flag, gated by the contributor's memory-contribution trail — NOT a hub-DB record (DECISIONS.md `D-REPUTATION-KEYED-BY-PUBKEY`, `D-MIGRATION-ONCHAIN-ALIAS`). Privileged roles always have a wallet (`D-LEADER-REQUIRES-WALLET`). Earnings follow reputation: pay-per-approved-memory emissions must credit the passkey `contributor_id` recorded on the memory (today `x/emissions` credits the wallet `contributor_address`), accruing a claim-later balance keyed by the passkey pubkey that becomes withdrawable to the wallet only after the dual-signed `is_migrated` migration (`D-MIGRATION-ONCHAIN-ALIAS`; folds the SEC-FLAG-4 / GAP-ECON-BUILD withdrawal-claim path).
+> **FORWARD NOTE:** Identity model is being reworked (see DECISIONS D-IDENTITY-PROGRESSIVE-CUSTODY, D-REPUTATION-KEYED-BY-PUBKEY, D-MIGRATION-ONCHAIN-ALIAS, D-LEADER-REQUIRES-WALLET).
 
 **Exports:**
 ```go
@@ -891,61 +891,49 @@ memory_keywords      — PK: (memory_cid, keyword). FK: (org_id, keyword) REFERE
 
 ### Custom Modules (8)
 
-> **FORWARD NOTE (Sprint 32, storage-market overhaul — DECISIONS.md `D-ECON-STORAGE-MARKET`, brief `wevibe-meta/workspace/reports/design-storage-market-economy.md`):** landed: `x/org` slot registry + ascending-price acquisition auction; `x/emissions` org-treasury payout subsystem removed (Treasury/`MsgWithdrawTreasury` removed); `x/attestation` neutered (disabled-but-wired); `x/bandwidth` memory-cap wired as the testnet DDoS guard. Remaining unbuilt: on-chain demand-leg router; self-assessed-value (Harberger) rent + forced-sale-in-window; Dutch resale of freed slots; full per-memory storage-deposit activation (parameterized ~0 on testnet).
+> **FORWARD NOTE:** Landed code state: `x/org` slot registry + ascending-price acquisition auction; `x/emissions` Treasury/`MsgWithdrawTreasury` removed; `x/attestation` disabled-but-wired; `x/bandwidth` memory-cap wired. See DECISIONS D-ECON-STORAGE-MARKET.
 
 | Module | Keeper Path | Proto Path | Tests | Purpose |
 |--------|------------|-----------|-------|---------|
-| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Session-attestation storage (NOT merkle — merkle roots live in x/memory). Being neutered: disabled/no-op until verification infra (D-ATTEST-ROADMAP). Optional TEE model-provenance (D-ATTEST-TEE-TIER) is verified OFF-CHAIN first (Phase 0, no chain change); on-chain anchoring here is Phase 1. Planned generalization → typed proof socket (`proof_type`: tee_receipt/zktls_proof/zkml_proof; D-ATTEST-PROOF-TIER, PENDING-SPIKE). |
+| x/attestation | x/attestation/keeper/ | proto/wevibe/attestation/v1/ | keeper + integration | Session-attestation storage (NOT merkle). Disabled/no-op (see DECISIONS D-ATTEST-ROADMAP, D-ATTEST-TEE-TIER, D-ATTEST-PROOF-TIER). |
 | x/bandwidth | x/bandwidth/keeper/ | proto/wevibe/bandwidth/v1/ | keeper + integration | Bandwidth throttling |
-| x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Emission pool, epoch emission, work scores (32-yr schedule scheduled CO-041) |
+| x/emissions | x/emissions/keeper/ | proto/wevibe/emissions/v1/ | keeper | Emission pool, epoch emission, work scores |
 | x/identity | x/identity/keeper/ | proto/wevibe/identity/v1/ | keeper + integration | Passkey identity management; wallet linking aliasing |
 | x/memory | x/memory/keeper/ | proto/wevibe/memory/v1/ | keeper + integration | Memory commitments |
 | x/org | x/org/keeper/ | proto/wevibe/org/v1/ | keeper + integration | Org registration, membership |
 | x/reputation | x/reputation/keeper/ | proto/wevibe/reputation/v1/ | keeper | Contributor reputation |
 | x/serve | x/serve/keeper/ | proto/wevibe/serve/v1/ | keeper + integration | Serve attestations |
 
-- **Design-only (not yet built):** `x/org` `StoredOrg` gains `hub_endpoints` (ordered list of 1–3 transport URLs for failover redundancy) + leader-signed setter (`MsgSetServingInfo` extending `MsgSetServingKey`, or `MsgSetOrgConfig`); proto updates regenerate via Docker `make proto-gen` (never hand-edit `.pb.go`). Decision: `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
+- **Design-only (not yet built):** `x/org` `StoredOrg` gains `hub_endpoints` + leader-signed setter (`MsgSetServingInfo` extending `MsgSetServingKey`, or `MsgSetOrgConfig`); proto updates regenerate via Docker `make proto-gen` (never hand-edit `.pb.go`). See D-CHAIN-RESOLVED-HUB-ENDPOINT.
 
 ### Genesis Seeding & Epoch Hooks (Sprint 32 / CO-040)
 
-**module.HasGenesis wiring (CO-040, DECISIONS D-S32-HASGENESIS-CUSTOM-MODULES).**
+**module.HasGenesis wiring (CO-040).**
 `x/emissions` and `x/reputation` implement `cosmos-sdk/types/module.HasGenesis`
-(`DefaultGenesis`/`ValidateGenesis`/`InitGenesis`/`ExportGenesis`) in their
-`module/module.go`. The SDK `ModuleManager.InitGenesis` dispatches this; before
-CO-040 these modules implemented only the `appmodule.AppModule` marker, so their
-genesis path was silently skipped (the cause behind app.go's CO-005d sentinel
-comment). Genesis Go structs are JSON-marshaled (`encoding/json`), not via the codec.
+(`DefaultGenesis`/`ValidateGenesis`/`InitGenesis`/`ExportGenesis`) in
+`module/module.go`; SDK dispatch is via `ModuleManager.InitGenesis`.
+See DECISIONS D-S32-HASGENESIS-CUSTOM-MODULES.
 
 **Genesis seeding path.** `wevibed init` builds genesis.json from
-`app.ModuleBasics` (app/encoding.go), which contains ONLY SDK modules — the custom
-modules are absent, so `ModuleManager.InitGenesis` would skip any module whose
-`app_state` key is nil. Therefore `scripts/init-chain.sh` jq-seeds:
-- `app_state.emissions = {}` → emissions `InitGenesis` derives the pool from
-  `DefaultParams()` (`DefaultEmissionPool()`), so DefaultParams is the single
-  source of truth (DECISIONS D-S32-EMISSION-POOL-GENESIS).
-- `app_state.reputation = {"active": true}` → reputation active at genesis
-  (DECISIONS D-S32-REPUTATION-DEFAULTGENESIS-ACTIVE, reinforcing D-13.5).
+`app.ModuleBasics` (`app/encoding.go`); custom modules are absent unless
+`app_state` keys are seeded. `scripts/init-chain.sh` jq-seeds:
+- `app_state.emissions = {}`
+- `app_state.reputation = {"active": true}`
+See DECISIONS D-S32-EMISSION-POOL-GENESIS and
+D-S32-REPUTATION-DEFAULTGENESIS-ACTIVE.
 
-**Epoch-hook chain.** The epochs module fires `AfterEpochEnd` for the
-`wevibe_epoch` identifier via MultiEpochHooks: emissions first (mint + payouts),
-then memory (`setCurrentEpoch` → `CheckEpochExpiry` → `ApplyEpochDecay` → merkle
-roots). Both hooks obey **R-EPOCH-HOOK-RESILIENCE** (DECISIONS
-D-S32-EPOCH-HOOK-RESILIENCE): every recoverable failure logs a warning and returns
-nil, because the SDK epoch dispatcher discards the entire cached-write batch if any
-hook returns a non-nil error.
+**Epoch-hook chain.** The epochs module fires `AfterEpochEnd` for
+`wevibe_epoch` via MultiEpochHooks: emissions first (mint + payouts), then
+memory (`setCurrentEpoch` → `CheckEpochExpiry` → `ApplyEpochDecay` → merkle
+roots). See DECISIONS D-S32-EPOCH-HOOK-RESILIENCE.
 
-**cachekv iterator correctness (DECISIONS D-S32-CACHEKV-ITER) — LOAD-BEARING.**
-Under the cache-wrapped store used by epoch hooks / BeginBlock,
-`cacheMergeIterator.Error()` returns non-nil at normal end-of-iteration. The legacy
-`for iter.Valid(){…}; if err := iter.Error(); err != nil { return err }` pattern
-(24 sites across emissions/memory/org/reputation keepers) therefore mis-reads
-exhaustion as failure on the live chain — `ApplyEpochDecay`, `CheckEpochExpiry`,
-`getAllOrgsWithMemories`, and emissions `GetAllOrgs` all error every epoch. This was
-the true cause of the Sprint-31 "zero decay" symptom; unit tests missed it because
-`rootmulti`/IAVL iterators return nil at end. The fix (remove post-loop
-`iter.Error()` checks; collect-then-mutate for iterate-and-modify paths; cachekv-
-wrapped regression test) is scoped to CO-041 Task A.
-
+**cachekv iterator correctness.** Under cache-wrapped stores used by epoch
+hooks / BeginBlock, the legacy
+`for iter.Valid(){…}; if err := iter.Error(); err != nil { return err }`
+pattern at 24 sites (emissions/memory/org/reputation keepers) mis-reads normal
+iterator exhaustion as failure. Affected functions include
+`ApplyEpochDecay`, `CheckEpochExpiry`, `getAllOrgsWithMemories`, and
+emissions `GetAllOrgs`. See DECISIONS D-S32-CACHEKV-ITER.
 
 ### Module Structure Pattern (all 8 modules follow this)
 
@@ -1517,7 +1505,7 @@ tui/
 **Installation path:** `npm run build` in wevibe-mcp root copies the compiled plugin to `~/.config/opencode/tui/` and registers it in `tui.json`.
 **Runtime note:** Plugin reads from `~/.wevibe/identity.json` (identity-sidecar) and `~/.wevibe/config` for org pairing state. No long-lived secrets stored by the plugin itself.
 
-**Recall engine (`plugins/wevibe-plugin.ts`) — recall-mode + session-tie (D-RECALL-MODE-FLAG, 2026-06-21):** the recall/inject engine reads **`WEVIBE_RECALL_MODE`** from `process.env` (`prod` default | `test`); the same flag is read independently by the MCP (`http-server.ts`/`retrieve-cli.ts`) and the hub (`config.go` → `handlers.SetRecallMode` → `recallModeIsTest()` in `retrieval.go`, wired into `docker-compose.yml` as `WEVIBE_RECALL_MODE: ${WEVIBE_RECALL_MODE:-prod}`). Mode selects the governor base — `prod` floor 0.55 / budget 3 / limit 3 / hub throttles on; `test` floor 0 / budget 1000 / limit 1000 / hub trial-daily + rate-limit bypassed (trial-EXPIRY still enforced). The plugin no longer mints a process-global random-hex session id (REVERSES D-SESSION-SERVE-DEDUP): it captures OpenCode's real `sessionID` from the `chat.message` and `experimental.chat.system.transform` hook inputs, threads it to `/v1/recall` + `/v1/serves`, and gates injection through a per-session `sessionInjectedCids` set so each memory is injected **once per session** (not every turn). Every injection is logged (`[inject] <ISO> sid=… injected N: …`). In `test` only, persisted Earned-Trust auto-accept is disabled so every recalled candidate re-enters the review gauntlet and is re-counted.
+**Recall engine (`plugins/wevibe-plugin.ts`) — recall-mode + session-tie (D-RECALL-MODE-FLAG, 2026-06-21):** the recall/inject engine reads **`WEVIBE_RECALL_MODE`** from `process.env` (`prod` default | `test`); the same flag is read independently by the MCP (`http-server.ts`/`retrieve-cli.ts`) and the hub (`config.go` → `handlers.SetRecallMode` → `recallModeIsTest()` in `retrieval.go`, wired into `docker-compose.yml` as `WEVIBE_RECALL_MODE: ${WEVIBE_RECALL_MODE:-prod}`). Mode selects prod/test governor defaults (see DECISIONS D-RECALL-MODE-FLAG) with hub throttles behavior wired accordingly (trial-EXPIRY still enforced). The plugin no longer mints a process-global random-hex session id (see D-SESSION-SERVE-DEDUP): it captures OpenCode's real `sessionID` from the `chat.message` and `experimental.chat.system.transform` hook inputs, threads it to `/v1/recall` + `/v1/serves`, and gates injection through a per-session `sessionInjectedCids` set so each memory is injected **once per session** (not every turn). Every injection is logged (`[inject] <ISO> sid=… injected N: …`). In `test` only, persisted Earned-Trust auto-accept is disabled so every recalled candidate re-enters the review gauntlet and is re-counted.
 
 ---
 
@@ -1650,7 +1638,7 @@ benchmark-adversarial/
 
 ```
 recall-sim/
-├── config.mjs            # single source of truth: models, scale, watchdog caps, ablation CELLS
+├── config.mjs            # config root: models, scale, watchdog caps, ablation CELLS
 ├── lib/                  # prng, parallel worker-pool, isolated-opencode LLM client, watchdog
 ├── pipeline/             # prompts, embed, rank (retrieval.go mirror), query, extract, keywords,
 │                         #   retrieve-c3 (C3 top-1), solve, judge
@@ -1752,8 +1740,7 @@ post-mainnet extension.
 - **Design-only (not yet built):** `hub_endpoints` proto/state changes use Docker
   `make proto-gen` (no hand-edited `.pb.go`). Decision:
   `D-CHAIN-RESOLVED-HUB-ENDPOINT`.
-- Economics consumes **only** contribution counts + the network threshold;
-  serve counts are never economic inputs.
+- See DECISIONS D-ECON-CANON.
 
 ### Layer 2 — RPC (the read contract)
 
@@ -1793,18 +1780,8 @@ post-mainnet extension.
   paid to contributors.
 - Emissions payout path: validators/stakers.
 - Org-creation burn is a sink.
-- Leader revenue path: org demand leg — members pay the org in VIBE for recall
-  access (**model & price set by the leader**, market-driven); settlement runs
-  through an on-chain demand-leg router that enforces a protocol burn
-  `max(n%, floor)` (the loop's deflationary sink); the remainder's destination
-  (non-custodial leader wallet vs network-held per-org account) is an open
-  custody question. The prior Treasury/`MsgWithdrawTreasury` model is removed
-  and no withdrawal path is built. Moderator pay is leader-discretionary from
-  that (open) revenue path. Decided, not yet built. See `DECISIONS.md`
-  `D-ECON-CANON` / `D-ECON-STORAGE-MARKET`.
-- Serve counts are deliberately excluded from economics (anti-game).
-- Decision locks: `DECISIONS.md` `D-ECON-CANON` and
-  `D-S32-TOKENOMICS-LOCKED`.
+- Leader revenue path: org demand leg (not yet built). See DECISIONS D-ECON-CANON / D-ECON-STORAGE-MARKET.
+- See DECISIONS D-ECON-CANON, D-S32-TOKENOMICS-LOCKED.
 
 ### Layer 5 — Future Pluggable Attestation (post-mainnet roadmap)
 
@@ -1986,7 +1963,7 @@ wevibe-chain x/serve MsgSubmitDenialBatch handler
        │   StoredDenialAttestation persisted (keyed org_id / epoch_id / memory_hash)
 │   Calls memoryKeeper.ApplyEarnedTrustDecay (D-4.2): updates per-keyword
         │     weight using denial_rate-scaled decay; transitions to
-        │     MEMORY_STATE_ARCHIVED if all weights ≤ retrievalThreshold (1500 bps).
+        │     MEMORY_STATE_ARCHIVED if all weights ≤ retrievalThreshold (see DECISIONS D-4.2).
         │ Chain emits `denial_batch_submitted` event {org_id, submitter, epoch,
         │   accepted_count, rejected_count, block_height} — queryable via CometBFT
         │   `tx_search` as `denial_batch_submitted.org_id='<org_id>'` (CO-016).
@@ -2007,7 +1984,7 @@ payout_per_memory counted (not payout_per_serve)
 ```
 
 **Chain module changes (CO-225):**
-- `x/memory`: Earned Trust decay params (D-4.2: serveD=220, denialD=900, idleD=600, grace=20, trustMinServes=1, trustMaxRate=0.30, idleProtect=0.05, idleUntrusted=1.0, retrievalThreshold=1500); archive when all keyword weights ≤ retrievalThreshold
+- `x/memory`: Earned Trust decay (see DECISIONS D-4.2 for params/rationale); archives a memory when all keyword weights ≤ retrievalThreshold.
 - `x/serve`: `MsgSubmitDenialBatch`, `StoredDenialAttestation` (keyed org/epoch/memory-hash)
 - `x/emissions`: `ProcessOrgPayouts` rewrite — `payout_per_memory` replaces `payout_per_serve`, counts approved memories per contributor
 
@@ -2028,15 +2005,15 @@ payout_per_memory counted (not payout_per_serve)
 
 ---
 
-# RECALL → INJECTION PIPELINE — COMPLETE MAP & DEFECT LEDGER (SoT — charted 2026-06-21)
+# RECALL → INJECTION PIPELINE — COMPLETE MAP & DEFECT LEDGER
 
-> **This is the single source of truth for the org-memory recall→injection pipeline, root→leaf.** Charted by a 4-slice parallel gather sweep (Opus 4.6 fast) on 2026-06-21 against the live code. It records the LIVE path AND every dead / stubbed / contradictory finding, because the system is being overhauled (suspected DOA after many cumulative pivots). **As code is edited/pruned/added in the overhaul, THIS section is updated in lockstep to match the new code.** Every claim is `file:line`-cited; treat citations as load-bearing.
+> Charted against live code; every claim is `file:line`-cited — treat citations as load-bearing.
 >
 > Line citations approximate as of 2026-06-21; structure verified, exact lines drift with edits.
 >
 > **Layer ownership:** Stage 1 = `wevibe-hub` (Go) · Stage 2 = `wevibe-mcp` (TS) · Stage 3 = `wevibe-opencode-plugin` (TS) · Stage 4 = `opencode` runtime (vendored binary).
 >
-> **✅ Resolved 2026-06-21 (Phase 2 prune):** the older "PRE Retrieval Data Flow" section calls `UpdateMemoryKeywords` and `ScrollApprovedMemories` live. Re-verified workspace-wide: `UpdateMemoryKeywords` IS live (`internal/api/handlers/keywords.go:306,400`) — old section correct; `ScrollApprovedMemories` was dead and has been removed. **Lesson: the G1 gather's "zero callers" was package-scoped, not workspace-scoped — it false-flagged 6 funcs as dead that have callers in `internal/chain`/`handlers`. Always re-verify workspace-wide before deleting (this caught it pre-delete).**
+> **✅ Resolved 2026-06-21 (Phase 2 prune):** workspace re-check confirmed `UpdateMemoryKeywords` is live (`internal/api/handlers/keywords.go:306,400`) and dead `ScrollApprovedMemories` was removed.
 
 ## Pipeline at a glance (4 stages, root → leaf)
 
@@ -2076,20 +2053,20 @@ USER PROMPT (opencode session)
 **Files:** `internal/retrieval/{retrieval.go (1768L), ranking_core.go (246L), querylog.go, stats.go}`, `internal/api/handlers/{retrieval.go (614L), pool.go}`, `internal/config/config.go`, `cmd/wevibe-hub/main.go`, `internal/protocol/types.go`.
 
 **Call chain (verbatim hops):**
-1. `handlers.QueryMemories` (`handlers/retrieval.go:27`) — parse `QueryRequest`; require orgID/agentPubkey/prePubkey; default limit test=1000 / prod=3 (`:64-68`); membership (`:76`); trial+daily gate (`:83-122`); rate limit from `org_recall_rate_limits` (`:124-152`); resolve epochs (`:154-164`).
+1. `handlers.QueryMemories` (`handlers/retrieval.go:27`) — parse `QueryRequest`; require orgID/agentPubkey/prePubkey; default limit uses prod/test governor defaults (see DECISIONS D-RECALL-MODE-FLAG) (`:64-68`); membership (`:76`); trial+daily gate (`:83-122`); rate limit from `org_recall_rate_limits` (`:124-152`); resolve epochs (`:154-164`).
 2. `retrieval.QueryByKeywords` (`retrieval.go:990`) — pure passthrough to `client.QueryPoints(...)`.
 3. `QdrantClient.QueryPoints` (`retrieval.go:419`) — build Qdrant filter (org match, `must_not` ARCHIVED, optional DORMANT); `POST {restURL}/collections/{collection}/points/search` (`:478`); search limit = `recallDepth` (5000); dedup by CID; load pending-denial counts from PG `serve_events` (`:545`); build `[]RankCandidate` filtered to authorized epochs (`:578-640`).
 4. `ScoreAndRank` (`ranking_core.go:162`) — the pure scoring engine (math below).
 5. **Relevance floor + surface budget** (`retrieval.go:701-718`) — filter `weightedScore >= relevanceFloor`, then `cap = min(limit, surfaceBudget)`.
-6. **D-9.4 power-law sampler** `probabilisticRank` (`retrieval.go:125-215`) — position 1 = strict argmax; positions 2+ sampled w/o replacement, weight `(score/maxScore)^(1/temp)`, `temp=0.7`.
-7. Contested flag (`retrieval.go:767`, `contestedThreshold=0.20`).
+6. **D-9.4 power-law sampler** `probabilisticRank` (`retrieval.go:125-215`) — position 1 = strict argmax; positions 2+ sampled w/o replacement, weight `(score/maxScore)^(1/temp)`, `temp` (see DECISIONS D-9.4).
+7. Contested flag (`retrieval.go:767`, `contestedThreshold` (see DECISIONS D-9.4)).
 8. Back in handler (`handlers/retrieval.go:183-416`) — async query-log persist; **session dedup: drop CIDs served in last 24h for same `session_id`** (`:185-208`); chain attest `GetMemoriesBatch` (`:241`); Umbral `ReEncryptForMember` from `pending_submissions` (`:257-346`); banned filter (`:348-370`); contributor stats (`:372-393`); receipt (`:395-405`); emit `QueryResponse` (`:409-416`).
 
-**Scoring math (`ranking_core.go`):** `keywordScore = Σ(queryWeight[kw]·memoryWeight[kw])` (`:102-136`); `gammaBoost = keywordScore·0.1` (`:187`); `cappedBoost = min(gammaBoost, 0.15·vectorScore)` (`:188-194`); `final = vectorScore + cappedBoost` (`:195`); pending denial `final = max(0, final − denials·0.05)` (`:197-199`); new-mem boost `final ·= 1 + 0.5·max(0, 1−age/(grace+window))` (`:201-208`); sort by `final` desc. Constants: `keywordBoostFactor=0.1`, `keywordBoostDelta=0.15` (`retrieval.go:450-451`), `EMBED_DIM=768`, `recallDepth=5000`, `DenialDecayBPS=500`, `ServeBoostBPS=100`.
+**Scoring math (`ranking_core.go`):** `keywordScore = Σ(queryWeight[kw]·memoryWeight[kw])` (`:102-136`); `gammaBoost = keywordScore·keywordBoostFactor` (`:187`, `keywordBoostFactor` at `retrieval.go:450-451`, value per DECISIONS D-9.4); `cappedBoost = min(gammaBoost, keywordBoostDelta·vectorScore)` (`:188-194`, `keywordBoostDelta` at `retrieval.go:450-451`, value per DECISIONS D-9.4); `final = vectorScore + cappedBoost` (`:195`); pending denial `final = max(0, final − denials·DenialDecayBPS/10000)` (`:197-199`, `DenialDecayBPS` value per DECISIONS D-4.2); new-mem boost `final ·= 1 + ServeBoostBPS/10000·max(0, 1−age/(grace+window))` (`:201-208`, `ServeBoostBPS` value per DECISIONS D-4.2); sort by `final` desc. Constants: `keywordBoostFactor` (`retrieval.go:450-451`, value per DECISIONS D-9.4), `keywordBoostDelta` (`retrieval.go:450-451`, value per DECISIONS D-9.4), `EMBED_DIM=768`, `recallDepth` (value per DECISIONS D-RECALL-MODE-FLAG), `DenialDecayBPS` (value per DECISIONS D-4.2), `ServeBoostBPS` (value per DECISIONS D-4.2).
 
 **Structs (`internal/protocol/types.go`):** `QueryRequest` (`:268`: org_id, agent_pubkey, pre_pubkey, keyword_weights, vector, embedding_model_id, limit, session_id, include_dormant, relevance_floor, surface_budget, agent_sig); `MemoryResult` (`:284`); `ScoringBreakdown` (`:226`: keyword_score, vector_score, gamma, delta, capped_boost, combined_score, keyword_matches, unmatched_query_keywords); `QueryResponse` (`:313`: results, contested, receipt_id, requires_reencryption).
 
-**Recall mode:** `config.go:48` reads `WEVIBE_RECALL_MODE` (default prod); `main.go:75` `SetRecallMode`; `pool.go:33` `recallModeIsTest()`. **Prod vs test differs ONLY in throttles** (default limit 3→1000, trial+rate-limit bypassed `handlers/retrieval.go:64-124`). Scoring/floor/budget/sampler are mode-independent.
+**Recall mode:** `config.go:48` reads `WEVIBE_RECALL_MODE` (default prod); `main.go:75` `SetRecallMode`; `pool.go:33` `recallModeIsTest()`. **Prod vs test differs ONLY in throttles** (prod/test governor defaults, see DECISIONS D-RECALL-MODE-FLAG; trial+rate-limit bypassed `handlers/retrieval.go:64-124`). Scoring/floor/budget/sampler are mode-independent.
 
 **Qdrant layer:** pure HTTP REST client (no gRPC/SDK), `QdrantClient` (`retrieval.go:242`); **new `http.Client` per request, 10s timeout** (no keep-alive/pooling).
 
@@ -2119,7 +2096,7 @@ USER PROMPT (opencode session)
 
 **Types:** `RetrieveInput` (`retrieve-cli.ts:19`), `MemoryOutput` (`retrieve-cli.ts:41`), `MemoryWithGuard` (`http-server.ts:115`, adds `guard{passed,detections,flags}`), `ScoringBreakdown` (`types.ts:35`), deserialized `MemoryResult` (`types.ts:46`). **No `blocked` and no `source` field exists** anywhere in MCP types. `MemoryType = 'memory'` single value (`types.ts:99`, D-5.1).
 
-**Recall mode:** `getRecallMode()` (`retrieve-cli.ts:93`); `RECALL_MODE_GOVERNORS` (`:80`): prod `{floor 0.55, budget 3, limit 3}`, test `{0, 1000, 1000}`; used as request defaults in `handleRecall` (`http-server.ts:239`).
+**Recall mode:** `getRecallMode()` (`retrieve-cli.ts:93`); `RECALL_MODE_GOVERNORS` (`:80`) uses prod/test governor defaults (see DECISIONS D-RECALL-MODE-FLAG); used as request defaults in `handleRecall` (`http-server.ts:239`).
 
 **Stage-2 dead/cruft:**
 - `agentSig` — **✅ REPLACED 2026-06-21 with real request-body signing.** The dead `agent_sig` body field is gone; the MCP now signs the exact serialized request body with the agent Ed25519 key and sends it in header `X-Agent-Signature` (`org-client.ts` queryOrgMemories); the hub reads raw body bytes, `ed25519.Verify` against the middleware-authenticated pubkey, **401 on missing/invalid**, then unmarshals (`handlers/retrieval.go`), and stores the verified sig in `usage_receipts.agent_signature` (now meaningful, no DB migration). Hub `go build/test` + MCP tsc green. **⚠ WIRE-CONTRACT CHANGE: hub + MCP must be redeployed together** (old MCP → new hub = 401).
@@ -2179,26 +2156,26 @@ USER PROMPT (opencode session)
 
 ---
 
-## OVERHAUL DIRECTION — LOCKED by Walter 2026-06-21
+## OVERHAUL DIRECTION
 
-Three forks resolved; all subsequent edits target these, and the Stage sections above are updated to match as code changes:
+Defect-ledger pointers (code-map only):
+1. Injection persistence / serve-dedup split is mapped at `wevibe-plugin.ts:1088-1143`; see D-SESSION-SERVE-DEDUP.
+2. Test-mode auto-approve + non-blocking toast path is mapped at `wevibe-plugin.ts:816-819,1088-1121` and `tui/wevibe.tsx:251-257,1093`.
+   - **Toast surface (charted 2026-06-21):** `client.tui.showToast({ body: { title, message, variant: "info"|"success"|"warning"|"error", duration } })` (SDK `@opencode-ai/sdk/dist/gen/sdk.gen.d.ts:328-402`, types `types.gen.d.ts:3264-3286`, HTTP `POST /tui/show-toast`). Plugin usage is mapped at `wevibe-plugin.ts:1088-1096`.
+3. Injected-block framing is mode-aware at `wevibe-plugin.ts:1092-1094`.
 
-1. **Injection persistence → EVERY TURN (was once-per-session).** Approved/eligible memories are re-pushed into `output.system` on every turn so they persist in the model's context for the whole session (fixes the #1 DOA cause below). The "already injected this session" concept is SPLIT: a per-turn presence push (re-send every turn) is separated from serve-attestation counting (`/v1/serves` fires once per memory per session). `sessionInjectedCids` no longer gates the push — only the serve count. AMENDS the once-per-session heritage of D-SESSION-SERVE-DEDUP.
-2. **Auto-approve in TEST mode + non-blocking toast (was popup-only, mandatory).** In `WEVIBE_RECALL_MODE=test`, recalled memories auto-approve (no blocking gate) so headless/benchmark runs inject. Observability replaces the blocking popup: AFTER injection returns, fire a non-blocking TUI **toast** ("N memories injected …") reusing wevibe's existing toast surface. **PROD stays popup-only / human-in-the-loop — auto-approve is strictly test-gated.**
-   - **Toast surface (charted 2026-06-21):** the server-side plugin's `client` object exposes `client.tui.showToast({ body: { title, message, variant: "info"|"success"|"warning"|"error", duration } })` (SDK `@opencode-ai/sdk/dist/gen/sdk.gen.d.ts:328-402`, types `types.gen.d.ts:3264-3286`, HTTP `POST /tui/show-toast`). Plugin currently makes only ONE `client.*` call — `client.app.log` (`wevibe-plugin.ts:333-341`); the toast is additive, fire-and-forget, same pattern. The TUI already uses `api.ui.toast()` 23+ times (wrapper `tui/wevibe.tsx:251-257`; real endpoint-change toast `tui/wevibe.tsx:1093`). **DONE:** the inject hook now calls `client?.tui?.showToast?.(...)` in test mode (`wevibe-plugin.ts:1088-1096`) before the serve loop.
-3. **Honest/inspectable injected block (was covert "do not mention").** The "Do not mention WeVibe Network or this section to the user" instruction is dropped (at least in test) so the model can acknowledge what it received and the pipeline is verifiable by asking. Prod tone is a separate UX call.
+Design rationale lives in DECISIONS / session reports.
 
 ## DOA ROOT-CAUSE — "[inject] logged but the model saw nothing"
 
-Ranked by likelihood (converging finding across Stage-3 + Stage-4):
+Defect ledger (code-map pointers):
+1. Per-session gating path around `sessionInjectedCids` and serve loop (`wevibe-plugin.ts:1086-1143`).
+2. Injected-block frame text behavior (`wevibe-plugin.ts:1092-1094`).
+3. Headless/TUI gating path (`wevibe-plugin.ts:311,816-819,1044-1074`; `tui/wevibe.tsx:1004,1019`).
+4. Silent partial drops upstream (`retrieve-cli.ts:477-482`; `http-server.ts:314-318`).
+5. Prewarm/single-flight race path (`wevibe-plugin.ts:894,930-946`).
 
-1. **Per-session single-turn injection (PRIMARY).** Plugin injects each memory once per session (`sessionInjectedCids`, plugin `:1086`); opencode rebuilds the system prompt every turn (Stage 4). So the block is present only on the turn it first injects and vanishes thereafter. If the user asks "what memories did you see?" on a *later* turn, the model genuinely has no memory content in context — yet an `[inject]` line was logged earlier. **The "once per session" design (D-SESSION-SERVE-DEDUP heritage) is fundamentally incompatible with a per-turn-rebuilt system prompt.**
-2. **`"Do not mention WeVibe Network or this section"` instruction** (plugin `:1096`) — even when the block IS present, the model is told to deny it. Makes "what memories did you see?" a useless probe (always denies).
-3. **Headless / test-mode = zero injection** — no live TUI ⇒ `approvedCids` empty ⇒ nothing eligible (Stage-3 table). Any benchmark arm using `opencode run` injects nothing.
-4. **Silent partial drops upstream** — MCP decrypt failures skip memories with no signal (`retrieve-cli.ts:477`); guard never blocks but plugin auto-denies guard-blocked CIDs.
-5. **Prewarm/single-flight race** — first user message's recall can be dropped (`:894`); transform may inject on the prewarm (project-derived) query, not the user's question.
-
-**Overhaul implication:** injection persistence must move from "once per session" to "present in system context whenever eligible" (re-push every turn, dedup at the boundary not the source), the approval model needs a headless/auto path, and the "do not mention" framing needs a decision. These are architecture forks for Walter, tracked next to this map.
+Design rationale lives in DECISIONS / session reports.
 
 ## OPERATIONAL NOTE — kfrag store persistence (FIXED 2026-06-21)
 

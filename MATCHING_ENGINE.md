@@ -300,8 +300,8 @@ using new memory's keywords + embedding
                                               ▼
                                        On approve: keywords (generated at extraction,
                                        D-KEYWORD-AT-EXTRACTION) carry forward to leader
-                                       curation; embedding computed + indexed in Qdrant
-                                       at chain commit. Memory enters chain via leader batch
+                                        curation; embedding (computed at moderator approval) is indexed in Qdrant
+                                        at chain commit (D-6.2). Memory enters chain via leader batch
 ```
 
 The moderator can ask the local LLM to compare the new memory against similar existing ones. The LLM produces a structured diff: what's the same, what's different, which is more specific, which is more general. This is a convenience for moderators reviewing unfamiliar domains. It is not required.
