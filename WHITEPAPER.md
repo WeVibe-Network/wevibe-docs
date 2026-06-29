@@ -94,11 +94,11 @@ The plugin is installed in the developer's coding environment (OpenCode, Claude 
 │                                          │
 │ Detections: [url: aws.amazon.com]        │
 │                                          │
-│ [✓ Accept + Attest] [✗ Deny] [⚑ Report]  │
+│ [✓ Accept] [✗ Deny] [⚑ Report]           │
 └──────────────────────────────────────────┘
 ```
 
-**Accept + Attest:** Memory is injected into agent context. Serve attribution is queued to chain aggregates (contributor + org) for public profile and badge signals. No direct per-serve payout is implied by this action.
+**Accept:** Memory is injected into agent context. Serve attribution is queued to chain aggregates (contributor + org) for public profile and badge signals. No direct per-serve payout is implied by this action.
 
 **Deny:** Memory is blocked. The plugin can capture lightweight deny context so curators can improve quality without turning the UX into a courtroom.
 
@@ -412,7 +412,7 @@ These decisions are final:
 
 **Serve receipts (batching is the target).** The chain accepts batched serve submissions (`MsgSubmitServeBatch`) and the hub holds the org-whitelisted serving key for the tx envelope. In the current client, denials are queued and batched while individual serves are forwarded to the hub as they occur; per-epoch batching of serves into one transaction per user is the intended optimization, not yet the live path. **Forgery-resistance:** per-entry consumer signatures are verified on-chain (`D-SERVE-CONSUMER-SIGNED`) — the chain rejects unsigned/invalid entries, so the serving key is no longer trusted for serve content.
 
-**Four-button approval UX (D-RECALL-FEEDBACK-FOUR-BUTTON).** Plugin offers: [Accept + Attest] (memory injected, serve receipt queued, contributor earns), [Deny] (memory blocked for this session/context only — a neutral context signal, NOT a corpus down-vote; no denial event emitted to the chain), [Block] (permanent personal blacklist AND a global corpus denial signal — the load-bearing negative-signal path that feeds Earned-Trust decay via `MsgSubmitDenialBatch`), [Report] (memory blocked and escalated into the org's moderation/accountability path — see Sections 5.5–5.8). The Deny-vs-Block split is load-bearing: Deny is a no-op on the corpus (context ≠ quality); Block is the negative signal that drives decay. Public orgs with payouts may require serve receipts.
+**Four-button approval UX (D-RECALL-FEEDBACK-FOUR-BUTTON).** Plugin offers: [Accept] (memory injected, serve receipt queued, contributor earns), [Deny] (memory blocked for this session/context only — a neutral context signal, NOT a corpus down-vote; no denial event emitted to the chain), [Block] (permanent personal blacklist AND a global corpus denial signal — the load-bearing negative-signal path that feeds Earned-Trust decay via `MsgSubmitDenialBatch`), [Report] (memory blocked and escalated into the org's moderation/accountability path — see Sections 5.5–5.8). The Deny-vs-Block split is load-bearing: Deny is a no-op on the corpus (context ≠ quality); Block is the negative signal that drives decay. Public orgs with payouts may require serve receipts.
 
 ### 3.10 Session Attestation (Roadmap, Post-Mainnet)
 
@@ -720,7 +720,7 @@ The reporter's own dashboard view is the one exception: each reporter sees a pri
 
 ### 5.8 Silent Denial as Cheap Negative Signal
 
-The plugin's four-button approval UI (Accept + Attest / Deny / Block / Report) gives the consumer two complementary negative paths. Reports — the on-chain filing and, if unresolved, the public escalation — are the high-friction, high-stakes accountability primitive described above. Denials are the low-friction, low-stakes signal that feeds retrieval ranking.
+The plugin's four-button approval UI (Accept / Deny / Block / Report) gives the consumer two complementary negative paths. Reports — the on-chain filing and, if unresolved, the public escalation — are the high-friction, high-stakes accountability primitive described above. Denials are the low-friction, low-stakes signal that feeds retrieval ranking.
 
 Denials and reports are status/accountability signals, not direct payout triggers. WeVibe keeps the social signal and economic payout paths decoupled.
 

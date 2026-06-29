@@ -52,7 +52,7 @@ The chain layer governs *what survives over time*. The retrieval layer governs *
 
 ## The Chain Layer: Earned Trust Decay (D-4.2)
 
-The chain's only job in retrieval is to maintain per-keyword weights that reflect each memory's accumulated quality signal. Each serve and denial event updates keyword counters only for the keywords that actually matched that retrieval (`matched_keywords` from `ServeEntry` / `StoredServeAttestation`). Event handlers execute canonical `applyDecay` immediately; epoch-end processing runs an idle sweep only for memories with no events in that epoch. The central discriminator remains:
+The chain's only job in retrieval is to maintain per-keyword weights that reflect each memory's accumulated quality signal. Each serve and denial event updates keyword counters only for the keywords that actually matched that retrieval (`matched_keywords` from `ServeEntry` / `StoredServeReceipt`). Event handlers execute canonical `applyDecay` immediately; epoch-end processing runs an idle sweep only for memories with no events in that epoch. The central discriminator remains:
 
 > **The discriminator is `denial_rate = denial_count / (serve_count + denial_count)`, not raw counts.**
 
@@ -83,7 +83,7 @@ The trust gate uses on-chain per-memory lifetime totals (`serve_count_total`, `d
 **Hub-side enforcement (CO-033a):** the hub now mirrors the chain's non-empty `matched_keywords` constraint at ingress. `POST /v1/orgs/{orgID}/serves` requires a non-empty `matched_keywords []string` on every request; missing / empty / whitespace-only payloads return HTTP 400 (`internal/serves/serves.go normalizeMatchedKeywords`). The value is persisted on `serve_events.matched_keywords TEXT[] NOT NULL` (migration `wevibe-server/db/migrations/000005_add_serve_events_matched_keywords.up.sql`) and read back into `protocol.MemoryResult.MatchedKeywords` at retrieval time, where the hub computes the intersection of memory keywords and query keywords per result and filters candidates with zero overlap (consistent with the sim's `applyNewMemoryBoost` base==0 short-circuit at `wevibe-sim/ranking-fix.js:184`).
 
 **Sprint status (CO-033b landed):**
-- LANDED in CO-031 Rev 2: chain `matched_keywords` field on `ServeEntry` + `StoredServeAttestation`, per-keyword `matchedThisEpoch` gate in `applyDecay`, memory-level lifetime counters (`serve_count_total`, `denial_count_total`), archive predicate using `.every() ≤ retrievalThreshold`.
+- LANDED in CO-031 Rev 2: chain `matched_keywords` field on `ServeEntry` + `StoredServeReceipt`, per-keyword `matchedThisEpoch` gate in `applyDecay`, memory-level lifetime counters (`serve_count_total`, `denial_count_total`), archive predicate using `.every() ≤ retrievalThreshold`.
 - LANDED in CO-032: hub tempered power-law sampler (positions 2..N) with new-memory boost, three retrieval env vars, `IdleDecayBPS` orphan removed.
 - LANDED in CO-033a: hub `serve_events.matched_keywords TEXT[] NOT NULL` persistence (no default — pre-MVP wipe per D-13.9), strict 400-on-empty validator on `POST /v1/serves`, retrieval pass-through threading `MatchedKeywords` through `protocol.MemoryResult`.
 - LANDED in CO-033b: `wevibe-protocol` JS bindings regen (`matchedKeywords` on `ServeEntry`); dashboard `buildServeBatchMsg` and live `handleSubmitBatch` broadcaster (replaces deprecated stub at `chain-submit/page.tsx:212`); MCP forwards `matched_keywords` on `POST /v1/serves` with non-empty validation; plugin threads `matched_keywords` from recall response through `toInject` loop to serve POST; dogfood-pipeline.test.ts step 1 fixture aligned with chain's 9-field canonical body; hub test infrastructure cleanup (`ListMembers` SELECT, reports/members test fixtures, `qdrantAvailable` 401 skip).
@@ -269,7 +269,7 @@ MCP decrypts the hub-governed set (PRE re-encryption flow)
                               User picks the right memory
         │
         ▼
-On Accept + Attest: plugin queues serve receipt (per-org pseudonymous key)
+On Accept: plugin queues serve receipt (per-org pseudonymous key)
                     including matched_keywords intersection (required)
 On Deny: local blacklist + denial event queued
         │
@@ -349,7 +349,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 2. **Does not handle topic drift.** A memory that was correct under React 17 and is wrong under React 19 still requires human supersession through moderation similarity review in the approval flow. Decay catches contradiction at the same point in time; it does not catch deprecation across time.
 
-3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's four-button UX (Accept+Attest, Deny, Block, Report — D-RECALL-FEEDBACK-FOUR-BUTTON) is the data source. Orgs with `serve_attestation_required = false` and few denials will see slower convergence.
+3. **Does not work without consumer feedback.** If consumers never deny or accept, the chain has no signal to apply. The plugin's four-button UX (Accept, Deny, Block, Report — D-RECALL-FEEDBACK-FOUR-BUTTON) is the data source. Orgs with `serve_receipt_required = false` and few denials will see slower convergence.
 
 4. **Does not eliminate contested ambiguity.** Probabilistic exploration breaks the ranking-loss death spiral but does not make every query unambiguous. The contested path remains the safety net for near-tied scores.
 

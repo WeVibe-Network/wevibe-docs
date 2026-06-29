@@ -1887,7 +1887,7 @@ Dashboard denial-batch panel (on /chain-submit) — **DEAD/REMOVED UI stage**
 wevibe-chain x/serve MsgSubmitDenialBatch handler
        │
        │ Per accepted denial entry:
-       │   StoredDenialAttestation persisted (keyed org_id / epoch_id / memory_hash)
+       │   StoredDenialReceipt persisted (keyed org_id / epoch_id / memory_hash)
 │   Calls memoryKeeper.ApplyEarnedTrustDecay (D-4.2): updates per-keyword
         │     weight using denial_rate-scaled decay; transitions to
         │     MEMORY_STATE_ARCHIVED if all weights ≤ retrievalThreshold (see DECISIONS D-4.2).
@@ -1912,7 +1912,7 @@ payout_per_memory counted (not payout_per_serve)
 
 **Chain module changes (CO-225):**
 - `x/memory`: Earned Trust decay (see DECISIONS D-4.2 for params/rationale); archives a memory when all keyword weights ≤ retrievalThreshold.
-- `x/serve`: `MsgSubmitDenialBatch`, `StoredDenialAttestation` (keyed org/epoch/memory-hash)
+- `x/serve`: `MsgSubmitDenialBatch`, `StoredDenialReceipt` (keyed org/epoch/memory-hash)
 - `x/emissions`: `ProcessOrgPayouts` rewrite — `payout_per_memory` replaces `payout_per_serve`, counts approved memories per contributor
 
 **API changes requiring wevibe-mcp updates (CO-218/CO-221/CO-222):**
