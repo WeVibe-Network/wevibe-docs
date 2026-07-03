@@ -879,7 +879,7 @@ Plaintext per-memory keyword weights are stored alongside encrypted memories on-
 
 Vector embeddings are NOT stored on-chain. Stored-memory embeddings are computed at approval/ingest and upserted to the hub's Qdrant index, where similarity search runs over vectors plus keyword metadata. For recall, the MCP/plugin computes the query embedding locally via Ollama and sends the query vector to the hub.
 
-Qdrant stores vector + keyword metadata only (not plaintext memory content and not ciphertext). Embeddings are derived data and remain off-chain. Authority & exit status: see the Hub Authority Ledger (MASTER.md) and `D-MISSION-INVARIANT` (exit: rebuild from chain + keys, `D-HUB-REBUILDABLE`/GAP-MI-3; the clean embeddings are a disclosed semantic shadow, `D-EMBEDDING-HONEST-CLAIM`).
+Qdrant stores vector + keyword metadata only — no plaintext memory content and no ciphertext. This "not ciphertext" is scoped to Qdrant, not to the hub as a whole: the encrypted blob the hub *does* hold lives in Postgres (`pending_submissions`, `rotation_buffer`) and on-chain (`StoredMemoryCommitment.EncryptedBlob`, §8.1), and the hub cannot decrypt it — the DEK is wrapped to leader/moderator keys and the hub never receives the epoch secret (see §3.7, `D-EMBEDDING-HONEST-CLAIM`, `D-PRIVACY-BOUNDARY-REDRAW`). Qdrant itself holds only the vector + keyword shadow. Embeddings are derived data and remain off-chain. Authority & exit status: see the Hub Authority Ledger (MASTER.md) and `D-MISSION-INVARIANT` (exit: rebuild from chain + keys, `D-HUB-REBUILDABLE`/GAP-MI-3; the clean embeddings are a disclosed semantic shadow, `D-EMBEDDING-HONEST-CLAIM`).
 
 ### 8.4 Memory Metadata
 
