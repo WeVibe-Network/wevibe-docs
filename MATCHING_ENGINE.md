@@ -353,7 +353,9 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 4. **Does not eliminate contested ambiguity.** Probabilistic exploration breaks the ranking-loss death spiral but does not make every query unambiguous. The contested path remains the safety net for near-tied scores.
 
-5. **Does not work without a capable local LLM for contested cases.** The disambiguation path requires qwen3.5-128k or equivalent. There is no fallback ranking mode for contested queries: if disambiguation cannot run, contested recall cannot complete safely.
+5. **Does not *require* a local LLM for contested cases.** For near-tied (contested) queries the engine **MAY** apply an optional rerank to sharpen the ordering, but it is never a hard dependency: there is always a **deterministic fallback (twin-suppression)**, and on any rerank error or timeout the **original order is preserved**. Contested recall always completes safely without a rerank — the rerank only improves an already-valid ordering.
+
+   **R-33 clarification.** R-33 (no local LLM on a production path) targets a **hard dependency** on a slow/serial/org-hosted LLM sitting inline on the recall path — NOT an opportunistic, consumer-side rerank. This rerank is carved out because it is: *opportunistic* (only for contested top-K) · reached via **the consumer's own separately-configured model** (through the `LlmProvider` abstraction — its own OpenRouter/local HTTP endpoint, NOT the host agent's LLM and NOT an org/leader LLM) · **non-blocking** (D-PLUGIN-NONBLOCKING) · **bounded-timeout** · backed by a **deterministic fallback** · and **off or pinned in test**. Under those constraints the rerank never becomes a production hard-dependency, so R-33 is satisfied.
 
 ---
 
