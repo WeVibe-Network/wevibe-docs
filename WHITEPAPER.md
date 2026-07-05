@@ -446,7 +446,68 @@ These decisions are final:
 
 **Four-button approval UX.** The plugin offers: [Accept] (memory injected, serve receipt queued, contributor attributed), [Deny] (memory blocked for this session/context only — a neutral context signal, NOT a corpus down-vote; no denial event emitted to the chain), [Block] (permanent personal blacklist AND a global corpus denial signal — the load-bearing negative-signal path that feeds Earned-Trust decay via `MsgSubmitDenialBatch`), [Report] (memory reported on-chain and escalated into the org's accountability path — §5.5–5.7). The Deny-vs-Block split is load-bearing: Deny is a no-op on the corpus (context ≠ quality); Block is the negative signal that drives decay.
 
-### 3.10 Session Attestation (Roadmap, Post-Mainnet)
+### 3.10 Hub Confidentiality
+
+Academic reviewers have challenged "the hub never sees plaintext" as a fake promise: if an authorized consumer can retrieve plaintext, surely a captured hub could too. This section states the guarantee precisely, proves it, and draws the honest boundary of what it does and does not cover. It formalizes part (1) of the two-part honest claim in §3.6 and is bound to `D-MISSION-INVARIANT` (guarantee #1 — no single party may unilaterally **READ** member plaintext) and `D-PRIVACY-BOUNDARY-REDRAW`.
+
+**The claim, stated narrowly.** The hub **cannot decrypt** memory content. This holds against a **fully malicious hub** — not merely an honest-but-curious one — that deviates arbitrarily from the protocol. It is **not** claimed that the hub learns *nothing* about content; that stronger statement is false and is not made (see "The honest boundary" below).
+
+#### The intuition the objection misses
+
+Plaintext-visibility is conferred by **possessing a secret key**, not by **handling the data**. The consumer can read a memory because their device holds a secret scalar the hub never receives; the hub holds a **re-encryption (transformation) key**, not a decryption key. The analogy is a postal sorting office that re-addresses a sealed envelope so that a *different* recipient's key opens it — without ever being able to open it itself. Handling the envelope and reading it are different powers; the hub is granted only the first.
+
+#### The confidentiality core (Umbral proxy re-encryption over secp256k1)
+
+WeVibe's retrieval uses Umbral proxy re-encryption (`umbral-pre` over secp256k1; D-2.1/D-2.2/D-2.3). Umbral layers verifiability and threshold-splitting on top, but the confidentiality core is the ElGamal-style re-encryption relation below. Let `G` be the curve generator and `n` the curve order.
+
+```
+Keys
+  org (delegator)     secret a = epoch_sk       public  A = a·G = umbral_pk
+  member (recipient)  secret b = receiving_sk   public  B = b·G = pre_pubkey
+
+Encrypt   (client-side, under the org public key A)
+  the per-memory DEK is sealed in a capsule; the capsule public part is a point (E+V)
+  sealed key  K = KDF( a·(E+V) )              ← recovering K the direct way needs a
+
+Re-encryption key   (kfrag — minted ONLY by the leader, REQUIRES the secret a)
+  rk ≈ a·b⁻¹  (mod n)                          ← reveals neither a nor b (discrete log);
+                                                 cannot decrypt by itself
+
+Re-encrypt   (the hub's ONLY crypto op: capsule + kfrag, NO secret key)
+  cfrag = rk·(E+V) = (a·b⁻¹)·(E+V)
+
+Decrypt   (client-side, on the member's device, REQUIRES the secret b)
+  b·cfrag = b·(a·b⁻¹)·(E+V) = a·(E+V) → K = KDF( a·(E+V) )
+  then AES-decrypt the memory body with the recovered DEK
+```
+
+- **Encryption** seals the per-memory DEK under the org public key `A`; the sealed key is `K = KDF(a·(E+V))`, and recovering it the direct way requires the org secret `a = epoch_sk`. The hub never holds `a` — it is derived from `K_master` on the leader's own machine, and the hub receives only `umbral_pk` and the finished kfrags (§3.2, `D-LEADER-SIDE-UMBRAL-MINT`).
+- **The kfrag** encodes `rk ≈ a·b⁻¹` and can be minted only by a party holding the delegating secret `a` — i.e. the leader. Recovering `a` or `b` from `rk` is the discrete-logarithm problem, and `rk` decrypts nothing on its own.
+- **Re-encryption** is the hub's *only* cryptographic operation. Given the capsule and a leader-minted kfrag — and **no secret key** — it computes `cfrag = rk·(E+V) = (a·b⁻¹)·(E+V)`.
+- **Decryption** happens only on the member's device, which multiplies the cfrag by its own secret scalar `b`: `b·(a·b⁻¹)·(E+V) = a·(E+V)`, recovering `K`, hence the DEK.
+
+**The punchline.** The hub can compute `a·b⁻¹·(E+V)` but needs `a·(E+V)`. The one missing operation is a single multiplication by `b` — the member's secret scalar — which the hub is *structurally* never given. This is geometry, not policy: no configuration, key rotation, or privileged mode grants the hub `b`. Everything the hub holds — `{capsule, cfrag, ciphertext, kfrag, A, B}` — is computationally independent of the plaintext without `b`. This is exactly Umbral's IND-PRE-CCA security guarantee (Núñez et al. [15]).
+
+#### Attacks a malicious hub might attempt
+
+- **"The hub forges its own kfrag toward a key it controls."** Fails. Minting a kfrag requires the delegating secret `a = epoch_sk`, which the hub never holds. The hub can only *apply* leader-minted kfrags, and those are minted toward the registered public keys of authorized members — never toward a hub-controlled key.
+- **"The hub colludes with an authorized member."** Conceded openly. An authorized member decrypts with their own secret `b` and could leak the resulting plaintext. This is authorized-insider abuse, not a cryptographic break — and it is already **out of scope** in the threat model (§3.1: "a compromised active member who leaks epoch keys or decrypted content"). The hub as a *standalone party* still cannot read; the confidentiality claim is about the hub itself, not about every party the hub might suborn.
+
+#### The honest boundary (what this does NOT cover)
+
+Two statements must not be conflated:
+
+- ✅ **TRUE (and proven above):** the hub cannot **decrypt** your memory content.
+- ❌ **FALSE (and never claimed):** the hub learns **nothing** about your content.
+
+For search, the hub holds — in Qdrant — clean float32 embeddings plus plaintext keyword weights: a **disclosed, lossy, realistically-invertible semantic shadow** of each memory (§3.6, §3.7). Published embedding-inversion research (Morris et al. 2023 [13]; Huang et al. 2024 [14]) shows approximate content recovery from clean embeddings is realistic. The mitigations here are **operational, not cryptographic** — Qdrant API auth, internal-network deployment, per-org collection isolation, signed responses — with encrypted vector search as the documented evaluation trigger. This is the ratified position of `D-PRIVACY-BOUNDARY-REDRAW`: WeVibe makes **no** claim of a zero-knowledge index or a content-confidential hub. That abandoned claim is not resurrected here — "cannot decrypt" and "learns nothing" are different guarantees, and only the first is made.
+
+Two further honesty notes:
+
+- **The consumer-side injection gate is wired and enforced.** The local human approval gate that lets a user inspect each memory before it enters an agent's context is live in the plugin today: a blocking, fail-closed human-approval step (Accept/Deny/Block/Report — §1.6, §3.1) that injects **only** human-approved memories. Production is gated; only benchmark/test mode auto-approves. This is a *different* leg of the privacy tripod (`D-PRIVACY-BOUNDARY-REDRAW`) from the hub-cannot-decrypt guarantee proven above — and it is now shipped, not merely contract-defined.
+- **Key locality.** The hub never receives `epoch_sk`: it is derived from `K_master` on the leader's own device, and only the epoch *public* key and finished kfrags cross the wire (§3.2, `D-LEADER-SIDE-UMBRAL-MINT`). The confidentiality proof rests on this locality holding cleanly.
+
+### 3.11 Session Attestation (Roadmap, Post-Mainnet)
 
 Sessions produce memories. Without provenance attestation, a contributor could paste fabricated "coding sessions" into the extraction pipeline and farm reputation. Everything downstream — difficulty scoring, quality grading, reputation — depends on knowing the session actually happened.
 
@@ -466,7 +527,7 @@ Sessions produce memories. Without provenance attestation, a contributor could p
 
 **Standardizing the extraction model (the controllable half).** "Weaker models surface weaker memories" has two heads: the *production* model in the user's coding suite (uncontrolled — and sometimes the most valuable signal, when a weak model solves a hard problem) and the *extraction* model that distills a session into a memory (inside WeVibe's own pipeline). WeVibe standardizes the latter by **pinning the extraction model**, removing weak-extractor variance with no attestation required; attesting the production model is the optional bonus on top.
 
-### 3.11 Two-Layer Difficulty Scoring (Roadmap Consumer, Requires Attestation)
+### 3.12 Two-Layer Difficulty Scoring (Roadmap Consumer, Requires Attestation)
 
 Two-layer difficulty scoring is the evolutionary continuation of attestation and its likely first consumer once the pluggable framework exists. The chain carries `difficulty` and `quality` values (1–10) on attested-memory records and maintains a per-contributor difficulty histogram (`x/reputation`); the scoring layers below populate those values automatically once live.
 
@@ -836,7 +897,7 @@ Even as status-only signals, attribution must stay hard to fake. The reputation 
 
 Human review (§5) remains the first anti-gaming gate: low-quality memories should fail approval before they can accrue social status. Denial and report systems (§5.5–§5.8) provide additional negative feedback signals without coupling directly to token payout.
 
-Optional attestation dimensions (difficulty/verification quality) are post-mainnet expansion points (§3.10–3.11).
+Optional attestation dimensions (difficulty/verification quality) are post-mainnet expansion points (§3.11–3.12).
 
 ---
 
@@ -916,8 +977,8 @@ Qdrant stores vector + keyword metadata only — no plaintext memory content and
 - **provenance** — `tee-attested` | `commitllm` | `proxy-attested` | `self-declared` | `unattested` (graded per field)
 - **certified_model** — TEE-attested model measurement (checkpoint hash) of the session's production model, if any; certifies session provenance, not memory text
 - **derivation** — `verbatim` | `edited-after-extraction` (whether the submitted memory matches the pinned-extraction output)
-- **difficulty** — difficulty value (1–10) on the attested-memory record; feeds the per-contributor difficulty histogram in `x/reputation`. Automated scoring (§3.11) is the post-mainnet populator.
-- **quality** — quality value (1–10) on the attested-memory record (reputation XP = difficulty × quality). The Layer-2 grading LLM (§3.11) is the post-mainnet populator.
+- **difficulty** — difficulty value (1–10) on the attested-memory record; feeds the per-contributor difficulty histogram in `x/reputation`. Automated scoring (§3.12) is the post-mainnet populator.
+- **quality** — quality value (1–10) on the attested-memory record (reputation XP = difficulty × quality). The Layer-2 grading LLM (§3.12) is the post-mainnet populator.
 - **approved** — boolean moderation state
 - **is_reported** — an open report currently stands against this memory
 - **was_reported** — reported at least once; permanent historical flag
@@ -1133,8 +1194,8 @@ Federation operates at the skill level. Orgs publish skill packages. Receiving o
 
 ### Phase III: Post-Mainnet — Attestation + Federation
 
-- Pluggable session-attestation framework (cryptographic and/or API-backed), per §3.10, generalizing `x/attestation` to typed proof artifacts
-- Two-layer difficulty scoring (§3.11) as an optional quality input once attestation infrastructure is live
+- Pluggable session-attestation framework (cryptographic and/or API-backed), per §3.11, generalizing `x/attestation` to typed proof artifacts
+- Two-layer difficulty scoring (§3.12) as an optional quality input once attestation infrastructure is live
 - Skill-level federation: publish/subscribe skill packages with receiver-side quality thresholds and no cross-org contributor-reputation portability
 
 ---
@@ -1171,6 +1232,7 @@ Federation operates at the skill level. Orgs publish skill packages. Receiving o
 [12] Lambda Class. CommitLLM: Cryptographic commit-and-audit for LLM inference. *github.com/lambdaclass/CommitLLM.*
 [13] Morris, J. et al. (2023). Text Embeddings Reveal (Almost) As Much As Text. *EMNLP 2023.*
 [14] Huang, Y. et al. (2024). Transferable Embedding Inversion Attacks. *ACL 2024.*
+[15] Núñez, D. et al. (2018). Umbral: A Threshold Proxy Re-Encryption Scheme. *NuCypher / NICS Lab, Universidad de Málaga.*
 
 ---
 
