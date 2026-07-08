@@ -63,16 +63,14 @@ Current payload shape is emitted by `payloadMap` in `UpsertPoint` with optional 
 
 | Payload field | Source class | Status |
 |---|---|---|
-| `project_fingerprint` | chain anchor (per-memory, required for hard scope filter) | **[TARGET — post-CO-B/CO-C]** |
-| `scope` | chain anchor (per-memory, required for hard scope filter); today only `StoredValidityMetadata.scope_tags_bz` exists and is a different surface (`state.proto:89`) | **[TARGET — post-CO-B/CO-C]** |
 | `language[]` | hub payload projection, content-adjacent, not chain-anchored | **[TARGET — post-CO-C]** |
 | `superseded_by` | derived projection from `StoredMemoryRelationship` (`state.proto:74-82`) under INV-3 | **[TARGET — post-CO-C]** |
 
 ### 2.3 Current-vs-target collection topology
 
 - **[CURRENT REALITY]** Per-org collections: `org_<orgID>_memories`. (`retrieval.go:38-40`, `retrieval.go:251-305`)
-- **[TARGET — post-CO-C]** Single-collection payload multitenancy with pre-ingest payload indexes and fail-closed scoped query contract. (`RECALL-MC1-DIRECTIVE.md:89-93`)
-- **[CURRENT REALITY]** `project_fingerprint`/`scope`/`language`/`superseded_by` do not exist in hub retrieval payload code path. (`retrieval.go:326-344`, `08-07-26-0433-mc1-chain-alignment-chart.md:42-44`)
+- **[TARGET — post-CO-C]** Pre-ingest payload indexes for retrieval-boost fields (`language`, `superseded_by`) over the per-org collection; recall is relevance-gated over the org pool (INV-6 + keyword boost + relevance floor/τ), with no project-scope query filter. (`RECALL-MC1-DIRECTIVE.md:89-93`)
+- **[CURRENT REALITY]** `language`/`superseded_by` do not exist in hub retrieval payload code path. (`retrieval.go:326-344`, `08-07-26-0433-mc1-chain-alignment-chart.md:42-44`)
 
 ---
 
@@ -91,13 +89,10 @@ Role: define the mandatory chain anchors for faithful replay.
 
 ### 3.3 Per-memory anchors required but absent today
 
-The ratified balance is: publish knowledge and discovery/scoping metadata verifiably on-chain; protect people-related material only. (`08-07-26-0510-mc1-chain-caveats-and-storage.md:37-46`)
+The ratified balance is: publish knowledge verifiably on-chain; protect people-related material only. Recall is relevance-gated over the org pool (INV-6 prompt_digest + keyword boost + relevance floor/τ) — there is no on-chain project-scope field and no server-side project filter. (`08-07-26-0510-mc1-chain-caveats-and-storage.md:37-46`)
 
 - **Required per-memory anchors (missing):**
-  - `project_fingerprint`
-  - `scope`
   - `mc_version`
-- **Fingerprint hygiene rule:** public-repo git-origin SHA-256 is acceptable; local-only repo identity must be machine-independent and must never include personal path material such as `/Users/<name>/...`. Keyed-HMAC recommendation was retracted as over-built. (`08-07-26-0510-mc1-chain-caveats-and-storage.md:42-43`)
 
 ### 3.4 Per-org / per-epoch anchors required but absent today
 
@@ -115,7 +110,7 @@ vocab_hash = sha256( join('\n', sort_asc(non_deprecated_org_keywords)) ).hex_low
 ### 3.5 Honest current state
 
 - **[CURRENT REALITY]** MC-1 chain-leg is not wired end-to-end for these fields. The write envelope is dropped at `submitMemory`; only partial fields survive to hub/chain. (`contribution.ts:17-151`, `08-07-26-0433-mc1-chain-alignment-chart.md:5-6`, `08-07-26-0433-mc1-chain-alignment-chart.md:26-33`)
-- **Therefore:** rebuild-from-chain for scoped recall is impossible today.
+- **Therefore:** faithful rebuild-from-chain is impossible today (the per-org rebuild anchors below are still missing).
 - **Blocking dependency:** CO-B (chain-leg anchors) + CO-C (collection/index/filter contract) must land first. (`RECALL-MC1-DIRECTIVE.md:84-93`)
 - **Documentation honesty:** whitepaper §8.2/§8.3 currently overstates as-built rebuildability for missing anchors. (`08-07-26-0510-mc1-chain-caveats-and-storage.md:16`)
 
@@ -179,14 +174,12 @@ State constraints:
 - **[CURRENT REALITY]** Hub creates per-org collections with cosine vectors, size 768, unnamed vector; no payload-index creation in current path. (`retrieval.go:38-40`, `retrieval.go:251-305`, `retrieval.go:42`)
 - **[TARGET — post-CO-C]** Build into target collection topology with payload indexes created before any point ingest:
   - `org_id` (tenant key)
-  - `project_fingerprint`
-  - `scope`
   - `language`
   - `superseded_by` placeholder
   (`RECALL-MC1-DIRECTIVE.md:89-93`)
 - **Why pre-ingest is mandatory:** filterable HNSW links are built with index awareness at ingest time; retrofitting payload indexes after ingest forces another rebuild cycle. (`RECALL-MC1-DIRECTIVE.md:91-92`)
-- **Filter/index contract:** disable unindexed-field filtering; enforce INV-8 fail-closed at query boundary by rejecting any query missing `org_id` + `project_fingerprint`. (`RECALL-MC1-DIRECTIVE.md:36`, `RECALL-MC1-DIRECTIVE.md:90-93`)
-- **[CURRENT REALITY]** Hub query currently filters on `org_id` and optional `embedding_model_id` only; no `project_fingerprint`/`scope` filter exists. (`retrieval.go:391-399`, `08-07-26-0433-mc1-chain-alignment-chart.md:43`)
+- **Filter/query contract:** disable unindexed-field filtering; recall is relevance-gated over the org pool — the query is bounded by `org_id` (tenant) plus the relevance floor/τ, with no project-scope filter. (`RECALL-MC1-DIRECTIVE.md:90-93`)
+- **[CURRENT REALITY]** Hub query filters on `org_id` and optional `embedding_model_id` only — which is the intended contract; no project-scope filter is required. (`retrieval.go:391-399`, `08-07-26-0433-mc1-chain-alignment-chart.md:43`)
 
 ### 5.c Per memory: verify -> decrypt -> re-embed -> payload -> batch upsert
 
@@ -343,9 +336,8 @@ Role: preserve mission invariants while replaying derived retrieval state.
   - Epoch keys derive client-side from `K_master` using HKDF namespace contract. (`crypto.rs:273-293`, WHITEPAPER §3.2)
   - Hub confidentiality claim remains: hub cannot decrypt even if malicious. (WHITEPAPER §3.10)
 - Rebuild does not alter confidentiality boundary; it re-derives the same disclosed semantic shadow already held for retrieval service. (WHITEPAPER §3.5, §8.3)
-- INV-12 hygiene is mandatory for any published scoping field:
+- INV-12 hygiene remains mandatory for any on-chain payload:
   - never publish personal paths/usernames/hostnames
-  - local-only project identity must be machine-independent
   (`RECALL-MC1-DIRECTIVE.md:44`, `08-07-26-0510-mc1-chain-caveats-and-storage.md:42-43`)
 - Mission invariant preserved: no single party gains unilateral plaintext READ power from rebuild mechanics. (`D-MISSION-INVARIANT`)
 
@@ -384,7 +376,7 @@ Role: pin this spec to the MC-1 delivery sequence and deferred inventory.
 
 - This specification is the contract MI-3.4 implements; it depends on:
   - **CO-B** chain-leg anchoring of missing MC-1 rebuild-critical fields
-  - **CO-C** collection rebuild with pre-ingest payload indexes + fail-closed scoped query boundary
+  - **CO-C** collection rebuild with pre-ingest retrieval-boost payload indexes (relevance-gated recall over the org pool; no project-scope query filter)
   (`RECALL-MC1-DIRECTIVE.md:84-93`)
 
 - Explicit deferred list:
@@ -394,8 +386,8 @@ Role: pin this spec to the MC-1 delivery sequence and deferred inventory.
 
 - Honest shipped-vs-missing summary:
   - MI-3.1 and MI-3.2 are recorded as shipped in program tracking.
-  - Per-memory MC-1 scoping anchors required for chain-faithful scoped rebuild are still not wired end-to-end.
-  - Therefore rebuild-from-chain for scoped retrieval remains blocked until CO-B + CO-C complete.
+  - Per-memory MC-1 anchor (`mc_version`) and per-org rebuild anchors (`vocab_hash`, `embedding_model_id`) required for chain-faithful rebuild are still not wired end-to-end.
+  - Therefore chain-faithful rebuild-from-chain remains blocked until CO-B + CO-C complete.
   (`08-07-26-0433-mc1-chain-alignment-chart.md:5-6`, `08-07-26-0433-mc1-chain-alignment-chart.md:65-77`)
 
 Final statement:
