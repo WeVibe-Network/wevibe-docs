@@ -371,11 +371,13 @@ The privacy boundary is decrypted plaintext: decryption, wevibe-guard sanitizati
 
 WeVibe orgs are public developer communities, not private enterprises. On-chain metadata is intentionally public — it enables discovery, reputation, and the social graph.
 
-**On-chain (public by design):** Org IDs, org topic tags, contributor pub keys, encrypted memory blobs, plaintext keyword terms/weights (discovery signal — "this org covers Redis"), submission timestamps, memory sizes, epoch boundaries, serve receipts (batched per epoch), reputation aggregates, bandwidth consumption, quarantine state, report flags.
+**On-chain (public by design):** Org IDs, org topic tags, contributor pub keys, encrypted memory blobs, plaintext keyword terms/weights (discovery signal — "this org covers Redis"), an opaque per-memory project fingerprint and its scope (`project` | `org`), submission timestamps, memory sizes, epoch boundaries, serve receipts (batched per epoch), reputation aggregates, bandwidth consumption, quarantine state, report flags.
 
 **Local to the MCP/plugin (the hub never sees these):** Decrypted memory plaintext, local wevibe-guard/blacklist state, and session context profiles. (Embedding vectors and keyword-weight metadata live in the hub's Qdrant; the hub stores ciphertext + vectors but never decrypts — see §3.6 and §8.3.)
 
 Plaintext keywords on-chain are a feature, not a leak. They tell developers what an org covers and help with cross-org discovery. Developers who join an org to boost their LLM need to know what domain knowledge it offers. The keywords serve that purpose.
+
+The project fingerprint on-chain is likewise a discovery/scoping signal, not a content leak. It is an opaque hash that reveals cluster membership only — which memories belong to the same working project — exactly the statistical metadata inference §3.1/§9.4 already concede is observable. Publishing it openly is what lets recall be scoped to the working project AND lets the hub's retrieval index be verifiably rebuilt from chain authority (§8.3). The fingerprint never carries personal machine identity: for a repo with a remote it is the SHA-256 of the normalized public git-origin URL; for a local-only repo it is a machine-independent identifier — never a home directory or username (INV-12 scrub).
 
 ### 3.8 Defense-in-Depth: Memory Sanitization Pipeline
 
@@ -950,7 +952,7 @@ Each reporter has a private list of their own reports and published escalations.
 Memory content is stored as encrypted blobs directly on the WeVibe chain. Each approved memory is a transaction that writes:
 - Encrypted ciphertext (AES-256-GCM)
 - Wrapped DEK (sealed to epoch key)
-- Plaintext metadata: org ID, epoch, contributor pub key, keywords/weights, stack tags, timestamp, provenance tier
+- Plaintext metadata: org ID, epoch, contributor pub key, keywords/weights, stack tags, timestamp, provenance tier, project fingerprint, scope, and MC-1 schema version (`mc_version`)
 - Merkle leaf hash for the epoch batch
 
 Every validator replicates every memory. This is the storage guarantee — no separate challenge mechanism needed. Chain consensus IS the storage layer.
@@ -959,7 +961,7 @@ Every validator replicates every memory. This is the storage guarantee — no se
 
 ### 8.2 Keyword Index (On-Chain Metadata)
 
-Plaintext per-memory keyword weights are stored alongside encrypted memories on-chain. This enables keyword-based filtering without decryption. The tradeoff (keyword visibility) is accepted — see §3.7. The org-level keyword *taxonomy* itself — the controlled vocabulary a leader manages (add / merge / rename / deprecate) — is a hub-side capability (hub database + dashboard) anchored by an on-chain vocabulary version hash, so a rebuilt hub can verify it restored the authoritative taxonomy; the chain carries each memory's keyword weights.
+Plaintext per-memory keyword weights are stored alongside encrypted memories on-chain. This enables keyword-based filtering without decryption. The tradeoff (keyword visibility) is accepted — see §3.7. The org-level keyword *taxonomy* itself — the controlled vocabulary a leader manages (add / merge / rename / deprecate) — is a hub-side capability (hub database + dashboard); both the org-level vocabulary version hash (`vocab_hash`) and the pinned `embedding_model_id` are anchored on-chain, so a rebuilt hub can (a) verify it restored the authoritative taxonomy and (b) re-embed under the correct model (§8.3 rebuildability; HUB-REBUILD §3.4). The chain carries each memory's keyword weights.
 
 ### 8.3 Semantic Vector Index (Hub Qdrant)
 
@@ -985,6 +987,9 @@ Qdrant stores vector + keyword metadata only — no plaintext memory content and
 - **report_cleared** — the leader dismissed the open report via `clear_report`
 - **quarantined** — flag for memories with repeated upheld rejections; retrieval-policy exclusion
 - **deprecated** — curator has marked stale
+- **project_fingerprint** — opaque per-memory project-scope key (SHA-256 of the normalized public git-origin URL, or a machine-independent id for local-only repos; never personal paths)
+- **scope** — `project` | `org`
+- **mc_version** — Memory Contract (MC-1) schema version
 
 ---
 
