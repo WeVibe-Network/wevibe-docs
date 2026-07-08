@@ -1028,7 +1028,7 @@ app/
 │       ├── readiness/route.ts
 │       └── risk-appetite/route.ts
 ├── (auth)/
-│   ├── adopt/page.tsx            # Local identity adoption flow
+│   ├── connect-wevibe/page.tsx   # Contributor connect (identity adoption) flow
 │   └── login/page.tsx            # Login page
 ├── (dashboard)/
 │   ├── layout.tsx                 # Dashboard layout with sidebar/topbar + OrgProvider
@@ -1185,7 +1185,6 @@ e2e/
 ```
 src/
 ├── server.ts
-├── dashboard-server.ts
 ├── config.ts
 ├── types.ts
 ├── types/               # Directory (`index.ts`) for shared MCP type exports

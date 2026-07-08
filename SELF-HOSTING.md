@@ -101,16 +101,9 @@ Compose uses `${VAR:-default}` fallbacks, so unset values use local defaults.
 
 ## Leader-local moderation MCP server (required caveat)
 
-`WEVIBE_MCP_URL` must stay `http://localhost:4451`. It points to the leader-local moderation MCP server, which holds the leader's Umbral moderation key and must not be moved into Docker/VPS hosting.
+`WEVIBE_MCP_HTTP_URL` (default `http://localhost:4450`) must stay leader-local. It points to the same `:4450` MCP HTTP server (`http-server.ts`) used for recall; leader moderation/encrypt is exposed at `/v1/mod/*`. This process holds the leader's Umbral moderation key and must not be moved into Docker/VPS hosting.
 
-Run it on the leader machine from the `wevibe-mcp` repo:
-
-```bash
-cd wevibe-mcp
-npm run dashboard
-```
-
-Default dashboard MCP port is `4451`.
+There is no separate dashboard MCP process. The `:4450` MCP is started the normal way on the leader machine (spawned by the OpenCode plugin).
 
 ## Health checks
 
