@@ -41,7 +41,7 @@ These two failures live at different layers of the system. Both fixes ship indep
 │  Candidate generation:     vector similarity + keyword overlap         │
 │  Candidate ranking:        score = vector + γ·keyword_boost (D-9.3)    │
 │  Position assignment:      top-1 deterministic, 2..N probabilistic     │
-│  Contested detection:      score gap < threshold → disambiguation      │
+│  Contested detection:      score gap < threshold → twin-suppression    │
 │  Lifecycle filter:         exclude ARCHIVED always                     │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -153,13 +153,13 @@ With chain `grace = 20`, the boost window used in ranking is `window = grace + b
 
 where `window = grace + boostWindow`.
 
-### Phase 3: Contested detection and disambiguation (existing, unchanged)
+### Phase 3: Contested detection and twin-suppression (existing)
 
 After position assignment, the hub computes the score gap between position 1 and position 2. If the gap is below a configured threshold (default 0.20), the memory pair is flagged `contested = true` in the response.
 
-When the MCP client sees `contested = true`, it calls the local LLM to read all returned memories and produce per-memory: a one-line summary, a "best when" statement, and the key tradeoff. The agent uses this disambiguation to ask the user 2-3 clarifying questions before picking a winner.
+When the MCP client sees `contested = true`, the shipped mechanism is **deterministic twin-suppression**: it surfaces the clear winner (position 1) and suppresses the near-tied twin (position 2) rather than injecting both — no model call and no clarifying-questions loop. A model-based disambiguation (per-memory summaries / "best when" / tradeoff feeding user clarifying questions) has been considered as a future enhancement, but it is **not shipped** — it is deferred under the no-local-LLM-on-production-path rule (R-33).
 
-The contested path remains the silent-failure-prevention mechanism: when the engine isn't confident enough to pick between near-tied answers, it surfaces that uncertainty through the agent rather than guessing.
+The contested path remains the silent-failure-prevention mechanism: when the engine isn't confident enough to pick between near-tied answers, it surfaces a single clean winner rather than guessing between near-ties or silently shipping both.
 
 ---
 
@@ -167,7 +167,7 @@ The contested path remains the silent-failure-prevention mechanism: when the eng
 
 **Owning decisions:** D-RECALL-INJECTION-VISIBLE, D-RECALL-CONSUMER-MATRIX-2x2, D-RECALL-FEEDBACK-FOUR-BUTTON, D-RECALL-GOVERNOR, D-RECALL-TRAJECTORY (DECISIONS.md). This section governs what happens **after retrieval, before injection** — the layer that turns a ranked candidate set into a tailored, fatigue-aware user experience.
 
-**Implementation status (thin-client / fat-backend overhaul — SHIPPED 2026-06-19):** relevance governing lives in the **hub**, not the client. The hub accepts per-request `relevance_floor` + `surface_budget` knobs, filters below-floor candidates *before* the D-9.4 sampler, caps the governed top-N, and returns the governed set plus the full per-query scoring breakdown. The plugin **sends** its configured floor/budget (`~/.wevibe/plugin-config.json`, default floor 0.55 / budget 3) and trusts the hub-governed set — its old in-plugin floor/sort/budget governor and headless auto-accept were removed. The MCP forwards the knobs and decrypts only the governed set. Live-verified: identical on-topic query governed 6→3, off-topic 6→0 (cross-context bleed eliminated). The **D-9.3 δ-cap is now SHIPPED** too (hub + sim mirror in cross-language parity; populates gamma/delta/capped_boost; no recall regression — sim eval C3 unchanged at 0.967). Still **planned, not shipped:** plugin consumption of the `contested` flag, and trajectory recall (see below).
+**Implementation status (thin-client / fat-backend overhaul — SHIPPED 2026-06-19):** relevance governing lives in the **hub**, not the client. The hub accepts per-request `relevance_floor` + `surface_budget` knobs, filters below-floor candidates *before* the D-9.4 sampler, caps the governed top-N, and returns the governed set plus the full per-query scoring breakdown. The plugin **sends** its configured floor/budget (`~/.wevibe/plugin-config.json`, default floor 0.55 / budget 3) and trusts the hub-governed set — its old in-plugin floor/sort/budget governor and headless auto-accept were removed. The MCP forwards the knobs and decrypts only the governed set. Live-verified: identical on-topic query governed 6→3, off-topic 6→0 (cross-context bleed eliminated). The **D-9.3 δ-cap is now SHIPPED** too (hub + sim mirror in cross-language parity; populates gamma/delta/capped_boost; no recall regression — sim eval C3 unchanged at 0.967). **Contested-twin suppression is now SHIPPED** too — the plugin consumes the hub `contested` flag deterministically (surface the clear winner, suppress the near-tied twin; no LLM). Still **planned, not shipped:** trajectory recall (see below).
 
 **Test mode + session-tied injection (D-RECALL-MODE-FLAG, 2026-06-21):** a single env flag **`WEVIBE_RECALL_MODE` ∈ {`prod`,`test`}** read independently by plugin + MCP + hub (default `prod`; `test` explicit + loudly logged) is the one switch for all governor bypassing used in test/dev mode. `prod` = the canonical defaults below (floor **0.55**, surface_budget **3**, recall limit **3**, hub trial-daily + recall rate-limit enforced). `test` = floor **0**, surface_budget **1000**, recall limit **1000**, hub throttles **bypassed** (trial-EXPIRY still enforced); it replaces hand-edited `plugin-config.json` hacks. Explicit per-knob config/request values still override the mode base. Two further refinements landed with it: **(a) session-tied injection** — the plugin now uses OpenCode's real `sessionID` (the old process-global random hex is removed; AMENDS D-SESSION-SERVE-DEDUP) and injects each memory **once per session** rather than re-pushing it every turn (a per-session injected-set gates the per-turn `experimental.chat.system.transform`; serve receipt fires once per real session, fixing the `session_served_memories(org,session_id,cid)` keying). **(b) inject observability** — the plugin logs every injection (`[inject] <ISO> sid=… injected N: <cid>(score,"preview")…`), the test/dev "see WHAT injects WHEN" surface. In `test` only, persisted Earned-Trust auto-accept (D-11.5/D-4.2) is disabled so each recall re-gates + re-counts every candidate through the one-at-a-time popup; `prod` keeps persisted approvals unchanged. Per-turn vs per-prompt is confirmed (OpenCode #17637): `system.transform` fires every model turn incl. no-human-prompt tool-loop turns (injection point); `chat.message` fires only on human input (recall point).
 
@@ -188,10 +188,11 @@ Only the high-relevance + high-risk quadrant earns an interruption.
 ### Injection is earned by relevance (D-RECALL-GOVERNOR)
 
 - **Absolute relevance floor (SHIPPED, hub-side).** Previously there was no floor — Qdrant was queried with no `score_threshold` and `probabilisticRank` returned exactly `limit` items regardless of absolute score. Now the hub accepts a per-request `relevance_floor` and drops candidates whose combined score is below it *before* the sampler. The floor is calibrated and configurable (default 0.55; client-sent). **Zero-injection is a valid, healthy outcome.** Top-K is not relevance; top-K is "the least-bad candidates."
+  - **Floor scale — pre-freshness (clarified 2026-07-16, D-RECALL-GOVERNOR amendment).** The absolute floor gates the **pre-freshness semantic-relevance score** (the D-9.3 combined `vector + capped keyword boost`); the D-9.4 new-memory freshness boost affects **ordering only among admitted candidates**, never admission. An absolute floor must be corpus-age-independent. The hub currently compares the floor against `row.Final`, which already includes the freshness boost (×1.5 at age 0) — a conformance bug that makes admission corpus-age-dependent and effectively disables the floor across a freshly-seeded corpus. This is a stage fix only (which score the floor reads); it does not touch the freshness multiplier, decay, or serve arithmetic (R-DECAY-FROZEN). Until it is corrected the production floor stays 0.55.
 - **Use the hub score, not substring re-rank (SHIPPED).** The plugin previously discarded the hub's authoritative score and re-sorted by naive `text.includes(promptWord)` substring hits (with a "no hits → inject everything" fallback). That client-side heuristic was removed; the plugin now trusts the hub-governed, hub-ranked set.
 - **δ-cap the keyword boost (SHIPPED).** The D-9.3 cap `capped_boost = min(γ·keyword_boost, δ·vector_score)` (γ=0.1, δ=0.15) is implemented in `ranking_core.go` and mirrored in `wevibe-sim/recall-sim/pipeline/rank.mjs`, kept in cross-language parity via the shared `recall-ranking-parity.json` fixture (Go + JS parity tests green). It bounds keyword domination when vector similarity is low; a no-op when keyword boost is already within δ·vector. The breakdown now surfaces `gamma`/`delta`/`capped_boost`.
 - **Surface budget (attention cap — SHIPPED, hub-side).** The hub accepts a per-request `surface_budget` that caps the governed top-N (client-sent, default 3) — distinct from the arbitrary semantic caps removed earlier. The floor decides *relevance*; the budget protects *cognitive bandwidth*. It survives model/embedding/ranking swaps.
-- **Contested-twin suppression.** Consume the hub's `contested` flag (already returned, currently ignored by the plugin): surface one of a near-tied pair cleanly rather than injecting both. Full LLM disambiguation stays deferred (needs a capable local LLM; would block the non-blocking plugin path).
+- **Contested-twin suppression (SHIPPED).** The hub's `contested` flag is now consumed client-side via deterministic twin-suppression (no longer ignored by the plugin): surface one of a near-tied pair cleanly rather than injecting both. Full LLM disambiguation stays deferred (needs a capable local LLM; would block the non-blocking plugin path).
 
 ### Interruption is earned by risk; visibility is mandatory (D-RECALL-INJECTION-VISIBLE, D-RECALL-CONSUMER-MATRIX-2x2)
 
@@ -263,10 +264,9 @@ MCP decrypts the hub-governed set (PRE re-encryption flow)
         ├── NOT contested ──▶ Plugin renders approval UI with top result
         │                     User accepts/denies/reports
         │
-        └── CONTESTED ──────▶ MCP calls local LLM for per-memory summaries
-                              Plugin renders approval UI with disambiguation
-                              Agent asks user 2-3 clarifying questions
-                              User picks the right memory
+        └── CONTESTED ──────▶ Deterministic twin-suppression (no LLM):
+                              surface the clear winner, suppress the near-tied twin
+                              Plugin renders approval UI with the surfaced winner
         │
         ▼
 On Accept: plugin queues serve receipt (per-org pseudonymous key)
@@ -314,7 +314,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 |-----------|---------|-----------------|
 | Chain (`x/memory`) | Per-keyword weight evolution (D-4.2), archive transitions (D-4.4) | Which position a memory was served in, vector similarity |
 | Hub (`internal/retrieval`) | Candidate scoring (D-9.3), position assignment (D-9.4), contested detection, **relevance-floor + surface-budget governing of the surfaced set (D-RECALL-GOVERNOR)**, full per-query scoring breakdown | Memory content, decay formula, which memory is "better" |
-| MCP client | Keyword extraction, embedding, **forwarding the client floor/budget knobs to the hub**, disambiguation formatting, encryption/decryption of the governed set | Scoring, ranking, the floor/budget values, what to surface |
+| MCP client | Keyword extraction, embedding, **forwarding the client floor/budget knobs to the hub**, deterministic twin-suppression of near-tied results, encryption/decryption of the governed set | Scoring, ranking, the floor/budget values, what to surface |
 | Local LLM | Keyword generation, memory summaries, comparison analysis | Approval/denial, ranking |
 | Moderator | Content quality, duplicate resolution, supersession | Keyword weights, scoring parameters |
 | Agent | Which memory to apply based on user context, what clarifying questions to ask | What memories exist, how they scored |
@@ -336,7 +336,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 **Specific failure modes resolved:**
 
-1. **Silent wrong-memory delivery** — contested detection plus disambiguation
+1. **Silent wrong-memory delivery** — contested detection plus deterministic twin-suppression
 2. **Bad memory accumulation** — Earned Trust decay archives unproductive memories
 3. **Good memory ranking-loss death** — probabilistic position assignment gives every reasonable memory chances
 4. **Stale memories outliving relevance** — idle decay still applies, but only to unverified memories; trusted ones survive long quiet periods
@@ -353,9 +353,9 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 4. **Does not eliminate contested ambiguity.** Probabilistic exploration breaks the ranking-loss death spiral but does not make every query unambiguous. The contested path remains the safety net for near-tied scores.
 
-5. **Does not *require* a local LLM for contested cases.** For near-tied (contested) queries the engine **MAY** apply an optional rerank to sharpen the ordering, but it is never a hard dependency: there is always a **deterministic fallback (twin-suppression)**, and on any rerank error or timeout the **original order is preserved**. Contested recall always completes safely without a rerank — the rerank only improves an already-valid ordering.
+5. **Does not *require* a local LLM for contested cases.** The shipped contested handling is **deterministic twin-suppression** — surface the clear winner, suppress the near-tied twin — with no model on the recall path. A model-based rerank to sharpen contested ordering is a **deferred, optional** future enhancement, never a hard dependency: if it is ever enabled it would run non-blocking with deterministic twin-suppression as the always-present fallback and the original order preserved on error or timeout. Contested recall always completes safely without any rerank.
 
-   **R-33 clarification.** R-33 (no local LLM on a production path) targets a **hard dependency** on a slow/serial/org-hosted LLM sitting inline on the recall path — NOT an opportunistic, consumer-side rerank. This rerank is carved out because it is: *opportunistic* (only for contested top-K) · reached via **the consumer's own separately-configured model** (through the `LlmProvider` abstraction — its own OpenRouter/local HTTP endpoint, NOT the host agent's LLM and NOT an org/leader LLM) · **non-blocking** (D-PLUGIN-NONBLOCKING) · **bounded-timeout** · backed by a **deterministic fallback** · and **off or pinned in test**. Under those constraints the rerank never becomes a production hard-dependency, so R-33 is satisfied.
+   **R-33 clarification (for the deferred rerank).** R-33 (no local LLM on a production path) targets a **hard dependency** on a slow/serial/org-hosted LLM sitting inline on the recall path — NOT an opportunistic, consumer-side rerank. IF that deferred rerank is later shipped, it is carved out because it would be: *opportunistic* (only for contested top-K) · reached via **the consumer's own separately-configured model** (through the `LlmProvider` abstraction — its own OpenRouter/local HTTP endpoint, NOT the host agent's LLM and NOT an org/leader LLM) · **non-blocking** (D-PLUGIN-NONBLOCKING) · **bounded-timeout** · backed by a **deterministic fallback** · and **off or pinned in test**. Under those constraints the rerank would never become a production hard-dependency, so R-33 is satisfied.
 
 ---
 
@@ -371,7 +371,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 ### Medium term
 
-- **Disambiguation LLM latency.** Adds 3-5 seconds to contested recalls. Monitor what percentage of recalls trigger it. If high, raise the contested threshold or invest in faster local LLM.
+- **Disambiguation LLM latency (deferred rerank only).** The shipped contested path is deterministic (twin-suppression) and adds no model latency to a recall. IF the deferred model-based rerank is later enabled, it would add ~3-5 seconds to a contested recall; at that point, monitor what percentage of recalls trigger it, and raise the contested threshold or use a faster endpoint if the rate is high.
 
 - **Memory supersession chains.** When memory B supersedes A and later C supersedes B, the lineage must be tracked so deprecated memories don't appear in recall or similarity comparisons.
 
@@ -379,7 +379,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 
 ### Long term
 
-- **Contested rate vs memory count.** As an org grows from 100 to 10,000 memories, near-misses multiply. If contested rate grows linearly with memory count, the disambiguation path becomes the primary experience rather than the exception. At that point: better pre-filtering (vocabulary tightening), hierarchical memory organization (topics), or selective contested gating (only on high-stakes queries).
+- **Contested rate vs memory count.** As an org grows from 100 to 10,000 memories, near-misses multiply. If contested rate grows linearly with memory count, the contested path (deterministic twin-suppression) becomes the primary experience rather than the exception. At that point: better pre-filtering (vocabulary tightening), hierarchical memory organization (topics), or selective contested gating (only on high-stakes queries).
 
 - **Cross-org memory sharing.** If orgs federate, contested detection becomes the interface between "our way" and "their way." Currently out of scope.
 
