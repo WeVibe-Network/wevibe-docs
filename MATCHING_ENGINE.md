@@ -280,6 +280,10 @@ plus idle sweep for no-event memories at epoch end
 Hub mirrors chain state to Qdrant payload
 ```
 
+### Deterministic need-card query construction (RATIFIED 2026-07-22; feed implementation pending)
+
+Recall query construction runs through the deterministic need-card (D-RECALL-ALIGNMENT): harvested session signals (`intent`, `task`, `stack`, `deps`, `errorStrings`, `files`) are assembled into one canonical query input shared by the product plugin and the benchmark path. Per D-FIXLOOP-RECALL (Walter-ratified 2026-07-22), the harvest seam `buildFailing` / `testFailing` is now mandated to be fed from live build/test failure signals so repair-round recall queries include the actual failing checks and error strings via this same card. No per-recall LLM call is added on the recall path.
+
 ---
 
 ## Approval Flow (memory submission, unchanged from prior ADR)
