@@ -295,6 +295,8 @@ Hub mirrors chain state to Qdrant payload
 
 **Pipeline invariant boundary (eligibility addition):** the D-CAPABILITY-ELIGIBILITY gate above is an admission filter only. It does **not** change D-9.3 `final_score` arithmetic, D-9.4 sampling/position assignment, the frozen D-4.2 decay model, or the pinned D-RECALL-ALIGNMENT `nomic-embed-text:v1.5` 768-d embedder/query-construction path.
 
+**Provenance-admissibility SERVING gate (2026-07-23, D-PROVENANCE-ADMISSIBILITY-2026-07-23 §22; UNBUILT).** Orthogonal to the eligibility filter and to moderation/receipts: a memory is served only with admissible provenance for BOTH its producer-session and extraction-session legs (pathways P1 `ATTESTED_EXECUTION` / P2 `PROVIDER_WITNESSED`; absence states never served; commit ≠ serveable). Enforced two-tier — hub pre-scan (this stage, before ranking/gas-bearing fetch/re-encryption) + receiving-client final check before injection; the client wins; unknown/missing/invalid fails closed. Also admission-only: same invariant boundary — no change to D-9.3/D-9.4/D-4.2/embedder.
+
 ### Deterministic need-card query construction (RATIFIED 2026-07-22; feed implementation pending)
 
 Recall query construction runs through the deterministic need-card (D-RECALL-ALIGNMENT): harvested session signals (`intent`, `task`, `stack`, `deps`, `errorStrings`, `files`) are assembled into one canonical query input shared by the product plugin and the benchmark path. Per D-FIXLOOP-RECALL (Walter-ratified 2026-07-22), the harvest seam `buildFailing` / `testFailing` is now mandated to be fed from live build/test failure signals so repair-round recall queries include the actual failing checks and error strings via this same card. No per-recall LLM call is added on the recall path.
