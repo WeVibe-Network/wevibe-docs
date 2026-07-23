@@ -237,13 +237,26 @@ MCP extracts keywords + embedding from query (LLM-based)
 + forwards client relevance_floor + surface_budget
         │
         ▼
-Hub → Qdrant: vector similarity + keyword scoring (D-9.3)
+Hub → Qdrant: vector + keyword candidate retrieval (D-9.3 inputs)
         │
         ▼
-Hub: candidate set ranked by final_score
+Hub: verify producer-model attestation + resolve producer tier
+     from hub-materialized producer provenance + registry snapshot
+     (D-PRODUCER-MODEL-PROVENANCE, D-CAPABILITY-REGISTRY)
+        │
+        ▼
+Hub: capability-eligibility admission filter (pre-scoring admission; filter-only)
+     (admit only producer tier ≤ consumer tier; unknown relation = fail-closed;
+     exact-self reuse only when identity is proven)
+     (D-CAPABILITY-ELIGIBILITY — DESIGN CANONIZED 2026-07-23; implementation UNBUILT)
         │
         ▼
 Hub: drop candidates below relevance_floor (D-RECALL-GOVERNOR)
+        │
+        ▼
+Hub: candidate set scored + ranked by final_score (D-9.3)
+     (eligibility already applied as pre-scoring admission;
+      not a relevance-scoring input)
         │
         ▼
 Hub: position 1 = strict top-1
@@ -279,6 +292,8 @@ Chain applies Earned Trust decay (D-4.2) on serve/denial events,
 plus idle sweep for no-event memories at epoch end
 Hub mirrors chain state to Qdrant payload
 ```
+
+**Pipeline invariant boundary (eligibility addition):** the D-CAPABILITY-ELIGIBILITY gate above is an admission filter only. It does **not** change D-9.3 `final_score` arithmetic, D-9.4 sampling/position assignment, the frozen D-4.2 decay model, or the pinned D-RECALL-ALIGNMENT `nomic-embed-text:v1.5` 768-d embedder/query-construction path.
 
 ### Deterministic need-card query construction (RATIFIED 2026-07-22; feed implementation pending)
 
@@ -317,7 +332,7 @@ The moderator can ask the local LLM to compare the new memory against similar ex
 | Component | Decides | Does not decide |
 |-----------|---------|-----------------|
 | Chain (`x/memory`) | Per-keyword weight evolution (D-4.2), archive transitions (D-4.4) | Which position a memory was served in, vector similarity |
-| Hub (`internal/retrieval`) | Candidate scoring (D-9.3), position assignment (D-9.4), contested detection, **relevance-floor + surface-budget governing of the surfaced set (D-RECALL-GOVERNOR)**, full per-query scoring breakdown | Memory content, decay formula, which memory is "better" |
+| Hub (`internal/retrieval`) | Candidate scoring (D-9.3), position assignment (D-9.4), contested detection, **pre-scoring capability-eligibility admission filtering + relevance-floor + surface-budget governing of the surfaced set (D-CAPABILITY-ELIGIBILITY, D-RECALL-GOVERNOR)**, full per-query scoring breakdown | Memory content, decay formula, which memory is "better" |
 | MCP client | Keyword extraction, embedding, **forwarding the client floor/budget knobs to the hub**, deterministic twin-suppression of near-tied results, encryption/decryption of the governed set | Scoring, ranking, the floor/budget values, what to surface |
 | Local LLM | Keyword generation, memory summaries, comparison analysis | Approval/denial, ranking |
 | Moderator | Content quality, duplicate resolution, supersession | Keyword weights, scoring parameters |

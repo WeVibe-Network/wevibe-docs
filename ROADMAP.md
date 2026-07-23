@@ -118,6 +118,8 @@ Sessions produce memories. Without provenance attestation, a contributor could p
 
 *Caption:* Table 2. Attestation tiers against the July 2026 landscape. Strength is graded per field; no tier proves memory truth.
 
+**Benchmark attestation contract (ratified 2026-07-23).** The benchmark path now runs a mock attestation adapter that preserves the same logical receipt envelope and off-chain verifier boundary as production; only the trust root changes (the benchmark harness as a trusted test oracle instead of TEE attestation). Benchmark outputs are explicitly labeled `bench-mock/self-declared`, are never surfaced as a live attestation tier, and are never presented as cryptographic proof (R-PUBLIC-PROOF-GATE; D-MOCK-ATTESTATION-CONTRACT).
+
 ### 2.1 The Folded Pipeline: From Attested Sessions to Certified Memories
 
 A session receipt alone certifies the session, not the memory: extraction and human editing sit between them. The folded pipeline closes that gap by chaining a second receipt over the extraction step itself. The extraction model runs on attested inference; its receipt binds the session transcript (hash-linked to the session receipts) and the pinned extraction prompt as input, and the memory candidates as output. A verifier can then confirm, over hashes alone, that a submitted memory is the **verbatim output of a pinned extractor applied to a genuine session owned by the contributor**.
@@ -127,6 +129,8 @@ The result is a per-field provenance ladder, surfaced as graded labels and never
 `pipeline-attested (verbatim)` → `session-attested, edited after extraction` → `attested-gateway session` → `self-declared`
 
 An edited memory is not penalized — review and editing are first-class consent steps — it simply carries the grade matching what can be proven. The folded pipeline requires an attestable extractor: open-weight today; closed extractors join if and when a vendor ships attested inference.
+
+**Per-memory producer-model provenance (ratified 2026-07-23).** The ladder now carries an immutable per-memory producer-model stamp (canonical producer identity for the source-session model) plus attestation reference at commit time; the hub materializes and indexes these fields as rebuildable derived state (D-PRODUCER-MODEL-PROVENANCE).
 
 [[CALLOUT: WARNING — "What attestation does and does not prove"]]
 Attestation is anti-**fabrication**, not a truth oracle. A full receipt chain proves the session genuinely ran on the attested model, belonged to the contributor, and — folded — that the memory is the extractor's verbatim output. It does **not** prove the session was substantive (padding with junk turns remains possible; turn counts are scoring inputs, never raw effort), that the session was not deliberately staged, or that the memory's guidance is correct. Correctness remains the curation layer's job. Producing receipts also carries a disclosed privacy tradeoff: attested sessions route through confidential-inference providers rather than the local-only path, adding the hardware vendors to the trust root — though the receipts themselves carry only hashes, never session text. Attestation stays optional, opt-in, never a contribution gate, and never coupled to token economics — and every tier is carried as a pluggable, re-verifiable adapter, never a hard dependency on any single enclave vendor (TEEs have a side-channel history; the retained bundle keeps claims verifiable even if a provider's API changes or is compromised).
@@ -156,9 +160,11 @@ How attested difficulty enhances the economic and/or social-graph layers is inte
 - **Layer 1 — Structural signal (automated, cheap).** Model-capability coefficient × turn count × (1 + 0.25 × failed alternatives). Computed from session structure without understanding content.
 - **Layer 2 — LLM grading (semantic, authoritative).** A separate grading LLM evaluates non-obviousness, specificity, and reasoning progression. Temperature 0, deterministic, hash-seeded. The grade and session hash are committed together.
 
-### 3.1 Model Origin as a Soft Retrieval Prior
+### 3.1 Capability Eligibility Gate + Soft Origin Prior
 
-One soft factor in scoring — never a hard filter or gate: generic conceptual memories from lower-capability models are deprioritized for higher-capability retrievers, while highly specific memories take no penalty regardless of origin.
+Capability direction is now a hard pre-scoring admission gate (ratified 2026-07-23; D-CAPABILITY-ELIGIBILITY; D-CAPABILITY-REGISTRY): producer memories inject only into equal-or-lower-capability consumers, unknown producer/consumer classifications fail closed, and exact-self injection is allowed only when producer identity is proven.
+
+Inside that eligible set, model origin remains a soft retrieval prior only: generic conceptual memories can still be deprioritized while highly specific memories take no penalty. That soft-prior scoring behavior is unchanged, and eligibility itself is never a scoring input or boost.
 
 ---
 
