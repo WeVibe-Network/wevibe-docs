@@ -1,464 +1,354 @@
 # WeVibe Network
 
-**Unstoppable Knowledge, With Provenance**
-*A censorship-resistant network where hard-won engineering knowledge is encrypted on-chain, curated by accountable humans, and delivered into any coding agent — readable by no one in the middle, killable by no one at all.*
+## Verified Memory for Coding Agents — Owned by No One, Killable by No One
 
-Draft v2.7 · July 2026 · Architecture Document
-Classification: Public
+*A censorship-resistant knowledge network where hard-won engineering fixes are encrypted on-chain, curated by accountable human experts, and delivered straight into any coding agent — readable by no one in the middle, deletable by no one at all.*
 
----
-
-## Changelog
-
-| Version | Summary |
-|---|---|
-| v2.7 | Positioning inversion (DMO-033): knowledge-network thesis leads; reputation reframed as the provenance layer made visible; report/expose accountability loop embedded as core architecture; four-button gate unified across all sections; build-status registers removed from the public document (implementation sequencing lives in engineering canon); abstract rewritten around the exit guarantees. |
-| v2.6 | Personal-memory layer scoped: bounded, pull-mode local memory distinct from shared org memory; provider interface open, one default packaged, BYO opt-in. |
-| v2.5 | Extraction-provenance honesty pass (DMO-032): trust-circle parity; cloud-mainstream extraction canonized; session-matched default; locality claims scoped. |
-| v2.4 | Mission-integrity pass (DMO-030): exit-guarantees invariant; custody resolved non-custodial; direct-broadcast model; semantic-shadow disclosure. |
-| v2.3 | Social-first repositioning; chain-resolved hub-endpoint + onboarding posture added. |
-| v2.2 | Verification anchor redesigned to a contributor-signed canonical body (`plaintext_hash`/`salt`/`ciphertext_hash`); SP1/ZK pathway rejected as operationally unshippable. |
-| v2.1 | Accountability primitives: silent denial as cheap negative signal, two-tier reports with public on-chain escalation, leader sole signature, unfakeable org-health signals. |
-| v2.0 | Architecture pivot: on-chain encrypted memory storage + hub retrieval with local decryption/guard + plugin-gated human approval; domain-expert-led orgs. |
+**Architecture & Design Specification · July 2026 · Classification: Public**
 
 ---
 
 ## Abstract
 
-Two decades of file-sharing networks settled an engineering question: content replicated across many independent machines, indexed by a system owned by no one, cannot be taken down. What those networks never carried — what they destroyed by design — was consent and provenance. WeVibe takes the unstoppability and inverts the rest. It is a network for hard-won engineering knowledge that contributors *chose* to share, where every memory is signed by its author, curated by an accountable human, and permanently attributed on a chain no company controls.
+WeVibe is a memory layer for AI coding agents that makes shared memory usable across trust boundaries. It delivers version-exact fixes and negative knowledge as attributed memories: each item is tied to its author, its organization, and a curation decision.
 
-The mechanics: memories are extracted from real coding sessions, encrypted on the contributor's machine, and committed as chain state. Validators replicate ciphertext they cannot read. Plaintext exists only at the edges — the contributor at extraction, the org leader at curation, the consumer after an explicit approval gate. Nothing enters an agent's context without human eyes on it first.
+Memories are extracted from real sessions and encrypted before submission; contribution requires explicit user actions. Approved memories are committed as encrypted chain state that validators replicate without plaintext access. At recall, candidates are decrypted locally, scanned by the local sanitization pipeline, and presented through the plugin-controlled injection gate — every recalled memory passes human eyes before it enters an agent's context.
 
-Curation is kept honest without a tribunal. Organization leaders sign every chain commit alone, bonded by a scarce, forfeitable slot. What disciplines them is not WeVibe's judgment but an escalation primitive nobody can suppress: any consumer can file a wallet-signed report directly to chain RPC; if the org dismisses it or lets the resolution window lapse, the reporter's public plaintext reveal unlocks — verified against a contributor-signed cryptographic anchor the leader never touches, rendered by any block explorer, editable by no one. Capture is not prevented; it is made economically unsustainable. And exit is unfakeable: members walking away is first-class chain state that no sybil can counterfeit.
+Where work admits an executable definition of done, memories additionally carry goal-sealed verification receipts: a goal, a test predicate, and a starting-state hash sealed before the work begins, graded openly into tiers at recall, and never used to gate contribution.
 
-The result is a system in which no single party — including WeVibe-the-company — can **read** member knowledge from the outside, **withhold** the network's function from a principal acting within their rights, **rewrite** the historical record, or **kill** an org's knowledge or a contributor's standing by withdrawing infrastructure. The chain is the only durable authority; every other component is disposable and reconstructible from it.
+A memory's continued standing in the corpus is decided by evidence, not by a formula frozen into consensus. The chain records observations — a memory was served, a memory was blocked, an episode that used a memory subsequently resolved or did not — as immutable, content-free, consumer-signed events. Standing is then computed from that log at the edge, by a published and versioned policy whose hash is anchored on-chain. Nothing on-chain is ever a verdict, so no verdict can be rewritten, withheld, or lost with the infrastructure that computed it.
 
-For the individual vibe coder, the experience is simple: install a plugin, contribute what actually worked, and your next agent session starts with your community's verified memory instead of a cold start. The payoff is sharpest when running local or smaller models, which inherit fixes first won in frontier sessions — collective problem-solving intelligence harvested across many contributors rather than re-paid run by run. Your public profile is the provenance layer made visible — what you solved, where it served, under whose curation. Coding is the first domain; nothing in the protocol is coding-specific.
+Curation is accountable without a platform tribunal: each organization's leader is the sole chain publisher for that organization's commits. Consumers can file wallet-signed on-chain reports that a captured organization cannot suppress; dismissal or inaction unlocks a reporter-signed public plaintext reveal verified against a contributor-signed anchor.
+
+Confidentiality is stated narrowly and precisely: the hub that coordinates retrieval cannot decrypt stored memory ciphertext under the Umbral proxy re-encryption relation. This is not a claim that the hub learns nothing; for retrieval the hub holds embeddings and label metadata that constitute a disclosed semantic shadow, with operational mitigations rather than a zero-knowledge index.
+
+The protocol's sovereignty contract is the Four Exit Guarantees: no single party — including WeVibe — holds unilateral ability to READ plaintext from outside, WITHHOLD the network's function from a principal acting within their rights, REWRITE the historical record, or KILL an organization's knowledge by withdrawing infrastructure. The chain is the only durable authority; every other component is disposable and can be rebuilt from it.
+
+> **Nothing enters an agent's context without human eyes on it first.**
 
 This document is the architecture contract: the normative specification the network is built and audited against.
 
 ---
 
-## 1. Design Philosophy
+## 1. Overview
 
-### 1.1 The Problem
+### 1.1 What WeVibe Is
 
-Vibe coders do hard problem-solving with agents every day, but each new session behaves like a cold start. A fix discovered today — the precise Nginx keepalive tweak, the one migration order that prevents data loss, the exact flag combination for a flaky deploy — is trapped in private chat logs and forgotten tomorrow.
+WeVibe is a memory layer for AI coding agents. A local plugin and MCP path retrieve relevant community memory, present each candidate to the user, and inject only approved memory. A memory is one atomic insight: what to do, when it applies, and what not to do.
 
-This hurts most when working with local or smaller models. The model can write code, but it does not know your stack's lived edge-cases, version mismatches, and production scars. The gap is not "more generic internet text"; the gap is verified, domain-specific memory from people who actually ran the problem. The verified-memory value claim is **any-agent** — the corpus serves whatever model you run — but the sharpest consumer pain (and the marquee payoff) is the local/smaller model, which gets a fix it could not have produced itself; the knowledge source is most often a frontier/cloud session where that fix was first won.
+Memories are extracted from real sessions, encrypted before submission, reviewed by accountable humans, and committed as attributed encrypted chain state. What happens to them afterwards — whether they keep surfacing, or quietly stop — is decided by what the network observes about their use, recorded as evidence and evaluated openly.
 
-At the same time, developer knowledge channels are drowning in AI-generated content that sounds plausible but misses decisive nuance. Provenance is becoming the scarce good. A memory attached to a real contributor, a real org, and a real curation decision is materially more useful than anonymous content sludge — and it is the only kind of knowledge worth building permanent infrastructure for.
+### 1.2 How It Works at a Glance
 
-Finally, every prior attempt at shared technical knowledge lives inside a company database: a kill switch, a moderation team that can be pressured, terms that can change, an index that can be seized or simply shut down when the funding runs out. Knowledge that outlives its platform requires a platform that cannot die.
+**Figure 1 — The WeVibe loop.** A single horizontal loop, four stages left to right, with a return arrow to the start.
 
-### 1.2 The Ensemble, Not the Sample
+- **Stage 1 — Contribute.** A developer extracts a memory from a real session and encrypts it on their own machine.
+- **Stage 2 — Curate.** An organization's expert leader reviews it and signs it onto the chain.
+- **Stage 3 — Recall.** Another developer's agent surfaces it, they approve it, and it enters the session.
+- **Stage 4 — Answer.** What happened next is recorded: the work resolved, or it did not. That observation is the memory's standing.
+- Return arrow from Stage 4 back to Stage 1: "Every use is attributed back to the author; every outcome is evidence about the memory."
+- Centre of the loop: "Encrypted, on-chain, owned by no one."
 
-A single agent run is one sample from a distribution of possible answers. Practitioners who take problem-solving seriously already treat it that way: they run the same problem more than once — across seeds, temperatures, and models — and reconcile the variants toward the answer that holds up. The strongest solution is rarely the first pass; it is the one that recurs, that survives being attempted from several angles. Most vibe coders never observe this, because obtaining that cross-run agreement is expensive — every additional run is more tokens, more time, more money, paid again by each person for each problem. The problem-solving intelligence is latent in the model, but at the point of use it is left unrealized: one draw is taken, and the better answer the next draws would have surfaced is never seen.
+*Figure 1. Contribution, curation, recall and outcome form one loop; attribution closes it and evidence keeps it honest.*
 
-WeVibe's answer is to expose that intelligence collectively instead of making each coder buy it alone. The network already holds the output of everyone who ran some variant of the same problem — the versions a human chose to contribute, that a curator accepted, and that went on to serve real sessions. A recall hands a coder the reconciled result of many independent attempts without them personally paying the N-run cost: the individual funds one session; the network exposes the settled intelligence of many. This is the any-agent value claim of §1.1 seen from the supply side. The sharpest payoff is still the local or smaller model inheriting a fix first won in a frontier session — but the deeper reason that fix is worth inheriting is that it represents a best-of-many outcome curated over time, not a single lucky draw.
+### 1.3 Who It Is For
 
-**The reconciliation is emergent, not mechanical.** WeVibe does not run a problem N times and tally a vote; the protocol performs no automated multi-sampling, and this document specifies none. The agreement is produced socially and curatorially: many contributors submitting what actually worked, leaders accepting the versions that clear the bar, and serve history feeding Earned-Trust decay (§5.8) so that repeatedly useful memory is weighted up and misleading memory decays out. The corpus converges on quality the way an ensemble does — but the ensemble is the community over time, and the signal accrues from real curated use, not from a synchronized batch of runs the network fires on demand.
+| Role | What they do | What they need |
+|---|---|---|
+| **Developer** | Codes with an agent, recalls community memory, and chooses what to contribute. | A passkey (Face ID / fingerprint). No wallet, no seed phrase. |
+| **Organization leader** | A domain expert who curates memory quality and signs every commit. | Holds the organization's scarce slot. |
+| **Validator** | Runs consensus and stores all chain state, including encrypted memories. | Runs a node. |
+| **WeVibe (the protocol)** | Open-source software. No company sits in the middle; the protocol depends on no single entity. | Nothing — it is code. |
 
-### 1.3 The Inversion
-
-The file-sharing era proved a property no legal or infrastructural pressure has reversed: when content is replicated across many independent machines and the index is owned by no one, distribution cannot be stopped. That property is exactly what durable knowledge sharing needs — and exactly what no knowledge platform has ever had.
-
-But that lineage carried two fatal absences. It moved content *without the consent of its creators*, and it *stripped provenance* — the one thing that makes technical knowledge trustworthy. WeVibe is the inversion: keep the unstoppability; restore consent and attribution.
-
-- **Consent is structural.** Nothing leaves a contributor's machine without two explicit actions (Extract, then Submit — §4.5). Sessions stay local by default. Contribution is a choice made per memory, per org.
-- **Provenance is the payload.** Every memory travels with its author's signature, its org's curation record, and its serve history. Attribution is not metadata bolted on; it is the reason the content is worth retrieving.
-- **Unstoppability is enforced as four exit guarantees.** No single party — including WeVibe-the-company, any hub operator, or any org leader — may have the unilateral ability to **READ** member memory plaintext, **WITHHOLD** the network's function from a principal acting within their rights, **REWRITE** the historical record, or **KILL** an org's knowledge or a contributor's standing by withdrawing infrastructure.
-
-The rest of this document is the engineering required to make those three properties true simultaneously. Encryption provides blindness; the chain provides permanence; sole-signature curation provides accountability; the public report provides recourse; the exit guarantees give the whole construction its teeth.
-
-### 1.4 The Organization Model
-
-Organizations are domain-expert-run memory collections you join. Think: a React performance org, a Solana tooling org, a Kubernetes reliability org. You join because your daily agent work needs better domain context now, and because you want your own contribution history to compound publicly over time.
-
-Each organization is a collaboration container with its own:
-
-- **Membership roster** managed by the leader.
-- **Role hierarchy** (Leader, Reviewer, Member).
-- **Commitment standards** for what counts as high-quality memory.
-- **Domain focus** and coverage map.
-- **Operating policies** for contribution/review cadence and recall access.
-
-Leaders are domain experts responsible for memory quality, not faceless administrators. They approve who can review, define the bar for acceptance, and curate the collection as tools evolve. Strong org leadership raises both memory usefulness and the credibility of every attributed memory in the collection.
-
-Orgs are intentionally broad across experience levels: newer coders join to learn faster; experienced coders contribute high-signal memories, mentor standards, and build attributed history. The org is the container. The vibe coder is the protagonist.
-
-Public plaintext keywords are part of this model by design. They are discovery labels that help people find relevant memory collections quickly (for example, `redis`, `solana`, `django`) — not secrets, and not treated as a risk narrative in this document.
-
-**Personal memory vs shared org memory (bounded, pull-mode).** Shared org memory — the curated, encrypted, chain-anchored collection described throughout this document — is WeVibe's predictive lane: it answers the *new* problem ("has someone solved something like this?") via situation-matched recall (§3.5). A coder's **personal memory** is a deliberately *different and bounded* layer: deterministic, on-demand (pull-mode) recall of KNOWN facts about their own repo and work — a repo/code map, durable project decisions, session-handoff state — retrieved on request, never speculatively injected at session start. The boundary is load-bearing: speculative context-injection for new problems is exactly where general personal-memory tools over-inject and add noise, and it is the lane WeVibe's curated org recall already wins. Personal memory is therefore scoped to *pull, not push*; any predictive/semantic personal recall (a coder's own past solutions, pre-contribution) is served through WeVibe's own aligned pipeline as a private corpus — not a bolted-on engine — which doubles as the on-ramp to contribution. WeVibe commits to a stable personal-memory provider interface with one packaged default and an opt-in bring-your-own engine for power users; the personal store is local scratch (exit = re-index), explicitly outside the chain-rebuildable contract.
-
-### 1.5 The Curator Workbench
-
-WeVibe is a curator workbench, not an autonomous ranking machine. The system surfaces signals — retrieval frequency, denials, staleness, query gaps, version drift — and human curators decide the action. This preserves accountable judgment where it belongs: with domain people who understand context.
-
-Core workflows remain practical and hands-on: review pending memories (approve/reject/edit), author memories directly, package memories into reusable skills, identify coverage gaps, and retire stale entries before they mislead downstream users.
-
-This curation loop serves both halves of the network. It protects recall quality (the memory that powers the next coding session), and it protects the integrity of the provenance layer by ensuring attributed memories actually deserve the trust their attribution implies.
-
-### 1.6 The Plugin Gate
-
-Every memory passes through human eyes before it enters an agent's context. This is the product invariant.
-
-The plugin is installed in the developer's coding environment (OpenCode, Claude Code, Cursor, Cline, and similar tools). During a coding session, the plugin harvests local session signals and auto-queries organizational memory through the hub retrieval path; candidate memories are decrypted locally, scanned by wevibe-guard, and presented in an approval UI:
-
-```
-┌──────────────────────────────────────────┐
-│ Memory Injection Request                 │
-│                                          │
-│ "Redis cluster-node-timeout must be      │
-│  set to 15000ms when running behind      │
-│  AWS NLB with cross-AZ failover..."      │
-│                                          │
-│ Contributor: wevibe1x7k...f3q2           │
-│ Wallet age:  8 months                    │
-│ Rep score:   347 (Tier 3)                │
-│ Serves:      214 across 12 orgs          │
-│ Domain:      redis, kubernetes, aws      │
-│                                          │
-│ Detections: [url: aws.amazon.com]        │
-│                                          │
-│ [✓ Accept] [✗ Deny] [⊘ Block] [⚑ Report] │
-└──────────────────────────────────────────┘
-```
-
-**Accept:** The memory is injected into agent context. Serve attribution is queued to chain aggregates (contributor + org) for public profile signals. No per-serve payout is implied by this action.
-
-**Deny:** The memory is blocked for this session/context only. Deny is a neutral context signal — "not what I need right now" — not a corpus down-vote; no denial event is emitted to the chain.
-
-**Block:** The memory enters the consumer's permanent personal blacklist AND emits a global corpus denial signal — the load-bearing negative-signal path that feeds Earned-Trust decay (§5.8).
-
-**Report:** The memory is reported on-chain — recorded against the contributor with the reporter's wallet (`is_reported` / `was_reported`) — and enters the org's accountability path (§5.5–5.7). The memory keeps serving until the report is resolved; the reporter can additionally Block it to drop it from their own recall. Reports are the high-friction accountability primitive (wallet-gated, gas-paid); denials are the low-friction ranking signal.
-
-**No plugin installed = no memory injection path.** The MCP server has no direct route to force memory into the agent context without the plugin frontend.
-
-**Why not MCP elicitation?** Elicitation is useful in theory, but inconsistent across clients and weak as a hard-interrupt safety surface. The plugin provides deterministic interruption, clear modal UX, and explicit confirmation.
-
-**Injection is per session, not per turn.** Recall is queried on each user prompt, but a recalled memory is injected into the agent's context **once per coding session** (keyed to the session identifier), not re-pushed on every model turn — the plugin tracks what it has already surfaced in the session, and a memory's serve receipt is recorded once per session. A recall/inject governor (relevance floor + surface budget) keeps injected volume small.
-
-### 1.7 Protocol, Not Platform
-
-WeVibe is a protocol with open, auditable data surfaces — not a single closed SaaS product. The chain, hub, local client, and plugin each do one narrow job well.
-
-**What the protocol provides:**
-
-1. **On-chain encrypted storage + provenance.** Memories are committed as encrypted blobs with attribution metadata.
-2. **Human-gated delivery.** The plugin is the mandatory approval path before any memory enters agent context.
-3. **Public attribution.** Contribution and serve aggregates power the provenance and reputation surfaces.
-4. **Domain-expert governance.** Leaders and reviewers curate memory quality inside each org collection.
-5. **Suppression-proof accountability.** Consumer reports and public escalation broadcast directly to chain; no WeVibe infrastructure sits between a reporter and the record (§5.5).
-6. **Coordination layer.** wevibe-hub runs hosted coordination, accounting, and retrieval workflows; it is never a plaintext memory oracle.
-7. **Local retrieval edge + sanitization.** Decryption, guardrails, and injection run close to the user.
-8. **Context injection format.** Approved memories are packaged for direct agent context use.
-
-**Trust boundaries.** The chain is trusted for ordering and integrity, not for plaintext confidentiality. Plaintext handling stays local. The hub handles control-plane workflows. Validators and public observers see encrypted blobs and state metadata, never raw memory content.
-
-**Exit guarantees.** The enforceable form of "owned by no one" is the four guarantees of §1.3: no unilateral READ, WITHHOLD, REWRITE, or KILL by any party, including WeVibe itself. The chain is the only durable authority; every other component must be disposable and reconstructible from chain state plus member-held keys. Every accountability action must be broadcastable by its principal without anyone's permission.
+*Table 1. The four roles. The developer is the protagonist; the organization is the container.*
 
 ---
-## 2. System Architecture
 
-### 2.1 Entities
+## 2. Design Philosophy
 
-Let **L** denote the set of leaders, **O** the set of organizations, **D** the set of reviewers, **C** the set of contributing members, and **R** the set of read-only members. Each organization o ∈ O has a leader l(o) ∈ L who controls membership and configuration.
+### 2.1 The Problem
 
-Each participant holds an Ed25519 keypair (with associated X25519 key for encryption) that serves as their protocol identity. Contributor pub keys are on-chain — serve receipts and reputation aggregates are tied to these keys.
+Shared agent memory becomes valuable only when it crosses trust boundaries. A memory you did not personally witness is an untrusted write from a stranger. It is usable only if six questions can be answered: **authenticity, correctness, safety, confidentiality, permanence, and sovereignty.**
 
-### 2.2 Role Hierarchy
+Developers solve hard problems with agents every day, yet sessions repeatedly reset. Version-exact fixes and negative knowledge are rediscovered, repaid for, and lost in private transcripts.
 
-| Role | Permissions | Appointed By |
-|------|------------|-------------|
-| Leader | Full org control, roster management, epoch rotation, key custody, reviewer appointment, keyword taxonomy management, slot/rent/revenue management | Self (slot acquisition) |
-| Reviewer | Review pending memories, approve/deny, decrypt pending submissions via SK_mod(e) | Leader |
-| Member | Submit memories (within per-epoch bandwidth caps), retrieve approved content, view own pending submissions | Leader (via invitation) |
+This is most visible on local or smaller models: they generate code, but they do not carry a stack's lived edge cases by default. The scarce input is verified memory with provenance, not more generic text.
 
-All roles require epoch-specific encryption keys for content access. The leader distributes these keys to approved members through sealed envelope key exchange (§3.4).
+Developer channels are now saturated with plausible AI-generated content that misses decisive details. Provenance — who wrote it, who curated it, and under what accountability path — becomes the scarce input.
 
-### 2.3 Organization Lifecycle
+Prior shared-knowledge systems lived in company databases with kill switches. Knowledge that should outlive its platform needs infrastructure that cannot be unilaterally withdrawn.
 
-**Creation.** Org capacity is a scarce, capped set of registry-allocated **slots** (hard cap, governance-set: 32 alpha / 320 testnet / 3200 mainnet). The leader acquires a slot — ascending-price primary allocation while the cap fills; descending (Dutch) resale re-homes a freed slot — and signs `MsgRegisterOrg` from their **own wallet** (the hub never signs it). The acquisition payment is split 50/50: half is burned and half capitalizes the org's own on-chain account. The `org_id` is the permanent slot identifier, independent of the leader — it survives leadership transfer and resale. The leader generates the master key K_master, derives the initial epoch keys (epoch 0), and generates the initial moderation keypair SK_mod(0)/PK_mod(0). A 24-word BIP39 recovery phrase is derived from K_master and displayed once.
+Cross-run agreement is expensive and repeatedly repurchased; verified shared memory amortizes that cost across the network.
 
-**First-run detection.** When the MCP plugin/server starts and discovers no org membership, it surfaces an actionable message to the agent, prompting guided setup.
+And a shared corpus that only grows is not a corpus. Knowledge goes stale, and some of it was wrong when it was written. A network that admits strangers' contributions needs a principled answer to what leaves, not only to what enters.
 
-**Operation.** Members join through leader invitation. Once approved, the leader issues sealed key envelopes containing the epoch keys to the new member. For reviewers and leaders, the envelope also includes SK_mod(e) for the current epoch.
+### 2.2 The Six Questions of Shared-Memory Trust
 
-**Contributor onboarding (wallet-free).** A contributor creates an account in seconds with a **passkey** (Face ID / fingerprint) — no wallet, no seed phrase. They install the plugin, connect the MCP server, and request to join the org; once a leader approves, they contribute and recall on that passkey identity alone (the hub keys members by pubkey; a wallet address is optional and attached only later). Contribution is explicit and dashboard-driven: open `/sessions` → select a session → click **"Extract Memories"** (client-side extraction with the contributor's selected model — local or session-matched cloud; returns review candidates — does NOT submit) → review memories → choose per-memory org destination → click **"Submit"**. Contribution has two explicit consent points, and nothing reaches the org/hub before Submit: **Extract** sends the session transcript to the contributor's chosen extraction provider (on-machine when local is selected; to the cloud provider at Extract time otherwise), and **Submit** sends the encrypted memory to the org. Neither is automatic. A Cosmos wallet is an optional later upgrade, needed only to **claim accrued VIBE rewards** or pay a mainnet per-memory fee; rewards accrue to a claim-later balance until then. (The org **leader**, by contrast, does need a wallet at creation — to acquire and bond the org slot.)
+The rest of this specification is structured as explicit answers to the six trust questions:
 
-**Key rotation (epoch advancement).** When a member is removed, the org enters `rotation_pending` state:
+1. **Authenticity** — is this really from who it claims? → contributor signatures + wallet identity; the contributor-signed anchor (§7.4) and the provenance/two-key model (§8). The remaining gap — proving the *session* itself — is stated openly in §8.11.
+2. **Correctness** — is it right? → accountable human curation by the organization leader (§7); goal-sealed trajectory verification where the work admits an executable check (§2.7, §8.12); and, after the fact, outcome evidence: what happened in the sessions that used it (§7.7, §7.8). Human judgment admits it; recorded outcomes decide whether it stays.
+3. **Safety** — will it harm my agent? → local wevibe-guard sanitization plus a mandatory human injection gate (§4.7, §2.5 / §5.2).
+4. **Confidentiality** — who can read it? → Umbral proxy re-encryption; the hub cannot decrypt stored ciphertext, with the semantic-shadow boundary stated openly (§4.5).
+5. **Permanence** — will it survive? → approved memories are encrypted chain state replicated by validators (§3.2 / §9.1). Nothing is ever deleted; standing decides visibility, not existence (§7.7).
+6. **Sovereignty** — can any single party read, withhold, rewrite, or kill it? → the Four Exit Guarantees; the chain is the durable authority and every other component is disposable (§2.3, §11).
 
-1. **Removal triggers `rotation_pending`.** The chain marks the org as pending rotation. The removed member's envelope is deleted.
-2. **New submissions are buffered.** Contributors can still submit, but submissions enter a hub-side rotation buffer — not admitted to the chain, not indexed in hub retrieval, not assigned a final epoch.
-3. **Leader completes rotation.** The leader derives new epoch keys from K_master via HKDF, generates a new moderation keypair SK_mod(e+1)/PK_mod(e+1), and re-seals envelopes for all remaining members.
-4. **Buffer finalizes.** After rotation completes, buffered submissions are released to the chain under the new epoch.
-5. **Grace period escalation.** If rotation is not completed within a 72-hour window, the org's submission bandwidth is suspended until rotation completes.
+**Landscape: memory vs. shared memory you can trust.** Most shipping "memory" systems are personal or single-organization stores; useful inside one trust domain, but they do not address the requirements that appear when memory is shared across strangers — especially provenance/authenticity, a human gate before injection, and any mechanism for retiring knowledge that turned out to be wrong. The scorecard below is factual, drawn from public product documentation.
 
-**Revocation semantics.** Epoch rotation provides forward secrecy only. Removed members retain previously-distributed epoch keys and can decrypt content from their membership period.
+| System | Auth | Correct | Safety | Confid | Perm | Sovereign | Human-gate | Retirement |
+|---|---|---|---|---|---|---|---|---|
+| ChatGPT Memory (OpenAI) [16] | Not addressed | Partial | Not addressed | Not addressed (host-readable) | Not addressed | Not addressed | Auto-inject (no gate) | User deletion only |
+| Claude Memory + Projects (Anthropic) [17] | Not addressed | Partial | Not addressed | Not addressed (host-readable) | Not addressed | Not addressed | Auto-inject (no gate) | User deletion only |
+| Gemini Personal Intelligence (Google) [18] | Not addressed | Partial | Not addressed | Not addressed (host-readable) | Not addressed | Not addressed | Auto-inject (no gate) | User deletion only |
+| GitHub Copilot Memory [19] | Not addressed | Partial | Partial | Not addressed (host-readable) | Not addressed | Not addressed | Auto-inject (no gate) | User deletion only |
+| Cursor / Windsurf / Cline / Roo memory-bank [20] | Not addressed | Not addressed | Not addressed | User-edits-own-only (local files) | Partial | Partial | User-edits-own-only | Manual file edit |
+| Mem0 [21] | Not addressed | Partial | Not addressed | Not addressed (host-readable, self-hostable) | Partial | Not addressed | Auto-inject, developer-configurable | Developer-configured expiry |
+| Letta / MemGPT [22] | Not addressed | Not addressed | Not addressed | Not addressed (host-readable, self-hostable) | Partial (self-host) | Not addressed | Auto-inject (no gate) | Context-eviction heuristics |
+| Zep / Graphiti [23] | Not addressed | Partial | Not addressed | Not addressed (host-readable) | Partial | Not addressed | Auto-inject (no gate) | Temporal invalidation |
+| LangMem / LangGraph memory [24] | Not addressed | Partial | Not addressed | Not addressed (host-readable, pluggable storage) | Partial | Not addressed | Auto-inject or retrieval-tool | Developer-configured |
+| RAG-over-wiki (Notion/Confluence + vector DB) [25] | Not addressed | Not addressed | Not addressed | Not addressed (host-readable) | Not addressed | Not addressed | Retrieval-only | Source-document edit |
+| Recall Network [26] | Solved (on-chain signed actions) | Partial (staking/reputation curation) | Unknown | Not addressed (public on-chain) | Solved (on-chain, replicated) | Partial | Auto-inject (no human gate) | Not addressed |
+| Ceramic / ComposeDB [27] | Solved (DID-signed streams) | Not addressed | Not addressed | Not addressed (streams broadly readable) | Solved (decentralized) | Partial | Not addressed (data layer) | Stream update only |
+| Arweave + AO [28] | Not addressed | Not addressed | Not addressed | Not addressed (public/permanent by default) | Solved (endowment model) | Partial | Not addressed (storage layer) | None (permanent by design) |
+| GAIA / GaiaNet [29] | Partial (node = owner-controlled) | Not addressed | Not addressed | Partial (single-owner node) | Partial (node-dependent) | Partial | Not addressed (single-node retrieval) | Not addressed |
 
-**Membership state consistency (chain-first, watcher-mirrored).** All consequential membership transitions — add member, remove member, transfer leadership, close org — are **chain-authoritative**: the chain `x/org` handlers enforce them (signer must equal the org's registered leader wallet; role validation; the leader cannot be removed, only transferred; `MsgTransferLeadership` carries the mandatory `new_leader_wallet` and requires the new leader to already be a member). The hub holds **no optimistic membership writes**: a leader's "accept join request" is an *intent* (`join_requests.status = 'confirming'`) that does nothing until the chain `MsgAddMember` confirms; the hub's chain watcher then promotes the request to a member (idempotently, keyed on the chain event), mirrors transfer/close, and on member removal performs the full crypto revocation in the watcher (envelope delete + Umbral kfrag delete + rotation-pending) — this revokes future decryption and serving; plaintext already served remains permanently disclosed. If the wallet transaction is cancelled, the dashboard reverts the intent (`confirming → pending`) so no phantom half-member is left. A conservative **reconcile sweep** (60 s) heals role / `chain_confirmed` drift against the chain's member set and reverts stale `confirming` requests (>10 min), logging — never auto-deactivating — any divergence. This makes the chain the single source of truth and the hub a strictly derived mirror.
+*Table 19. Landscape as of July 2026; scored from public product documentation (see §12). Axis values are reported facts, not editorial ranking.*
 
-### 2.4 The Three Software Pieces
+The structural result is stable across categories: established systems are single-trust-domain. Either one vendor holds readable plaintext, or "self-hosting" relocates the single trusted reader to one operator — so "sharing" is relocated centralization, not decentralization. Team/workspace sharing is not admission of a stranger's contribution with independent verification. Decentralized efforts have advanced authenticity and permanence, but not the safety problem of stranger-contributed plausible-but-wrong or malicious memory. Every system above with an injection step auto-injects: none places a human between a stranger's contributed memory and another party's agent context — the No-Blind-Injection requirement this paper treats as non-negotiable.
 
-WeVibe's architecture has three software pieces: **wevibe-chain**, **wevibe-hub**, and the **MCP server + plugin**.
+And on the final axis, the pattern is starker still. Where retirement exists at all it is either the owner deleting their own item, a developer-configured expiry, or a heuristic about context size. No system in this landscape retires a shared memory on the evidence of whether it worked for the people who used it — because no system in this landscape has that evidence, or a place to put it that its operator cannot edit.
 
-**wevibe-chain (source of truth):**
-Cosmos SDK + CometBFT sovereign L1 appchain. Stores encrypted memory blobs, provenance/attribution, org state, serve receipts, and economic state. Validators maintain consensus and replicate state. They never see plaintext memory content.
+### 2.3 The Inversion
 
-**wevibe-hub (`wevibe-server`, coordination + retrieval plane):**
-Runs coordination and accounting workflows, and serves the Qdrant-backed retrieval path. The hub is deliberately disposable: everything it holds is derived from chain state plus member-held keys, and it can be rebuilt or replaced without loss. It is never a plaintext memory oracle.
+Two decades of file-sharing networks proved a property that no legal or infrastructural pressure has reversed: when content is replicated across many independent machines and the index is owned by no one, distribution cannot be stopped. That is exactly the property durable knowledge sharing needs — and exactly what no knowledge platform has ever had.
 
-**MCP server + plugin (local safety + approval + injection):**
-Platform-specific plugin gates register tools in the agent and call a local MCP server. This local path enforces guard/sanitization, presents the human approval UX, and injects approved context into the agent. It mediates access to hub retrieval and chain serve receipts.
+But that lineage carried two fatal absences. It moved content *without the consent of its creators*, and it *stripped provenance* — the one thing that makes technical knowledge trustworthy. WeVibe is the inversion: keep the unstoppability, and restore consent and attribution.
 
-### 2.5 Tool Surface
+- **Consent is structural.** Nothing leaves a contributor's machine without two explicit actions — Extract, then Submit (§6.4). Sessions stay local by default. *(Narrowed: this holds for the local/P1 path and for all plaintext; but a closed-weight P2 `PROVIDER_WITNESSED` session and remote extraction route transcript slices to the user-chosen provider, and the P2 blind witness learns encrypted-traffic metadata — size, turn timing/count, provider endpoint/routing, session shape — never plaintext. This must be disclosed plainly; see §8.11.)*
+- **Provenance is the payload.** Every memory carries contributor signature, organization curation, and its own evidence history.
+- **Unstoppability is enforced as four exit guarantees**, defined below.
 
-The plugin registers operational tools in the coding agent. Recall query dispatch is automatic in the plugin path (no agent recall tool call), and contribution submission happens in the dashboard flow (no agent contribution tool call). The separation:
+> **The Four Exit Guarantees**
+>
+> No single party — including WeVibe-the-company, any hub operator, or any organization leader — may hold the unilateral ability to:
+>
+> 1. **READ** a member's memory plaintext from the outside;
+> 2. **WITHHOLD** the network's function from a principal acting within their rights;
+> 3. **REWRITE** the historical record; or
+> 4. **KILL** an organization's knowledge or a contributor's standing by withdrawing infrastructure.
+>
+> The chain is the only durable authority; every other component must be disposable and reconstructible from chain state plus member-held keys.
 
-**Plugin-registered tools (visible to the agent):**
+### 2.4 The Organization Model
+
+Organizations are domain-expert-run memory collections. Leaders define standards, manage membership, and publish with sole chain signature authority.
+
+| Attribute | Description |
+|---|---|
+| Membership roster | Managed by the leader. |
+| Role hierarchy | Leader, Reviewer, Member. |
+| Commitment standards | What counts as high-quality memory in this organization. |
+| Domain focus | The organization's subject and coverage map. |
+| Operating policies | Contribution/review cadence and recall access. |
+
+*Table 2. An organization is a collaboration container with its own standards.*
+
+Public plaintext keywords are discovery labels (`redis`, `solana`, `django`) and are intentionally non-secret metadata (§4.6). They are labels and retrieval bonus terms only. They carry no weight in consensus and no role in whether a memory survives.
+
+> **Personal memory vs shared organization memory.** Shared organization memory is the curated, encrypted, chain-anchored corpus. Personal memory is a bounded local pull layer and sits outside the chain-rebuildable contract.
+
+### 2.5 Human-in-the-Loop: The Curator Workbench and the Plugin Gate
+
+WeVibe is a curator workbench, not an autonomous ranking machine. Curators process retrieval frequency, denials, staleness, and drift signals; they decide what enters and stays in the corpus.
+
+On the consumer side, one invariant governs everything: **every memory passes through human eyes before it enters an agent's context.**
+
+During a coding session the plugin harvests local signals, auto-queries organization memory through the hub, decrypts candidates locally, scans them with wevibe-guard, and presents an approval gate:
+
+**Figure 2 — The memory injection request.**
+
+> **Memory Injection Request**
+>
+> *"Redis cluster-node-timeout must be set to 15000ms when running behind AWS NLB with cross-AZ failover…"*
+>
+> - Contributor : `wevibe1x7k…f3q2`
+> - Wallet age : 8 months
+> - Rep score : 347 (Tier 3)
+> - Serves : 214 across 12 orgs
+> - Domain : redis, kubernetes, aws
+> - Verification : `T2 — test-backed`
+>
+> Detections: `[url: aws.amazon.com]`
+>
+> **✓ Accept** · **✗ Deny** · **⊘ Block** · **⚑ Report**
+
+*Figure 2. The plugin approval gate. The consumer sees the memory, the security flags, and who wrote it before deciding. The Verification row renders only for memories carrying tier T1 or above (§8.12).*
+
+| Button | Effect | Signal emitted |
+|---|---|---|
+| **Accept** | Memory is injected into agent context. A serve event is signed and queued to the chain. | A public, content-free serve event. No per-serve payout. A serve alone is not evidence that the memory helped (§7.8). |
+| **Deny** | Memory is blocked for this session/context only. | None. A neutral "not what I need right now" signal — not a corpus down-vote; no chain event. |
+| **Block** | Memory enters the consumer's permanent personal blacklist. | A signed block event: the corpus-level negative judgment, and the only one a human issues deliberately. |
+| **Report** | Memory is reported on-chain against the contributor, with the reporter's wallet, and enters the organization's accountability path (§7.5–§7.7). The memory keeps serving until the report resolves. | A wallet-gated, gas-paid on-chain accountability event. |
+
+*Table 3. Reports are the high-friction accountability primitive; Block is the low-friction negative judgment. The Deny/Block split is load-bearing: Deny says nothing about quality. Neither button carries the main correctness signal — that is the outcome of the work itself (§7.8).*
+
+Two properties make the gate trustworthy. **No plugin installed means no memory injection path** — the MCP server has no route to force memory into an agent's context without the plugin front end. And injection is **once at acceptance, not per turn**: recall is queried on each user prompt, but an accepted memory is placed once, at a stable early position immediately after the system instructions, within a fixed token budget over a hub-ranked top-K set, and preserved verbatim across context compaction rather than summarized through it. A relevance floor and a surface budget keep the injected volume small; returning nothing is a healthy, designed outcome.
+
+### 2.6 Protocol, Not Platform
+
+WeVibe is a protocol with open, auditable surfaces. The chain, hub, local client, and plugin each perform one narrow role.
+
+| # | Capability | Description |
+|---|---|---|
+| 1 | On-chain encrypted storage + provenance | Memories are committed as encrypted blobs with attribution metadata. |
+| 2 | Human-gated delivery | The plugin is the mandatory approval path before any memory enters agent context. |
+| 3 | A public evidence log | Serves, blocks, outcomes and related observations are recorded as immutable, content-free, consumer-signed events (§9.5). |
+| 4 | Open standing computation | A memory's standing is a deterministic function of the public evidence log and a published, version-anchored policy — recomputable by anyone (§7.7). |
+| 5 | Domain-expert governance | Leaders and reviewers curate memory quality inside each organization. |
+| 6 | Suppression-proof accountability | Consumer reports and public escalation broadcast directly to the chain; no WeVibe infrastructure sits between a reporter and the record (§7.5). |
+| 7 | Coordination layer | wevibe-hub runs hosted coordination, accounting, and retrieval; it is never a plaintext memory oracle and never an authority on standing. |
+| 8 | Local retrieval edge + sanitization | Decryption, guardrails, and injection run close to the user. |
+
+*Table 4. Eight protocol capabilities, split across four cooperating components.*
+
+### 2.7 Verification by Pre-Commitment: The Verification Goal
+
+Human review and reputation are judgment. Judgment scales poorly across trust boundaries, and machine judgment fails in a specific, measured way: in judge-gated workflow-memory systems [35], roughly half of certified inductions have been found to originate from failed trajectories [34]. In a trustless network the failure is structural, not statistical — the judge runs on the contributor's machine, so a verdict from the contributor's own model is self-attestation with extra steps. WeVibe therefore assigns the extraction LLM a narrow role: it drafts and annotates candidate memories; it never gates them.
+
+Where the work admits an executable definition of "done," WeVibe replaces the judge with a fact, established in three moves:
+
+1. **Seal the target before the work.** At session start the plugin seals the goal, an executable test predicate that defines completion, and a hash of the starting working tree — signed and timestamped before the outcome exists.
+2. **Record the trajectory as a hash chain.** Working-tree states are hashed and chained across sessions until the sealed predicate passes.
+3. **Let the predicate speak.** The sealed test's exit status — not a model's opinion, not the contributor's claim — determines whether the goal was met.
+
+A target fixed before the answer existed cannot be retrofitted to whatever was produced. And fabrication buys nothing: to forge a passing receipt, a contributor must make the pre-sealed predicate actually pass — which is the work itself. Verification cost collapses onto honest cost.
+
+> In a trustless setting, the only thing a stranger can verify later is something you locked in before you knew the answer.
+
+> **The Verification Goal.** For every memory whose claim can be checked by execution, WeVibe's goal is to carry a receipt a stranger can check: sealed before the outcome existed, graded openly by tier, and used only as a label — never as a contribution gate. Facts replace judgment wherever a fact can exist; judgment — leader review, the human gate, reputation — covers everything facts cannot reach.
+
+The mechanism, its receipts, its multi-session semantics, and its honest boundaries are specified in §8.12.
+
+### 2.8 Evidence, Not Verdicts
+
+The same discipline applies to what happens to a memory after it is committed.
+
+A shared corpus needs an answer to decay: some memories are wrong, some go stale, and a network that only accumulates becomes a landfill with provenance. The obvious design is to put a trust score on the chain and a formula in consensus that moves it. WeVibe deliberately does not do this, for three reasons.
+
+**A number in consensus is a verdict nobody can revisit.** A trust score committed on-chain is a judgment about a memory rendered by a formula that, once in consensus, can only be changed by governance. If the formula is wrong — and formulas about human behaviour usually are, at first — the error is not a bug to fix but an unamendable fact about everyone's corpus.
+
+**Consensus should record what happened, not what it means.** A serve is an observation. A block is an observation. A test suite going from red to green after a memory was injected is an observation. Whether those observations add up to "this memory is trustworthy" is an interpretation, and interpretations improve. Separating the two lets the record be permanent and the interpretation be revisable.
+
+**Judgment placed at the edge can be checked; judgment placed in a service cannot.** If a coordination service simply told clients what a memory's standing was, that service would be trusted. Instead standing is a deterministic pure function of a public log and a published policy, so any client, auditor or replacement service recomputes it independently and catches a lying one.
+
+> **Evidence, not verdicts.** The chain stores observations with provenance, never conclusions. Standing — whether a memory should surface, and where — is computed from that log by an open, versioned policy whose hash is anchored on-chain. The record is immutable; the interpretation is improvable; neither is owned.
+
+The consequences run through the rest of this document. Nothing is deleted, so KILL has nothing to grip (§7.7). No standing is written, so REWRITE has nothing to alter (§10.7). Anyone can recompute, so no operator can quietly decide what a stranger's knowledge is worth (§10.9). And because the policy is code rather than consensus, the network can get better at judging memory without ever asking anyone to trust a new judge.
+
+---
+
+## 3. System Architecture
+
+### 3.1 Entities and Roles
+
+Let **L** be leaders, **O** organizations, **D** reviewers, **C** contributing members, and **R** read-only members. Each organization *o* ∈ O has a leader *l(o)* ∈ L who controls membership and configuration.
+
+Participants hold Ed25519 identity keys plus X25519 encryption keys. Contributor public keys are on-chain; evidence events and reputation aggregates are keyed to those identities.
+
+| Role | Permissions | Appointed by |
+|---|---|---|
+| **Leader** | Full organization control: roster management, epoch rotation, key custody, reviewer appointment, label-taxonomy management, slot/rent/revenue management, standing-policy version selection (§10.9). | Self (slot acquisition). |
+| **Reviewer** | Review pending memories; approve/deny; decrypt pending submissions via SK_mod(e). | Leader. |
+| **Member** | Submit memories (within per-epoch bandwidth caps); retrieve approved content; view own pending submissions. | Leader (via invitation). |
+
+*Table 5. All roles require epoch-specific encryption keys for content access; the leader distributes these through sealed envelope key exchange (Appendix A).*
+
+### 3.2 The Three Software Pieces
+
+**Diagram 1 — System components and trust.**
+
+- **wevibe-chain** — *Source of truth.* Sees ciphertext, never plaintext. Holds encrypted memories, contributor anchors, and the evidence log.
+- **wevibe-hub** — *Coordination + retrieval.* Disposable. Never a plaintext oracle, and never an authority on standing — it computes standing the same way any other party can.
+- **MCP server + plugin** (inside the Local machine boundary) — *Safety + approval + injection.* The only place plaintext lives at recall.
+- Arrows: plugin ⇄ hub, "encrypted candidates + query vectors"; hub ⇄ chain, "derived from chain state"; plugin ⇄ chain, "signed evidence events / RPC."
+
+*Diagram 1. Three software pieces over one chain. Plaintext is confined to the local machine; authority is confined to the chain.*
+
+### 3.3 Organization Lifecycle
+
+**Creation.** The leader acquires a governance-capped slot (hard cap: 32 alpha / 320 testnet / 3200 mainnet), signs `MsgRegisterOrg` from their own wallet, creates `K_master`, and derives epoch-0 keys and moderation keys.
+
+**Operation.** Members join by leader approval. The leader distributes sealed key envelopes for the current epoch.
+
+**Rotation.** Removing a member sets `rotation_pending` and requires epoch advancement.
+
+| Step | Action |
+|---|---|
+| 1 | **Removal triggers `rotation_pending`.** The chain marks the organization pending rotation; the removed member's envelope is deleted. |
+| 2 | **New submissions are buffered.** Contributors can still submit, but submissions enter a hub-side rotation buffer — not admitted to the chain, not indexed for retrieval, not assigned a final epoch. |
+| 3 | **Leader completes rotation.** The leader derives new epoch keys from K_master via HKDF, generates a new moderation keypair SK_mod(e+1)/PK_mod(e+1), and re-seals envelopes for all remaining members. |
+| 4 | **Buffer finalizes.** After rotation completes, buffered submissions are released to the chain under the new epoch. |
+| 5 | **Grace-period escalation.** If rotation is not completed within 72 hours, the organization's submission bandwidth is suspended until it is. |
+
+*Table 6. Removing a member advances the epoch. Rotation provides forward secrecy only — a removed member retains previously distributed epoch keys and can still decrypt content from their membership period.*
+
+> **Wallet-free contributor onboarding.** A contributor can create an account with a passkey (Face ID / fingerprint), install the plugin, and join an organization without a wallet. Contribution remains explicit and dashboard-driven with two consent gates: **Extract** then **Submit**. Evidence events are signed with the member's per-organization key and carried under the organization feegrant, so a consumer never needs a wallet or gas to be counted. A wallet is optional later for rewards and mainnet fees; the leader still requires a wallet to register and hold the organization slot.
+
+Chain state is authoritative for membership transitions; the hub mirrors chain events.
+
+### 3.4 Tool Surface
+
+The plugin registers operational tools in the coding agent. Recall is automatic in the plugin path (no agent recall tool call); contribution submission stays in dashboard flows.
 
 | Tool | Purpose |
-|------|---------|
-| `setup_org` | First-run organization bootstrap when the local stack has no org membership. Guides org creation/join flow and local setup handoff. |
-| `wevibe_status` | Show org membership and runtime status so the user can verify local setup and connectivity. |
-| Consumer-settings tools | Configure the 2×2 consumer matrix: content filter `[Implementations + DNDs]` or `[DNDs only]`, plus injection gate `[Gated approval]` or `[No gated approval]`. Default is `[Implementations + DNDs] + [Gated approval]`. |
+|---|---|
+| `setup_org` | First-run organization bootstrap when the local stack has no membership. Guides the create/join flow and local setup handoff. |
+| `wevibe_status` | Show organization membership and runtime status so the user can verify local setup and connectivity. |
+| Consumer-settings tools | Configure the content filter: `[Implementations + DNDs]` or `[DNDs only]`. Default: `[Implementations + DNDs]`. |
 
-**MCP server backend (not directly callable by the agent):**
-
-The MCP server handles local recall mechanics: query construction from local session signals, local embedding/decryption, guard scanning, and packaging candidate data for the plugin gate UX. It does not auto-submit contributions; contribution submission is explicit in the dashboard `/sessions` flow.
-
-All administrative operations (org creation, member invitation, moderation, epoch rotation, keyword management, recovery) are handled by the `wevibe-admin` CLI — shipped as a command within the `wevibe-mcp` package — and hub control-plane workflows.
-
-### 2.6 Product Handbook Map
-
-WeVibe is a family of interoperable services. This general whitepaper captures the shared threat model, encryption design, and contributor experience. Deep dives live alongside the source for each product:
-
-- `wevibe-chain/docs/WHITEPAPER.md` — consensus layer economics, lifecycle pressure, and keeper architecture.
-- `wevibe-docs/WHITEPAPER.md` — client stack (SDK, MCP server, guard, protocol assets) and plugin UX.
-- `wevibe-server/**/docs/WHITEPAPER.md` — operational surfaces (Hub, Dashboard, Infra) and their deployment models.
-
-Each directory also contains accompanying PDP and topology documents. Use this handbook for cross-cutting concerns; jump to the per-product sets for implementation specifics.
+*Table 7. Agent-visible tools. The MCP server backend handles recall mechanics — query construction, local embedding/decryption, guard scanning, and packaging candidates for the plugin gate — and is not directly callable by the agent. It never auto-submits contributions.*
 
 ---
 
-## 3. Cryptographic Architecture
+## 4. Cryptographic Architecture
 
-### 3.1 Threat Model
+### 4.1 Threat Model
 
-The system protects against four adversary classes:
+| Adversary | What they can see | What they must not be able to do |
+|---|---|---|
+| **Chain validators** | Ciphertext, organization IDs, contributor public keys, evidence events. | Read memory content. |
+| **Unauthorized external observers** | Public chain state (no epoch keys). | Decrypt content. |
+| **Removed members** | Content from their membership period (they held epoch keys). | Decrypt content created after removal (forward secrecy). |
+| **Memory poisoning via recalled content** | — (a malicious member submits an indirect prompt injection that passes review). | Reach an agent's context unseen. The human gate is the final defense: the reviewer and consumer see every memory, plus the contributor's reputation and wallet age. |
+| **Receipt forger / predicate gamer** | Their own seals, chains, and receipts (produced on hardware they control). | Pass a fabricated or hollow receipt off as strong verification. Tier semantics cap the claim (§8.12); a forged receipt against a sealed predicate becomes a provable, reportable lie on reveal-and-replay. |
+| **Evidence forger** | Their own machine's signing keys and local session state. | Manufacture standing for their own memories. Events are signed per-consumer and deduplicated on-chain; self-authored uses are discounted (§8.7); outcome events are welded to session identity and evidence references (§7.8). |
 
-**Chain validators** who store encrypted blobs, process transactions, and replicate state. They must not be able to read memory content. They see ciphertext, org IDs, contributor pub keys, and serve metadata.
+*Table 8. The six adversary classes the system defends against.*
 
-**Unauthorized external observers** who can read chain state (the chain is public) but do not hold epoch keys. They must not be able to decrypt content.
+> **Out of scope (explicitly not defended).** The system does **not** protect against: a compromised active member who leaks epoch keys or decrypted content; metadata inference from on-chain patterns (organization sizes, submission frequency, evidence patterns); compromised reviewer endpoints; or semantic payloads encoded in natural-language prose. It also does not prevent fabrication of T1–T2 verification receipts on contributor hardware, nor trivially weak sealed predicates; both are bounded by label semantics, curation, and dispute-path replay rather than cryptography (§8.12). Evidence events are content-free but not pattern-free: an observer can see that some pseudonymous member used and did or did not succeed with a given memory, and dense evidence streams are a linkage surface (§9.5).
 
-**Removed members** who held epoch keys during their membership. They must not be able to decrypt content created after their removal (forward secrecy).
+### 4.2 Epoch-Based Key Hierarchy
 
-**Memory poisoning via recalled content.** A malicious org member submits a memory containing an indirect prompt injection that passes human review. The plugin gate is the final defense — the human sees every memory before it enters context, including the contributor's reputation score and wallet age as trust signals.
+Per-epoch keys derive from organization `K_master` via HKDF. The leader derives keys locally and never transmits epoch secret keys to the hub. Full derivation formulas and invariants are in Appendix A (CODE 1).
 
-The system does NOT protect against: a compromised active member who leaks epoch keys or decrypted content; metadata inference from on-chain patterns (org sizes, submission frequency, serve patterns); compromised reviewer endpoints; semantic payload encoding in natural language prose.
+### 4.3 Memory Encryption and Moderation Keys
 
-### 3.2 Epoch-Based Key Hierarchy
+Each memory uses a random per-memory DEK. The DEK is initially sealed to the moderation public key for review, then re-wrapped to the epoch encryption key on approval. Full procedures are in Appendix A (CODE 2 and CODE 3).
 
-Each organization has a master key K_master generated by the leader at org creation. Per-epoch keys are derived via HKDF:
+### 4.4 Key Distribution: Sealed Envelopes
 
-```
-K_enc(e)    = HKDF-SHA256(K_master, info="wevibe-enc-" || epoch_be_bytes)
-K_audit(e)  = HKDF-SHA256(K_master, info="wevibe-audit-" || epoch_be_bytes)
-epoch_sk(e) = HKDF-SHA256(K_master, info="wevibe-umbral-epoch-" || epoch_decimal_ascii)[:32]  → Umbral secret key
-```
+Epoch keys are distributed to members via sealed envelopes (`seal_to_pubkey`), with custody and recovery constraints anchored at the organization level. Full envelope procedure and recovery model are in Appendix A (CODE 4).
 
-**K_enc(e)** wraps Data Encryption Keys (DEKs) for approved memories in epoch e.
-**K_audit(e)** is reserved for audit logging and receipt verification.
-**epoch_sk(e)** is the org's Umbral (PRE) epoch secret key — derived deterministically (distinct `info` namespace) by the **leader, on the leader's own machine**. The leader mints all re-encryption key fragments (kfrags) locally and sends the hub **only** the epoch PUBLIC key (`umbral_pk`) and the finished kfrags; the hub never receives `epoch_sk`. Because `epoch_sk(e)` is re-derivable from K_master on demand, it is never split, distributed, or persisted — backing up K_master (BIP39 recovery phrase) is sufficient.
+### 4.5 Hub Confidentiality: Why the Hub Cannot Decrypt
 
-The 32 HKDF output bytes **ARE the secret key**: they are interpreted directly as a **canonical secp256k1 scalar** (`SecretKey::try_from_be_bytes`), so `umbral_pk = epoch_sk · G`. This matches each member's PRE/receiving key, which is likewise a raw k256 scalar produced by `@noble/secp256k1`, so the two languages on the two sides of the PRE handshake (TS `@noble` ↔ Rust `umbral-pre`) agree byte-for-byte. The derivation is guarded by a permanent noble↔umbral parity test vector; seed-expansion derivations (`SecretKeyFactory::from_secure_randomness`) are prohibited for any key material because they silently produce a non-matching public key.
+A natural objection: if an authorized consumer can retrieve plaintext, surely a captured hub could too. This section states the guarantee narrowly and then states the boundary.
 
-### 3.3 Memory Encryption and Moderation Keys
+**The claim, stated narrowly.** The hub **cannot decrypt** memory content, including under a fully malicious-hub model. This is not a claim that the hub learns nothing.
 
-Each memory is encrypted with a unique DEK (32 random bytes):
+> The hub is a postal sorting office that re-addresses a sealed envelope so a different recipient's key opens it — without ever being able to open it itself.
 
-```
-DEK = random(32)
-ciphertext = AES-256-GCM(DEK, nonce, plaintext_memory)
-wrapped_dek_mod = seal_to_pubkey(DEK, PK_mod(e))
-```
-
-SK_mod(e)/PK_mod(e) is a fresh random X25519 keypair — NOT derived from K_master — preserving trust boundary separation between "general member" and "reviewer."
-
-Upon approval, the reviewer re-wraps the DEK under the epoch encryption key:
-
-```
-wrapped_dek_enc = AES-256-GCM(K_enc(e), nonce, DEK)
-```
-
-The approved memory (ciphertext + wrapped_dek_enc + metadata) is then submitted on-chain by the org.
-
-### 3.4 Key Distribution: Sealed Envelopes
-
-The `seal_to_pubkey` operation:
-1. Generate ephemeral X25519 keypair
-2. ECDH between ephemeral private key and recipient's X25519 public key
-3. Derive symmetric key via HKDF (info: `"wevibe-envelope-v1"`)
-4. Encrypt with AES-256-GCM
-5. Output: `ephemeral_pubkey (32 bytes) || nonce (12 bytes) || ciphertext+tag`
-
-**Custody model invariant.** Each organization's K_master is generated as an independent random value.
-
-**Recovery.** BIP39 24-word recovery phrase. Threshold recovery via Shamir 2-of-3. Encrypted leader vault (`~/.wevibe/vault.enc`) with Argon2id key derivation (t=3, m=64MB, p=4).
-
-### 3.5 Retrieval Architecture
-
-Retrieval is hub-served, with all plaintext handling kept local in the MCP server + plugin path. The hub-side retrieval plane (Qdrant index + ranking) is derived data, rebuildable from chain state plus org keys. The pipeline:
-
-#### Context Profiling (Session Start)
-
-When a coding session starts, the MCP/plugin profiles the environment — dependencies, directory structure, language, framework versions, current file context — and sends that profile as filter context so the hub can pre-filter candidate memories before vector scoring. A developer working in a Python/Django project searches Python/Django memories, not the entire org corpus.
-
-#### Keyword Extraction
-
-Keywords are generated **at the contributor's extraction pass** — in the same client-side call that produces the memory's `implement`/`context`/`dnd`/`stack`, using the contributor's selected extraction model. Extraction fetches the org's current controlled vocabulary and classifies against it: terms already in the vocabulary are **in-vocab (green)**; proposed new terms are **suggested-new (red)**. Each memory gets up to 20 keywords with weights normalized to sum to 1.0; the hub enforces the cap and the sum. The **leader curates at the batch stage** — deleting unwanted keywords (remaining weights re-normalize), and explicitly approving any red term before it commits and joins the vocabulary. This locates the vocabulary-drift gate at "who commits" (the leader), while keyword generation runs with the richest context (the full session) and the contributor's chosen model. Keyword weights are stored as retrieval metadata used during ranking as a **bonus, not a gate**; plaintext keywords remain an accepted, intentional metadata tradeoff (§3.7).
-
-#### Retrieval Representation (situation-centric card; symmetric embedding)
-
-The retrieval vector is **not** an embedding of a keyword bag. Both sides embed a **situation-centric card** with matched `nomic-embed-text` task prefixes: the memory side embeds a **retrieval card** (a deterministic template derived from the memory's `implement`/`context`/`stack`/`dnd`) with the `search_document:` prefix, computed **at moderator approval** (client-side, where plaintext is already decrypted for review — the hub never sees plaintext and there are no contributor-supplied vectors; the vector travels with the approval request, then is indexed into Qdrant at chain commit). The query side embeds a **deterministic session need-card** — harvested from intent, task, language, stack, frameworks, dependencies, error strings, and touched files — with the `search_query:` prefix. The keyword-overlap term is a capped additive boost, never a hard gate.
-
-#### Semantic Embedding
-
-At recall time, the MCP/plugin computes the query embedding locally via Ollama (`nomic-embed-text`) and posts that vector to `wevibe-hub` (`/v1/orgs/{org}/query`). The hub's Qdrant index stores plaintext float32 memory embeddings plus keyword metadata (`cid`, `org`, `keyword_weights`, `lifecycle`, `type`). Qdrant stores no decrypted plaintext memory content and no ciphertext blobs.
-
-#### Atomic Memory Format
-
-Each memory is a single, self-contained technical insight:
-
-- **implement** — the fix itself: specific technical knowledge in 1–2 sentences with exact values
-- **context** — environment, versions, conditions where this applies
-- **dnd** — negative knowledge: what NOT to do and why
-- **stack** — specific technologies involved
-
-#### Retrieval Scoring
-
-```
-keyword_boost = Σ(query_weight_i × memory_weight_i)
-final_score   = vector_score + γ × keyword_boost
-
-Default: γ = 0.1
-```
-
-Vector similarity drives recall (hub-side Qdrant cosine over a configurable recall depth, default 5000). Keywords provide an additive boost (factor γ) to break ties within semantic clusters after context pre-filtering, with a δ-proportional cap bounding the boost's influence.
-
-**Blacklist filtering.** The MCP/plugin excludes locally blacklisted CIDs before approval; a chain-level quarantine flag marks memories with repeated upheld rejections for retrieval-policy exclusion.
-
-#### Candidate Fetch + Local Decryption
-
-Hub retrieval returns memory IDs + metadata + matched keywords. The MCP/plugin then fetches each memory's ciphertext (the on-chain encrypted blob is the source of truth; the hub serves it from a cache plus the Umbral PRE materials), decrypts locally through the Umbral sidecar, runs wevibe-guard + the human gate, and only then injects approved context.
-
-#### Selective Re-ranking
-
-When top-2 scores are within ε=0.20 (contested query), the MCP/plugin **may** re-rank via a separately-configured rerank endpoint (the consumer's own model, reached through the `LlmProvider` abstraction — recall runs in a separate process and does not share the host agent's LLM). The rerank is opportunistic and non-blocking; it is never a hard requirement. Fallback: deterministic twin-suppression, and original order preserved on error.
-
-#### Validation (offline simulation)
-
-The situation-centric retrieval direction was validated offline before product implementation. An offline harness mirroring the extract→embed→rank pipeline (same `nomic-embed-text` model, production ranking logic) measured, on a model-generated synthetic corpus: embedding a situation-centric **retrieval card** instead of a keyword bag raised Recall@1 from **0.38 to 0.95**; the full pipeline — retrieval card + session need-card + boost-not-gate keywords — reached Recall@1 **0.97** / Recall@5 **1.00**. A complementary behavioral test showed that injecting the retrieved memory raised a weaker model's task-correctness by **~0.7 on a 0–3 scale**, capturing ~94% of the perfect-retrieval ceiling, with the pipeline retrieving the correct memory ~96% of the time. These are offline results on a synthetic corpus extracted by a frontier model; they validate the architecture's direction, and production telemetry is the standing measure of deployed performance (the validated figures reflect frontier-extraction card quality).
-
-### 3.6 Side Channel: On-Chain Metadata
-
-With memories stored on-chain and retrieval served by the hub, metadata is observable across two hosted surfaces. On-chain/public observers can see org IDs, contributor pub keys, submission timestamps, memory sizes, keyword terms/weights (plaintext), serve receipt patterns, and reputation scores. In the hub, Qdrant stores embedding vectors plus keyword metadata (`cid`, `org`, `keyword_weights`, `lifecycle`, `type`), while ciphertext is stored in Postgres/chain paths for retrieval.
-
-The privacy boundary is decrypted plaintext: decryption, wevibe-guard sanitization, human approval, and context injection happen locally in the MCP/plugin path. The honest claim is two-part: (1) the hub **cannot decrypt** memory content — plaintext exists only locally (contributor at extraction, reviewer/leader at curation, consumer after the gate); (2) the hub **does hold content-derived data** — clean float32 embeddings (stored-vector noise is disabled) plus plaintext keyword weights, which together are a **lossy semantic shadow** of each memory. Published embedding-inversion research (Morris et al. 2023; Huang et al. ACL 2024) shows approximate content recovery from clean embeddings is realistic. The mitigations are **operational, not cryptographic**: Qdrant API auth, internal-network deployment, per-org collection isolation, signed responses. Encrypted vector search (e.g. IronCore `ironcore-alloy`) is the documented evaluation trigger — formally evaluated when an org requests confidentiality-sensitive hosting or public-testnet launch planning begins, whichever comes first. So: the hub never sees your decrypted memory content, but it is not true that nothing content-derived leaves your machine. The same two-part honesty applies upstream: the extraction pipeline is client-side and nothing reaches the org/hub before Submit, but a contributor-selected cloud extraction model receives the session transcript at Extract time — a visible choice scoped by trust-circle parity.
-
-### 3.7 Metadata Visibility Model
-
-WeVibe orgs are public developer communities, not private enterprises. On-chain metadata is intentionally public — it enables discovery, reputation, and the social graph.
-
-**On-chain (public by design):** Org IDs, org topic tags, contributor pub keys, encrypted memory blobs, plaintext keyword terms/weights (discovery signal — "this org covers Redis"), submission timestamps, memory sizes, epoch boundaries, serve receipts (batched per epoch), reputation aggregates, bandwidth consumption, quarantine state, report flags.
-
-**Local to the MCP/plugin (the hub never sees these):** Decrypted memory plaintext, local wevibe-guard/blacklist state, and session context profiles. (Embedding vectors and keyword-weight metadata live in the hub's Qdrant; the hub stores ciphertext + vectors but never decrypts — see §3.6 and §8.3.)
-
-Plaintext keywords on-chain are a feature, not a leak. They tell developers what an org covers and help with cross-org discovery. Developers who join an org to boost their LLM need to know what domain knowledge it offers. The keywords serve that purpose.
-
-### 3.8 Defense-in-Depth: Memory Sanitization Pipeline
-
-WeVibe's security model focuses on what it can control: the form and content of recalled memory before it reaches the agent. Decryption, sanitization, approval, and injection run locally in the MCP/plugin path. Retrieval remains hub-served (Qdrant vectors + keyword metadata, ciphertext in Postgres/chain), but the hub never sees decrypted plaintext.
-
-#### The Pipeline
-
-**Submission time (before on-chain storage):**
-1. **wevibe-guard scan.** YARA rules for injection patterns, credential detection, exfiltration matching, unicode mathematical injection detection. Advisory: warns but does not block. The human reviewer is the security boundary.
-2. **OCR sanitization.** Text rendered to image via ImageMagick, OCR'd back via Tesseract. Destroys Unicode tricks, zero-width characters, homoglyphs, invisible formatting.
-3. **Encryption.** Memory encrypted with per-memory DEK, DEK sealed to moderation public key.
-4. **Human review.** Reviewer decrypts locally, reads plaintext, steganography scan, approve/deny.
-5. **On-chain submission.** Approved memory (ciphertext + wrapped DEK + metadata) goes on-chain and is mirrored to hub storage for retrieval serving. Org pays the submission cost.
-
-**Recall time (before delivery):**
-6. **Hub candidate query.** MCP/plugin posts the local query vector to hub retrieval and receives memory IDs + metadata + matched keywords.
-7. **Ciphertext fetch + local decryption.** MCP/plugin fetches each candidate's ciphertext and decrypts locally through the Umbral sidecar.
-8. **Blacklist filter.** MCP/plugin checks the local blacklist and chain quarantine flags.
-9. **wevibe-guard scan.** Same scan on decrypted memory at recall time. Catches payloads undetectable when approved (new rules since approval).
-10. **OCR sanitization.** Same format-breaking pipeline.
-11. **Artifact extraction and egress enforcement.** Typed artifact extraction: URLs, bare domains, IPv4 addresses, shell commands, package install commands, config directives. Every network-resolvable token flags.
-12. **Plugin approval gate.** Plugin renders the approval UI with wevibe-guard detection results AND contributor trust signals (pub key, wallet age, rep score, serve count, domain expertise). The user sees the memory, sees the flags, sees who wrote it, and decides.
-13. **Serve receipt.** Each serve/denial entry is signed by the consumer's per-org serve key (ed25519, offline — no wallet, no gas), and the batch transaction is carried by the org serving key under feegrant — the hub is a **carrier, not an attester**. The chain verifies each entry's signature, recomputes the dedup fingerprint itself from `(memory_cid, serve_key_pubkey, epoch)`, rejects unsigned/invalid entries, and counts only verified entries toward trust/attribution/emissions.
-14. **Context injection.** Approved memories formatted as `context:\n{memory content}` and injected into the agent prompt.
-
-#### What This Pipeline Catches
-- YARA-signature prompt injections
-- Credential leakage (AWS keys, API tokens, passwords, connection strings)
-- Unicode steganography (homoglyphs; mathematical-alphanumeric injection, U+1D400-U+1D7FF, 3-char threshold; zero-width and directional-override characters via the OCR format-break)
-- Base64-encoded injections
-- External URL injection (scheme-ful and scheme-less)
-- Bare hostname references (any TLD)
-- IPv4 literal references (with optional port/path)
-- Malicious dependency injection
-- Config directive injection
-- Shell pipe-to-execution attacks
-- Previously-rejected memories (local blacklist + chain quarantine)
-
-#### What This Pipeline Does NOT Catch
-- Semantic payloads encoded in natural language prose. Mitigated by human review and contributor reputation signals.
-- Technically-plausible but subtly wrong recommendations. Mitigated by reviewer domain expertise and contributor rep visibility.
-
-### 3.9 Resolved Architectural Decisions
-
-These decisions are final:
-
-**Individual cross-org reputation is the product surface of provenance.** Serve counts, domain expertise, and rep scores accumulate across all orgs a contributor participates in. A developer's cross-org profile — "47 Redis memories served 214 times across 12 orgs" — is a public credential. No cross-org reputation *rankings/leaderboards* (avoids toxic competition), but aggregate stats are public and encouraged.
-
-**Task-context skills, not difficulty tiers.** Skills organized by task (deployment, testing, error-handling), not by difficulty level.
-
-**Model origin as soft retrieval prior (roadmap).** One soft factor in scoring — never a hard filter or gate: generic conceptual memories from lower-capability models are deprioritized for higher-capability retrievers; highly specific memories take no penalty regardless of origin.
-
-**Documentation seeding for cold-start (roadmap).** New orgs import canonical documentation as seed memories (source: `doc_import`), with session contributions extending and replacing seeds over time (§11.2).
-
-**Earned Trust decay.** Per-memory keyword weights evolve each chain epoch under the Earned Trust model: serves boost a memory's weight, denials decay it, and memories that are neither served nor denied idle-decay (trusted memories far more slowly than untrusted ones). A memory archives once every keyword weight falls below the retrieval threshold (default 1500 bps). Decay is epoch-driven, not version-scoped.
-
-**On-chain storage, not hosted blob storage.** Approved memories are chain state, replicated by validators. No VPS dependency.
-
-**Pending memories: commitment on-chain, blob off-chain.** Contributors submit only a commitment (hash, org ID, contributor pubkey, expiry epoch, size) on-chain. The encrypted blob is delivered to the reviewer through temporary off-chain channels (local transfer, P2P, or org-hosted mailbox). If approved, the finalized encrypted blob goes on-chain. If rejected or expired, the commitment is removed and the temporary blob is deleted. Rejected content never enters committed block data.
-
-**Hub-based retrieval with local decryption.** wevibe-hub runs Qdrant vector search over embeddings + keyword metadata; the MCP/plugin computes query embeddings locally, receives IDs + metadata + matched keywords, fetches ciphertext, and decrypts locally before sanitization/injection.
-
-**Contributors are paid by the network; members pay orgs for access.** Contributor rewards are contribution-only network emissions. Access demand is separate: members pay orgs in VIBE for recall access, and leaders earn from that demand leg through the non-custodial router (§10.5).
-
-**Serve receipts: public reputation, pseudonymous retrieval.** Contributor reputation (serve counts, domain tags) is public on-chain. Retriever identity is represented by a per-org pseudonymous serve key — not the user's global contributor identity. This separates "my knowledge helped others" (public) from "this exact user needed this exact memory" (pseudonymous). Users can optionally link their org serve keys to their public profile as a learning trail. Each serve/denial entry is signed by the consumer's per-org serve key and the chain counts only verified entries; the serve key is self-asserted in the signed entry, preserving pseudonymity, and the hub — which holds no serve key — cannot mint serve content.
-
-**Serve receipts are batched.** The chain accepts batched serve submissions (`MsgSubmitServeBatch`); the hub holds the org-whitelisted serving key for the transaction envelope only. Per-entry consumer signatures are verified on-chain — the chain rejects unsigned/invalid entries, so the serving key is never trusted for serve content.
-
-**Four-button approval UX.** The plugin offers: [Accept] (memory injected, serve receipt queued, contributor attributed), [Deny] (memory blocked for this session/context only — a neutral context signal, NOT a corpus down-vote; no denial event emitted to the chain), [Block] (permanent personal blacklist AND a global corpus denial signal — the load-bearing negative-signal path that feeds Earned-Trust decay via `MsgSubmitDenialBatch`), [Report] (memory reported on-chain and escalated into the org's accountability path — §5.5–5.7). The Deny-vs-Block split is load-bearing: Deny is a no-op on the corpus (context ≠ quality); Block is the negative signal that drives decay.
-
-### 3.10 Hub Confidentiality
-
-Academic reviewers have challenged "the hub never sees plaintext" as a fake promise: if an authorized consumer can retrieve plaintext, surely a captured hub could too. This section states the guarantee precisely, proves it, and draws the honest boundary of what it does and does not cover. It formalizes part (1) of the two-part honest claim in §3.6 and is bound to `D-MISSION-INVARIANT` (guarantee #1 — no single party may unilaterally **READ** member plaintext) and `D-PRIVACY-BOUNDARY-REDRAW`.
-
-**The claim, stated narrowly.** The hub **cannot decrypt** memory content. This holds against a **fully malicious hub** — not merely an honest-but-curious one — that deviates arbitrarily from the protocol. It is **not** claimed that the hub learns *nothing* about content; that stronger statement is false and is not made (see "The honest boundary" below).
-
-#### The intuition the objection misses
-
-Plaintext-visibility is conferred by **possessing a secret key**, not by **handling the data**. The consumer can read a memory because their device holds a secret scalar the hub never receives; the hub holds a **re-encryption (transformation) key**, not a decryption key. The analogy is a postal sorting office that re-addresses a sealed envelope so that a *different* recipient's key opens it — without ever being able to open it itself. Handling the envelope and reading it are different powers; the hub is granted only the first.
-
-#### The confidentiality core (Umbral proxy re-encryption over secp256k1)
-
-WeVibe's retrieval uses Umbral proxy re-encryption (`umbral-pre` over secp256k1; D-2.1/D-2.2/D-2.3). Umbral layers verifiability and threshold-splitting on top, but the confidentiality core is the ElGamal-style re-encryption relation below. Let `G` be the curve generator and `n` the curve order.
+**The confidentiality core (Umbral proxy re-encryption over secp256k1).** Umbral layers verifiability and threshold-splitting on top; the core is the ElGamal-style re-encryption relation below. Let `G` be the curve generator and `n` the curve order.
 
 ```
 Keys
@@ -481,759 +371,764 @@ Decrypt   (client-side, on the member's device, REQUIRES the secret b)
   then AES-decrypt the memory body with the recovered DEK
 ```
 
-- **Encryption** seals the per-memory DEK under the org public key `A`; the sealed key is `K = KDF(a·(E+V))`, and recovering it the direct way requires the org secret `a = epoch_sk`. The hub never holds `a` — it is derived from `K_master` on the leader's own machine, and the hub receives only `umbral_pk` and the finished kfrags (§3.2, `D-LEADER-SIDE-UMBRAL-MINT`).
-- **The kfrag** encodes `rk ≈ a·b⁻¹` and can be minted only by a party holding the delegating secret `a` — i.e. the leader. Recovering `a` or `b` from `rk` is the discrete-logarithm problem, and `rk` decrypts nothing on its own.
-- **Re-encryption** is the hub's *only* cryptographic operation. Given the capsule and a leader-minted kfrag — and **no secret key** — it computes `cfrag = rk·(E+V) = (a·b⁻¹)·(E+V)`.
-- **Decryption** happens only on the member's device, which multiplies the cfrag by its own secret scalar `b`: `b·(a·b⁻¹)·(E+V) = a·(E+V)`, recovering `K`, hence the DEK.
+- **Encryption** seals the per-memory DEK under the organization public key `A`; recovering the sealed key `K = KDF(a·(E+V))` the direct way requires the organization secret `a = epoch_sk`, which the hub never holds.
+- **The kfrag** encodes `rk ≈ a·b⁻¹` and can be minted only by a party holding the delegating secret `a` — the leader. Recovering `a` or `b` from `rk` is the discrete-logarithm problem, and `rk` decrypts nothing on its own.
+- **Re-encryption** is the hub's *only* cryptographic operation: given the capsule and a leader-minted kfrag, and no secret key, it computes `cfrag = rk·(E+V)`.
+- **Decryption** happens only on the member's device, which multiplies the cfrag by its own secret scalar `b` to recover `K`, hence the DEK.
 
-**The punchline.** The hub can compute `a·b⁻¹·(E+V)` but needs `a·(E+V)`. The one missing operation is a single multiplication by `b` — the member's secret scalar — which the hub is *structurally* never given. This is geometry, not policy: no configuration, key rotation, or privileged mode grants the hub `b`. Everything the hub holds — `{capsule, cfrag, ciphertext, kfrag, A, B}` — is computationally independent of the plaintext without `b`. This is exactly Umbral's IND-PRE-CCA security guarantee (Núñez et al. [15]).
+> **The punchline.** The hub can compute `a·b⁻¹·(E+V)` but needs `a·(E+V)`. The one missing operation is a single multiplication by `b`, the member's secret scalar, which the hub is *structurally* never given. This is geometry, not policy: no configuration, key rotation, or privileged mode grants the hub `b`. Everything the hub holds — `{capsule, cfrag, ciphertext, kfrag, A, B}` — is computationally independent of the plaintext without `b`. This is exactly Umbral's IND-PRE-CCA security guarantee [15].
 
-#### Attacks a malicious hub might attempt
+**Attacks a malicious hub might attempt.**
 
-- **"The hub forges its own kfrag toward a key it controls."** Fails. Minting a kfrag requires the delegating secret `a = epoch_sk`, which the hub never holds. The hub can only *apply* leader-minted kfrags, and those are minted toward the registered public keys of authorized members — never toward a hub-controlled key.
-- **"The hub colludes with an authorized member."** Conceded openly. An authorized member decrypts with their own secret `b` and could leak the resulting plaintext. This is authorized-insider abuse, not a cryptographic break — and it is already **out of scope** in the threat model (§3.1: "a compromised active member who leaks epoch keys or decrypted content"). The hub as a *standalone party* still cannot read; the confidentiality claim is about the hub itself, not about every party the hub might suborn.
+- *"The hub forges its own kfrag toward a key it controls."* Fails. Minting a kfrag requires the delegating secret `a = epoch_sk`, which the hub never holds. The hub can only *apply* leader-minted kfrags, and those are minted toward the registered public keys of authorized members — never toward a hub-controlled key.
+- *"The hub colludes with an authorized member."* Conceded openly. An authorized member decrypts with their own secret `b` and could leak the plaintext. That is authorized-insider abuse, not a cryptographic break, and it is already out of scope in the threat model (§4.1). The hub as a standalone party still cannot read.
+- *"The hub lies about standing to bury a memory."* Fails as a durable attack. Standing is a deterministic function of a public log and a published policy version, so any client or auditor recomputes it and detects the divergence (§7.7). The hub can degrade its own answers; it cannot make its answers authoritative.
 
-#### The honest boundary (what this does NOT cover)
+> **The honest boundary (what this does NOT cover).**
+> Two statements must not be conflated:
+> - **TRUE (proven above):** the hub cannot **decrypt** your memory content.
+> - **FALSE (never claimed):** the hub learns **nothing** about your content.
+>
+> For search, the hub holds — in Qdrant — clean float32 embeddings plus plaintext label metadata: a disclosed, lossy, realistically-invertible **semantic shadow** of each memory (§4.6, §9.3). Published embedding-inversion research [13][14] shows approximate content recovery from clean embeddings is realistic. The mitigations here are **operational, not cryptographic**: Qdrant API auth, internal-network deployment, per-organization collection isolation, and signed responses. Encrypted vector search is the documented evaluation trigger — formally evaluated when an organization requests confidentiality-sensitive hosting, or when public-testnet launch planning begins, whichever comes first. WeVibe makes **no** claim of a zero-knowledge index or a content-confidential hub. "Cannot decrypt" and "learns nothing" are different guarantees, and only the first is made.
 
-Two statements must not be conflated:
+Two further notes. **The consumer-side injection gate is live and enforced today** — a blocking, fail-closed human-approval step (Accept/Deny/Block/Report, §2.5) that injects only human-approved memories; benchmark/test mode outside the shared-memory safety contract may auto-approve for evaluation only. **Key locality:** the hub never receives `epoch_sk`; only the epoch public key and finished kfrags cross the wire, and the confidentiality proof rests on this locality holding cleanly.
 
-- ✅ **TRUE (and proven above):** the hub cannot **decrypt** your memory content.
-- ❌ **FALSE (and never claimed):** the hub learns **nothing** about your content.
+### 4.6 Metadata Visibility Model
 
-For search, the hub holds — in Qdrant — clean float32 embeddings plus plaintext keyword weights: a **disclosed, lossy, realistically-invertible semantic shadow** of each memory (§3.6, §3.7). Published embedding-inversion research (Morris et al. 2023 [13]; Huang et al. 2024 [14]) shows approximate content recovery from clean embeddings is realistic. The mitigations here are **operational, not cryptographic** — Qdrant API auth, internal-network deployment, per-org collection isolation, signed responses — with encrypted vector search as the documented evaluation trigger. This is the ratified position of `D-PRIVACY-BOUNDARY-REDRAW`: WeVibe makes **no** claim of a zero-knowledge index or a content-confidential hub. That abandoned claim is not resurrected here — "cannot decrypt" and "learns nothing" are different guarantees, and only the first is made.
+WeVibe organizations are public developer communities. On-chain metadata is intentionally public for discovery and reputation.
 
-Two further honesty notes:
+| On-chain (public by design) | Local to the MCP/plugin (the hub never sees these) |
+|---|---|
+| Organization IDs and topic tags; contributor public keys; encrypted memory blobs; plaintext discovery labels; submission timestamps; memory sizes; epoch boundaries; the evidence log (serve, block, outcome and related events — §9.5); reputation aggregates; bandwidth consumption; quarantine state; report flags; the anchored standing-policy version hash. | Decrypted memory plaintext; local wevibe-guard and blacklist state; session context profiles; the content of a session beyond the observations the consumer chooses to sign. |
 
-- **The consumer-side injection gate is wired and enforced.** The local human approval gate that lets a user inspect each memory before it enters an agent's context is live in the plugin today: a blocking, fail-closed human-approval step (Accept/Deny/Block/Report — §1.6, §3.1) that injects **only** human-approved memories. Production is gated; only benchmark/test mode auto-approves. This is a *different* leg of the privacy tripod (`D-PRIVACY-BOUNDARY-REDRAW`) from the hub-cannot-decrypt guarantee proven above — and it is now shipped, not merely contract-defined.
-- **Key locality.** The hub never receives `epoch_sk`: it is derived from `K_master` on the leader's own device, and only the epoch *public* key and finished kfrags cross the wire (§3.2, `D-LEADER-SIDE-UMBRAL-MINT`). The confidentiality proof rests on this locality holding cleanly.
+*Table 9. Embedding vectors and label metadata live in the hub's Qdrant (§9.3); the hub stores ciphertext and vectors but never decrypts. Standing appears nowhere in this table because standing is never stored — it is computed (§7.7).*
 
-### 3.11 Session Attestation (Roadmap, Post-Mainnet)
+### 4.7 Defense-in-Depth: The Memory Sanitization Pipeline
 
-Sessions produce memories. Without provenance attestation, a contributor could paste fabricated "coding sessions" into the extraction pipeline and farm reputation. Everything downstream — difficulty scoring, quality grading, reputation — depends on knowing the session actually happened.
+Sanitization is canonical here and referenced elsewhere. Decryption, scanning, approval, and injection all run locally.
 
-**Current posture:** org leader curation is the trust layer, and it is a real one — every published memory carries a leader's bonded signature. A generalized cryptographic attestation rail is post-mainnet roadmap.
+**Diagram 2 — The sanitization pipeline.** Two columns: submission time (steps 1–5) and recall time (steps 6–15).
 
-**Roadmap direction:** a post-mainnet **pluggable attestation framework**. Separate attestation components plug into the chain and validate session claims either **cryptographically** or **via API-backed trust services**. The target claim shape is explicit session provenance: *"user X using LLM model Y took N turns to solve problem Z."*
+*Submission time (before on-chain storage):*
+1. **wevibe-guard scan.** Rule-based detection (YARA-X + regex) for injection patterns, credential detection, and exfiltration matching. Advisory: it warns but does not block. The human reviewer is the security boundary.
+2. **Text sanitization suite.** WeVibe memories are text, so the sanitizer works on the text directly rather than rendering images. It normalizes and flags the injection vectors that are invisible to the human eye: zero-width and unusual-whitespace characters, emoji-pattern "sleeper" payloads (variation-selector and emoji-tag encodings), homoglyph substitutions, bidirectional and directional-override sequences, invisible Unicode tag characters (U+E0000 block), and mathematical-alphanumeric injection (U+1D400–U+1D7FF).
+3. **Encryption.** Memory encrypted with a per-memory DEK; the DEK sealed to the moderation public key.
+4. **Human review.** The reviewer decrypts locally, reads plaintext, runs a steganography scan, and approves or denies.
+5. **On-chain submission.** The approved memory (ciphertext + wrapped DEK + metadata) goes on-chain and is mirrored to hub storage for retrieval. The organization pays the submission cost.
 
-**Proof-tier generalization:** post-mainnet, the on-chain `x/attestation` socket generalizes the provenance grades below into a single **typed proof artifact** — `{ proof_type, trust_label, … }` where `proof_type` is one of `tee_receipt`, `zktls_proof`, or `zkml_proof` — each **verified off-chain before any on-chain anchoring**. The zkTLS path is technically proven for closed frontier models with session privacy intact; it activates when MPC cost ceilings clear real-world extraction-prompt sizes.
+*Recall time (before and after delivery):*
+6. **Hub candidate query.** The MCP/plugin posts the local query vector to hub retrieval and receives memory IDs, metadata, and ranking detail.
+7. **Ciphertext fetch + local decryption.** The MCP/plugin fetches each candidate's ciphertext and decrypts it locally through the Umbral sidecar.
+8. **Blacklist filter.** The MCP/plugin checks the local blacklist and chain quarantine flags.
+9. **wevibe-guard scan.** The same scan on the decrypted memory, catching payloads not detectable at approval time (new rules since approval).
+10. **Text sanitization suite.** The same text normalization and invisible-character detection, applied to the decrypted memory.
+11. **Artifact extraction and egress flagging.** Typed extraction of URLs, bare domains, IPv4 addresses, shell commands, package-install commands, and config directives. Every network-resolvable token is flagged for the reviewer (advisory — the human gate decides).
+12. **Plugin approval gate.** The plugin renders the approval UI with guard detections and contributor trust signals (public key, wallet age, reputation score, serve count, domain expertise). The user sees the memory, the flags, and who wrote it, and decides.
+13. **Serve event.** On Accept, the consumer's per-organization key signs a content-free serve event (Ed25519, offline — no wallet, no gas); the batch is carried by the organization serving key under feegrant. The chain verifies each entry's signature, recomputes the dedup fingerprint itself, and counts only verified entries (§8.3).
+14. **Context injection.** Approved memories are formatted as `context:\n{memory content}` and injected once, at a stable early position, within the token budget (§2.5).
+15. **Outcome observation.** The plugin watches the work that follows and, if the episode reaches an observable conclusion, signs an outcome event binding that memory's use to what happened (§7.8). If no conclusion is observed within the window, nothing is claimed.
 
-#### Attestation tiers (seed designs)
+*Diagram 2. Sanitization runs twice — once before storage, once before delivery — because rules improve over time. Observation runs once more, after delivery, because whether a memory helped is only knowable afterwards.*
 
-**Tier 0: TEE-Attested Confidential Inference (open- or closed-weight).** GPU-TEE confidential inference (e.g. Intel TDX + NVIDIA H100 Confidential Computing) signs each request/response inside the enclave and ships a remote-attestation quote binding the signing key to the loaded **model measurement** — a hash of the actual checkpoint, not a marketing name. It is the strongest tier: it covers closed-weight models without trusting a WeVibe relay, and is recorded as the `tee-attested` provenance grade. Locked constraints: it is **optional, opt-in, and never a contribution gate** (requiring it would exclude the local/smaller-model users WeVibe most serves); verification is **off-chain** (an attestation-verifier checks the Intel DCAP + NVIDIA quotes and emits a re-verifiable assertion — the chain is never asked to verify a TEE quote); a `certified_model` tag certifies **session provenance, not memory text** (a `derivation` flag records whether the submitted memory is verbatim from extraction or edited after); and it is carried as a pluggable adapter, not a hard dependency.
+| Catches | Does NOT catch |
+|---|---|
+| Rule-based prompt injections (YARA-X + regex); credential leakage (AWS keys, API tokens, passwords, connection strings); invisible-to-the-eye Unicode steganography — zero-width and unusual-whitespace characters, homoglyph substitutions, bidirectional and directional-override sequences, invisible Unicode tag characters (U+E0000 block), and mathematical-alphanumeric injection (U+1D400–U+1D7FF); emoji-pattern sleeper-prompt payloads; Base64-encoded injections; external URL injection (scheme-ful and scheme-less); bare hostname references (any TLD); IPv4 literal references; malicious dependency injection; config-directive injection; shell pipe-to-execution attacks; previously-rejected memories (local blacklist + chain quarantine). | Semantic payloads encoded in natural-language prose (mitigated by human review and contributor reputation). Technically-plausible but subtly wrong recommendations (mitigated by reviewer domain expertise, contributor reputation visibility, and — over time — accumulated outcome evidence, §7.8). |
 
-**Tier 1: CommitLLM Cryptographic Receipts (Open-Weight Models).** CommitLLM (Lambda Class, MIT licensed) is a cryptographic commit-and-audit protocol for open-weight LLM inference. The receipt proves "this response was produced by this exact model with these exact weights." Limitation: only works for open-weight models where the verifier has the public checkpoint.
+*Table 10. The pipeline hardens against mechanical attacks; human judgment covers the semantic residue in the moment, and recorded outcomes cover it over time.*
 
-**Tier 2: Proxy-as-Trust-Layer (Closed-Weight Models).** For closed-weight API models, traffic can route through a WeVibe-controlled session proxy that content-addresses each turn and signs the transcript with WeVibe's key. Weaker than Tier 1, but a practical API-trust path.
+---
 
-**Standardizing the extraction model (the controllable half).** "Weaker models surface weaker memories" has two heads: the *production* model in the user's coding suite (uncontrolled — and sometimes the most valuable signal, when a weak model solves a hard problem) and the *extraction* model that distills a session into a memory (inside WeVibe's own pipeline). WeVibe standardizes the latter by **pinning the extraction model**, removing weak-extractor variance with no attestation required; attesting the production model is the optional bonus on top.
+## 5. Retrieval and Recall
 
-### 3.12 Two-Layer Difficulty Scoring (Roadmap Consumer, Requires Attestation)
+Retrieval is hub-served; plaintext handling remains local. The hub retrieval plane (Qdrant index + ranking) is derived and rebuildable from chain state plus organization keys.
 
-Two-layer difficulty scoring is the evolutionary continuation of attestation and its likely first consumer once the pluggable framework exists. The chain carries `difficulty` and `quality` values (1–10) on attested-memory records and maintains a per-contributor difficulty histogram (`x/reputation`); the scoring layers below populate those values automatically once live.
+### 5.1 The Retrieval Pipeline
 
-How attested difficulty enhances the economic and/or social-graph layers is intentionally **TBD**. What attestation settles is the *trustworthiness of the inputs*: the model and the turn count become cryptographically grounded. The composite claim "user X using model Y took N turns to solve problem Z and drew L negative signals" is rendered as a **per-field graded provenance** object in the social-graph layer — each field labeled by its own grade (attested model/turns, native-on-chain user/denials, descriptive problem tag) — display/badge-only and never coupled to VIBE.
+**Context profiling.** Session context (intent, stack, dependencies, errors, files) is harvested locally and used for pre-filtering.
 
-#### Layer 1: Structural Signal (Automated, Cheap)
-Model capability coefficient × turn count × (1 + 0.25 × failed alternatives). Computed from session structure without understanding content.
+**Label extraction.** Contributor extraction proposes discovery labels; leaders curate taxonomy at batch stage. Labels are retrieval bonus terms and discovery aids, never hard gates, and never inputs to standing.
 
-#### Layer 2: LLM Grading (Semantic, Authoritative)
-A separate grading LLM evaluates non-obviousness, specificity, and reasoning progression. Temperature 0, deterministic, hash-seeded. The grade and session hash are committed together.
+**Retrieval representation (situation-centric card, symmetric embedding).** Memory and query are embedded from deterministic cards with matched `nomic-embed-text` prefixes (`search_document:` and `search_query:`). Memory vectors are produced at approval on a plaintext-capable client path, not by the hub.
+
+**Semantic embedding.** Query vectors are computed locally via Ollama and posted to hub retrieval.
+
+> **Atomic memory format.** Each memory is a single, self-contained technical insight with four fields:
+> - **implement** — the fix itself: specific technical knowledge in 1–2 sentences, with exact values.
+> - **context** — the environment, versions, and conditions where it applies.
+> - **dnd** — negative knowledge: what *not* to do, and why.
+> - **stack** — the specific technologies involved.
+>
+> This atomic form is preserved end-to-end: every extraction consumer, benchmark harnesses included, operates on individual memory objects. Collapsing multiple atomic memories into a single text blob is a conformance violation.
+
+**Retrieval scoring.**
+
+```
+label_boost   = Σ(query_weight_i × memory_label_weight_i)
+relevance     = vector_score + min(γ × label_boost, δ × vector_score)
+final_score   = f(relevance, standing)
+
+Defaults: γ = 0.1, δ = 0.15
+```
+
+Vector similarity is primary; label overlap is additive and capped. Standing enters as a separate term computed from the evidence log (§7.7), never as a stored score read from chain. Parameters (`γ`, `δ`, depth, and the standing term's shape) are tuning defaults in the published policy, not protocol constants.
+
+**Blacklist filtering + fetch/decrypt.** Local blacklist and quarantine flags apply before approval. Candidates are fetched as ciphertext and decrypted locally through Umbral.
+
+**Contested-result handling.** When the top two results are near-tied (score gap < 0.20), the shipped default is **deterministic twin-suppression** — surface the clear winner and suppress the near-tied twin (no model call). A non-blocking, model-based rerank via a separately configured endpoint is an optional, deferred enhancement, not part of the shipped path.
+
+### 5.2 Recall Flow (Auto-Query, Plugin-Gated Injection, Observed Outcome)
+
+**Diagram 3 — Recall flow.** Top-to-bottom, three swimlanes: local plugin, hub, local plugin.
+
+1. "Developer works in their coding session."
+2. "Plugin harvests local session signals (intent, task, stack, dependencies, errors, files, and live build/test failure signals: failing checks + error strings), feeds fix-iteration need-cards from those live failure signals, and attaches the session to any open goal seal on this repo (§8.12)."
+3. "Plugin auto-submits the recall query via local MCP (no agent recall tool call)."
+4. Local MCP/plugin: "Build the deterministic need-card → compute query embedding locally via Ollama (`nomic-embed-text`) → POST the query vector to the hub retrieval endpoint."
+5. Hub: "Qdrant vector + label-boosted search over hub-hosted embeddings, ranked with standing computed from the evidence log under the anchored policy version → return encrypted candidates + ranking/trust metadata."
+6. Local MCP/plugin: "Decrypt candidate ciphertext via the Umbral sidecar → run wevibe-guard + policy checks → apply content filter → render candidate details."
+   - Rendered details: memory text, memory_type, relevance and standing, matched labels · wevibe-guard result · contributor stats (account age, contributions, serve count, reports upheld, false reports) · memory evidence summary (serves, blocks, observed outcomes) · report indicators · verification tier + receipts (§8.12) · trust panel.
+
+Mandatory branch (shared/org production memory):
+- **[Gated approval]:** explicit user action on every candidate — ACCEPT → inject context + sign a serve event · DENY → block for this session/context (no corpus signal) · BLOCK → personal blacklist + signed block event · REPORT → file on-chain report (`is_reported`); the memory keeps serving until resolved.
+
+Post-injection (no user action required):
+- **[Observation]:** the plugin watches the episode the memory was injected into. If it reaches an observable conclusion, an outcome event is signed and broadcast. If it does not, nothing is signed and nothing is claimed (§7.8).
+
+Benchmark/test-only note (outside shared-memory safety contract):
+- **Benchmark/test mode:** evaluation mode may auto-approve candidates for throughput testing; never enabled for production shared/org recall.
+
+Terminal node: "Agent continues, with or without memory."
+
+*Diagram 3. Recall is queried on every prompt; the shared-memory production flow uses a single mandatory human gate, with benchmark/test mode explicitly out of contract.*
 
 ---
 
-## 4. Local Architecture (MCP Plugin + Sidecars)
+## 6. Local Architecture (MCP Plugin + Sidecars)
 
-### 4.1 Local Footprint and Responsibilities
+### 6.1 Local Footprint and Responsibilities
 
-The local software footprint on a member machine is:
+Local components are the MCP server + plugin, Umbral sidecar, and wevibe-guard. The local path owns decryption, sanitization, approval, injection, and observation.
 
-- **MCP server + agent plugin**
-- **Umbral decryption sidecar**
-- **wevibe-guard binary**
+| Recall-side (local) | Contribution-side (local) |
+|---|---|
+| 1. Harvest session signals and build the deterministic need-card. | 1. Extract atomic memory candidates from the captured session substrate only when the contributor clicks `/sessions` → **Extract Memories** (client-side candidate generation, no submission yet). |
+| 2. Compute the query embedding locally via Ollama (`nomic-embed-text`). | 2. Sanitize, encrypt, and sign submission material. |
+| 3. Send the query vector (plus context filters) to the hub retrieval endpoint. | 3. Submit commitment data to the chain (organization pays submission bandwidth), then follow the moderation/finalization flow. |
+| 4. Fetch candidate ciphertext (chain is source of truth; hub serves it cached with Umbral PRE materials). | |
+| 5. Decrypt locally through the Umbral sidecar. | |
+| 6. Run wevibe-guard sanitization/policy checks. | |
+| 7. Present the human approval gate and inject only approved context. | |
+| 8. Observe the episode that follows and sign an outcome event if it concludes observably (§7.8). | |
 
-The local path is responsible for both recall gating and contribution packaging.
+*Table 11. Vector retrieval itself is hub-side; the hub stores and serves ciphertext, vectors, and label metadata, and never decrypts plaintext. Observation is local because only the local machine can see what happened.*
 
-**Recall-side responsibilities (local):**
-1. Harvest session signals and build the deterministic need-card.
-2. Compute the query embedding locally via Ollama (`nomic-embed-text`).
-3. Send the query vector (plus context filters) to the hub endpoint (`/v1/orgs/{org}/query`).
-4. Fetch candidate ciphertext (chain is the source of truth; the hub serves it cached, with Umbral PRE materials).
-5. Decrypt locally through the Umbral sidecar.
-6. Run wevibe-guard sanitization/policy checks.
-7. Present the human approval gate and inject only approved context.
+**The extraction substrate.** A captured local session is the full plugin event stream: user messages (including repair/feedback turns), assistant text, tool calls with outputs (test runs, builds, and error output), and file-edit events. One deterministic substrate builder assembles that stream and is shared byte-identically by the dashboard Extract path and benchmark harnesses, so benchmark extraction and production extraction run over the same session bytes.
 
-**Contribution-side responsibilities (local):**
-1. Extract session learnings only when the contributor clicks dashboard `/sessions` → **"Extract Memories"** (client-side candidate generation, no submission yet).
-2. Sanitize, encrypt, and sign submission material.
-3. Submit commitment data to chain (org pays submission bandwidth), then follow the moderation/finalization flow.
+**The observation substrate.** The same event stream is what makes outcome observation possible: deterministic, code-only segmentation partitions it into failure episodes — a failing signal, the edits that followed, and whether that signal later disappeared or persisted. Observation reads those episodes; it does not ask a model for an opinion (§7.8).
 
-Vector retrieval itself is hub-side: `wevibe-hub` runs Qdrant search and returns candidate IDs + metadata + matched keywords. The hub stores/serves ciphertext + vectors + keyword metadata, and does not decrypt memory plaintext.
+### 6.2 Dependencies
 
-### 4.2 Dependencies
+The MCP/plugin stack requires Ollama, a local Umbral sidecar, wevibe-guard, and connectivity to hub APIs and chain RPC.
 
-The MCP/plugin stack requires:
+### 6.3 Sync and Bootstrapping
 
-- Ollama with `nomic-embed-text` for local query embedding
-- Local Umbral sidecar for decryption
-- wevibe-guard binary
-- ImageMagick/Tesseract when guard policy enables OCR/steganography checks
-- Connectivity to wevibe-hub APIs and chain RPC
+Member setup is key/bootstrap first: join organization, receive sealed envelopes, initialize local services. Recall then runs request/response against hub retrieval; clients do not download full corpora.
 
-This architecture does **not** require a local Qdrant deployment or a full local vector index.
+### 6.4 Contribution Flow
 
-### 4.3 Sync and Bootstrapping
+**Diagram 4 — Contribution flow.** Two explicit consent gates.
 
-Member setup is key/bootstrap first, not full-corpus indexing:
+1. "Developer opens the dashboard `/sessions` and selects a captured local session (the full event stream, §6.1)."
+2. **Gate — click "Extract Memories":** "client-side extraction over that substrate with the contributor's selected model — local or session-matched cloud; returns review candidates; does NOT submit. Candidates from goal-sealed trajectories carry their receipts and provisional tier (§8.12)."
+3. "Review/edit candidates and choose a per-memory organization destination."
+4. **Gate — click "Submit N":** "explicit off-machine send."
+5. Local contribution pipeline:
+   1. "Run wevibe-guard scan (advisory) and sanitization steps."
+   2. "Generate a fresh DEK, encrypt plaintext, seal to PK_mod(e)."
+   3. "Contributor signs the submission hash / canonical body."
+   4. "Submit COMMITMENT to the chain (hash, org_id, contributor_pubkey, expiry, size). The organization pays bandwidth for the commitment transaction."
+   5. "Deliver the encrypted blob to the reviewer via a temporary off-chain path (local transfer, P2P, or org-hosted mailbox)."
+   6. "Return: 'WeVibe: submitted N learning(s). Pending review.'"
 
-1. Join the org and configure the local MCP/plugin with org context and chain RPC (hub endpoints resolve from chain — §4.8).
-2. Receive sealed key envelopes for the current epoch (reviewers/leaders additionally receive current moderation key material).
-3. Initialize local services used by the plugin path (Ollama embedding model, Umbral sidecar, wevibe-guard).
+*Diagram 4. Two explicit consent points; nothing leaves the machine before Submit.*
 
-After bootstrap, recall runs as request/response against the hub retrieval service. The local machine does not download the org's full memory corpus and build its own vector index. Local state is operational (keys/config + approval/serve-receipt queueing), while authoritative memory storage and vector retrieval remain hub/chain-side.
+### 6.5 Reviewer Flow
 
-### 4.4 Recall Flow (Auto-Query + Plugin-Gated Injection)
+Moderation and review run in the hosted dashboard (`wevibe-dashboard`). Reviewers and leaders process pending submissions, then finalize through the hub-to-chain path.
 
-```
-Developer works in their coding session
-     │
-     ▼
-  Plugin harvests local session signals
-  (intent, task, stack, dependencies, errors, files)
-     │
-     ▼
-  Plugin auto-submits recall query via local MCP
-  (no agent recall tool call)
-     │
-     ▼
-  Local MCP/plugin path:
-      1. Build the deterministic session need-card + keyword params
-      2. Compute query embedding locally via Ollama (`nomic-embed-text`)
-      3. POST query to hub `/v1/orgs/{org}/query`
-     │
-     ▼
-  Hub retrieval path:
-      4. Qdrant vector + keyword-ranked search over hub-hosted embeddings
-      5. Return encrypted candidates + ranking/trust metadata
-     │
-     ▼
-  Local MCP/plugin path:
-      6. Decrypt candidate ciphertext locally via Umbral sidecar
-      7. Run wevibe-guard sanitization + policy checks
-      8. Apply content filter: [Implementations + DNDs] | [DNDs only]
-      9. Render candidate details before injection:
-         - memory text, memory_type, score, matched keywords
-         - wevibe-guard result
-         - contributor stats: account age, contributions, serve count,
-           reports upheld, false reports
-         - memory stats: retrieval count, acceptance count
-         - report indicators: is_reported / was_reported / report_cleared
-         - trust panel
-     │
-      ├── [Gated approval] (locked default): explicit user action
-      │      on every candidate
-      │      ├── ACCEPT → inject context + attest serve on-chain
-      │      ├── DENY   → block for this session/context (no corpus signal)
-      │      ├── BLOCK  → personal blacklist + corpus denial signal
-      │      └── REPORT → file on-chain report (is_reported);
-      │                   memory keeps serving until resolved
-      │
-      ├── [Gated on risk]: auto-inject + attest
-      │      the safe majority; interrupt ONLY for guard-flagged /
-      │      low-trust / low-confidence candidates. Quality signal
-      │      (attest/deny) batched in a review tray.
-      │
-      └── [No gated approval] (explicit opt-out): inject directly
-             + attest serve on-chain
-      │
-      ▼
-  Agent continues with or without memory
-```
+### 6.6 Plugin Architecture
 
-### 4.5 Contribution Flow
+| Agent | Plugin type | Status |
+|---|---|---|
+| **OpenCode** | JS/TS editor plugin | Reference implementation |
 
-```
-Developer opens dashboard `/sessions` and selects a captured local session
-     │
-     ▼
-  Click **"Extract Memories"**
-     (client-side extraction with the contributor's selected model —
-      local or session-matched cloud;
-      returns review candidates — does NOT submit)
-     │
-     ▼
-  Review/edit candidates and choose per-memory org destination
-     │
-     ▼
-  Click **"Submit N"** (explicit off-machine send)
-     │
-     ▼
-  Local contribution pipeline:
-    1. Run wevibe-guard scan (advisory) and sanitization steps
-    2. Generate fresh DEK, encrypt plaintext, seal to PK_mod(e)
-    3. Contributor signs submission hash/canonical body
-    4. Submit COMMITMENT to chain (hash, org_id, contributor_pubkey, expiry, size)
-       Org pays bandwidth for the commitment transaction.
-    5. Deliver encrypted blob to reviewer via temporary off-chain path
-       (local transfer, P2P, or org-hosted mailbox)
-    6. Return: "WeVibe: submitted N learning(s). Pending review."
-```
+*Table 12. All plugins call the same local MCP server and the same wevibe-guard binary; decryption runs through the local Umbral sidecar; retrieval/search stays in hub APIs.*
 
-**Pending memory lifecycle:** Only the commitment is written on-chain initially. The encrypted blob is reviewed out-of-band; approval finalizes chain state, while rejection or expiry deletes the pending commitment and temporary blob. Sessions stay local unless and until the contributor explicitly submits.
+### 6.7 Chain-Resolved Hub Endpoints (Zero-Config Transport)
 
-### 4.6 Reviewer Flow
+The canonical chain is the organization directory. Each organization publishes ordered `hub_endpoints` (transport URLs) on-chain; `hub_serving_address` is a distinct authorization key.
 
-Moderation and review are handled in the hub's hosted web dashboard (`wevibe-dashboard`). Reviewers and leaders process pending submissions there, apply approve/deny decisions, and push finalization actions through the hub-to-chain path.
+Clients resolve endpoints from chain RPC at session start, verify hub response signatures against on-chain serving keys, and fail over by priority if a transport fails.
 
-### 4.7 Plugin Architecture
-
-Each coding agent gets its own plugin codebase:
-
-| Agent | Plugin Type | Hook Mechanism |
-|-------|-------------|----------------|
-| OpenCode | JS/TS plugin in `.opencode/plugin/` | `tool.execute.before`, custom tools via `tool()` |
-| Claude Code | Plugin with `.claude-plugin/plugin.json` manifest | PreToolUse hook, `permissionDecision: "deny"` |
-| Cursor | Hooks + marketplace plugin | Claude Code hook format compatibility |
-| Cline | VS Code extension + hooks | `.clinerules/hooks/`, custom hook system |
-
-All plugins call the same local MCP server and the same wevibe-guard binary (`WEVIBE_GUARD_BIN`). Decryption is handled through the local Umbral sidecar; retrieval/search remains in hub APIs. The OpenCode plugin (`wevibe-opencode-plugin`) is the reference implementation; the Claude Code, Cursor, and Cline integrations follow the same local MCP + guard contract.
-
-OpenCode 1.16+ ships a built first-run onboarding hook: `DialogConfirm` → Touch ID/passkey confirmation → completion screen. Identity creation is step one only; reputation comes from joining orgs and contributing approved memories, never from identity creation itself.
-
-The OpenCode plugin exposes `/wevibe-setup`, `/wevibe-connect`, and `/wevibe-status`, and nudges the user to the dashboard join/connect flow after three local sessions. Identity boot is lazy (no biometric prompt at plugin startup). Non-secret local identity state is plugin-owned and stored at `~/.wevibe/identity.json`.
-
-Install/uninstall is zero-config via `wevibe-admin install-opencode` and `wevibe-admin uninstall-opencode`. The local keystore is seed-based with BIP39 recovery, and short-code pairing reconciles dashboard + plugin onto one contributor pubkey.
-
-### 4.8 Chain-Resolved Hub Endpoints (Zero-Config Transport)
-
-WeVibe keeps one canonical chain as the network source of truth, with a public chain RPC as the single stable client anchor (default endpoint, env-overridable for operators). The chain is the org directory. Each org carries a leader-configurable `hub_endpoints` field — an ordered list of 1–3 network URLs for transport redundancy/failover — set via a leader-signed on-chain setter, distinct from `hub_serving_address`, the Cosmos key that authorizes serve/deny and response authority. Transport and authorization are intentionally separated.
-
-At session start, the plugin resolves per-org endpoint routing from chain RPC once (biometric-free, because org metadata is public), updates local config, and persists per-org sidecar state keyed by globally unique `org_id` so state remains stable across hub migration. The endpoint list is priority-ordered: the plugin uses the first and fails over to the next on connection, health, or signature-verification failure. All endpoints are replicas fronting the org's single on-chain serving identity. The consumer never hand-configures a hub URL.
-
-Hub transport is untrusted: hub responses are signed by the org's on-chain serving key and verified by the plugin against `hub_serving_address`. The response-signing contract lives in `wevibe-protocol` so hosted and self-hosted hubs conform to one verification path. If the `hub_endpoints` list changes, clients auto-switch silently and show a one-time passive toast.
-
-Why this path: self-hosting remains a first-class leader right, but endpoint operations stay abstracted from end users. Resolving transport from the same chain source of truth preserves one path and avoids creating a second directory service every self-hosted hub would otherwise need to mirror and keep in sync.
+> **Hub transport is untrusted.** Transport is untrusted; response authority is chain-resolved and signature-verified. Ranking is not authority either: a client that wishes to can recompute standing itself from the same public log (§7.7).
 
 ---
-## 5. Content Review and Accountability
 
-### 5.1 Review Flow
+## 7. Content Review and Accountability
 
-Contributed memories are submitted (encrypted; only the org's reviewers can decrypt) into the hub's pre-commit pipeline and are visible only to reviewers and leaders via the hub's hosted dashboard (wevibe-dashboard). Pre-commit memories live in hub PostgreSQL — never on chain and never in Qdrant — until the leader commits a batch on-chain.
+### 7.1 Review Flow
 
-This review layer is not just about safety. It is the quality gate that protects WeVibe's provenance layer: public contributor/org attribution is only meaningful if low-quality or malicious memories are filtered before commitment.
+Contributions enter encrypted pre-commit review visible to reviewers and leaders. Pre-commit memories remain off-chain until leader commit; this is both quality control and provenance protection.
 
-**Moderation is always-on advisory; the leader is the always-on backstop.** A submitted memory flows directly into the leader's curation/chain-submit queue — there is no mandatory "awaiting moderation" gate and no on/off toggle. `can_moderate` is an independent per-member **capability** the leader grants à la carte (via `MsgSetMemberCapabilities`) — *not a role*; a leader can run an org with **zero members granted `can_moderate`** (capabilities are off by default). Members holding `can_moderate` are *helpers* who produce **recommendations, never gates**:
+> **Moderation is advisory; the leader is the backstop.** Reviewer recommendations are advisory metadata. The leader remains sole publisher: label curation, commit, and terminal deny are leader decisions and leader signatures.
 
-- a **per-submission vote** — `approve` or **flag (against committing)** — surfaced to the leader as a tally on the memory's card;
-- a **per-keyword vote** — `include` / `exclude`, primarily on the red (suggested-new) vocabulary terms — surfaced next to each keyword to guide the leader's keep/remove decision.
+**Diagram 5 — Pre-commit lifecycle.** States left-to-right: `pending_keyword` → `pending_chain` → `committed`.
 
-Neither vote changes the pipeline state. The **leader** reads the recommendations and decides: curate the keywords (§3.5), commit the batch (signing on-chain — the sole publishing authority), or **terminally deny** the memory. Advisory vote history is org-local accountability, not chain-level enforcement. This delegates review *labor* without ever delegating the leader's *signature* — the property the entire anti-capture model rests on (§9.7).
+- `pending_keyword`: "Contributor submits; the memory enters the leader's curation queue with labels already attached."
+- `pending_chain`: "The leader curates labels and verifies."
+- `committed`: "The leader signs the multi-message batch commit."
+- Downward branch from any pre-commit state to `denied`: "A leader denial is the only terminal removal before commit."
+- Side annotation: "Advisory votes ride alongside as metadata at any point before commit."
 
-The pre-commit lifecycle: a contributor submits → the memory enters the leader's curation queue (`pending_keyword`) with keywords already attached (§3.5) → the leader curates keywords + verifies (`pending_chain`) → the leader signs the multi-message batch commit (`committed`). A leader denial is the only terminal removal before commit. Advisory votes ride alongside as metadata at any point before commit.
+*Diagram 5. The pre-commit lifecycle. Only the leader's signature publishes; only a leader denial removes. After commit, nothing removes — standing decides visibility (§7.7).*
 
-### 5.2 What Review Can and Cannot Catch
+### 7.2 What Review Can and Cannot Catch
 
-**Can catch:** Prompt injection patterns, malicious URLs, credential exfiltration, spam, duplicates, off-topic content, obvious technical errors, stale references, Unicode steganography, memories too generic for the org's target model/stack.
+| Can catch | Cannot catch |
+|---|---|
+| Prompt-injection patterns, malicious URLs, credential exfiltration, spam, duplicates, off-topic content, obvious technical errors, stale references, Unicode steganography, memories too generic for the organization's target model/stack. | Subtly incorrect technical guidance that looks plausible; semantically-encoded malicious instructions in natural-language prose; context-dependent correctness. |
 
-**Cannot catch:** Subtly incorrect technical guidance that appears plausible, semantically-encoded malicious instructions in natural language prose, context-dependent correctness.
+*Table 13. What human review catches, and the semantic residue it cannot. The residue is precisely what the evidence log is for: review decides admission at one point in time, and use decides standing continuously afterwards.*
 
-### 5.3 Reviewer Trust Boundary
+### 7.3 Reviewer Trust Boundary
 
-Reviewers see pending content in plaintext on their local machine. The system is only as secure as reviewer judgment, honesty, and endpoint security. Mitigations: epoch-scoped mod keys, steganography detection, contributor reputation signals visible during review.
+Reviewers process plaintext on local endpoints; endpoint security and judgment remain part of the boundary. The leader is sole chain signer for commits, report resolutions, and dispute publications.
 
-The leader is the final authority on what enters the chain. Chain commits — batch memory approvals, denial settlements, report resolutions, dispute publications — are signed by the leader's wallet and the leader's wallet alone. The leader bears full responsibility for the on-chain record they produce. Internal advisory votes and approval histories are an org-local accountability primitive maintained outside the chain.
-
-### 5.4 Contributor-Signed Canonical Body as Verification Anchor
+### 7.4 The Contributor-Signed Canonical Body (Verification Anchor)
 
 Every memory's submit-time canonical body includes three fields that, together with the contributor's signature over the body, form the public-escalation verification anchor:
 
-- **plaintext_hash** — `sha256(salt || plaintext)`, computed by the contributor before encryption
-- **salt** — a fresh 32-byte random value generated per submission
-- **ciphertext_hash** — `sha256(ciphertext)`, where ciphertext is the AEAD output
+> **The anchor fields**
+> - **plaintext_hash** — `sha256(salt || plaintext)`, computed by the contributor before encryption.
+> - **salt** — a fresh 32-byte random value generated per submission.
+> - **ciphertext_hash** — `sha256(ciphertext)`, where ciphertext is the AEAD output.
 
-The contributor signs the canonical body with their own key. The canonical body, the signature, and the ciphertext all travel through moderation and land on the chain together. The leader's batch chain commit includes the contributor's signature; the leader cannot modify the signed fields without invalidating the contributor's signature.
+The contributor signs the canonical body with their own key. The canonical body, the signature, and the ciphertext all travel through moderation and land on the chain together. The leader's batch commit includes the contributor's signature; the leader cannot modify the signed fields without invalidating that signature.
 
-This is what makes the public report tier (§5.5) trustworthy without trusting the leader: any future reveal of plaintext + salt can be verified against the on-chain plaintext_hash via direct sha256 check, and the on-chain ciphertext can be verified against the on-chain ciphertext_hash. The leader is removed from the verification chain entirely. A captured leader cannot poison the anchor because they do not sign it.
+This is what makes the public report tier (§7.5) trustworthy without trusting the leader. Any future reveal of plaintext + salt can be verified against the on-chain `plaintext_hash` by a direct SHA-256 check, and the on-chain ciphertext can be verified against `ciphertext_hash`. The leader is removed from the verification chain entirely; a captured leader cannot poison the anchor because they do not sign it. The contributor cannot substitute ciphertext between submit and commit (the signature binds the specific `ciphertext_hash`), and cannot later claim different plaintext at escalation (the `plaintext_hash` binds them, and SHA-256 collision resistance prevents a second matching pair).
 
-The contributor cannot substitute ciphertext between submit and chain commit because their signature binds the specific ciphertext_hash. The contributor cannot later claim a different plaintext at public escalation because the plaintext_hash binds them to the specific salted hash, and SHA-256 collision resistance prevents producing a different (plaintext, salt) pair that hashes to the same value.
+> **Why the signature covers all three fields jointly.** A signature over `plaintext_hash` alone — without salt and without ciphertext binding — is vulnerable to contributor-plus-leader collusion: the contributor signs one hash while the leader commits ciphertext encrypting different content, and the asymmetry is undetectable. Binding all three fields in one signature closes the gap. The leader has no signing role in the anchor; the contributor has no opportunity to substitute ciphertext after signing.
 
-**Why the signature covers all three fields jointly.** A signature over `plaintext_hash` alone — without salt and without ciphertext binding — is vulnerable to contributor + leader collusion: the contributor signs one hash while the leader commits ciphertext encrypting different content, and the asymmetry is undetectable. Binding all three fields in a single signature closes the gap. The leader has no signing role in the anchor; the contributor has no opportunity to substitute ciphertext after signing.
+### 7.5 The Report Model
 
-**Residual risk: contributor with stolen signing key.** If the contributor's signing key is stolen, an attacker can produce signatures binding any (plaintext, salt, ciphertext) tuple. This is a key-management problem, not a cryptographic-anchor problem — no design at the cryptographic layer can defeat it. Mitigation lives at the wallet/identity layer (the future BIP-32 PRE-identity separation). The on-chain ciphertext + sealed-box wrapped DEK remain as a final backstop: any future epoch key disclosure allows independent decryption and exposes the actual content after the fact.
+Reports are the high-friction accountability primitive: filing with a fixed window, then public reveal only if dismissed or unaddressed.
 
-**Salt design rationale.** Without a salt, `sha256(plaintext)` is vulnerable to rainbow-table attacks for low-entropy plaintexts (short memories, common error messages, well-known technical advice). A 32-byte random salt makes rainbow tables infeasible (2^256 salt space per plaintext). The salt is included in the canonical body the contributor signs, stored on-chain alongside the commitment, and revealed by the reporter at public-escalation time. Salt is not secret — it is context-hiding.
+**Diagram 6 — Report lifecycle and the expose gate.**
 
-### 5.5 The Report Model
+*Stage 1 — File (no reveal):*
+- "Consumer files from the plugin. Wallet-gated: the reporter signs the report tx from their own wallet and pays gas; their public wallet is recorded on-chain."
+- Effect: "Sets `is_reported` (open report stands) and `was_reported` (permanent, never unset)."
+- Constraints: "Rate-limited to one report per reporter per 24 hours (block-height scoped)." · "Broadcasts directly to chain RPC; a WeVibe relay is retry-fallback only." · "The memory keeps serving during the window."
+- Then: "One-week resolution window."
 
-A report is the high-friction accountability primitive (denials are the low-friction ranking signal — §5.8). It has two stages: an on-chain report with a fixed org-resolution window, and — only if the org fails to resolve it — a public plaintext-reveal escalation. Most reports never reach the second stage; it exists precisely for the case where the org is captured.
+*Stage 2 — Resolution (org acts), two outcomes:*
+- "**Valid** → the leader deletes the ciphertext blob. A minimal on-chain transparency record is kept (reported and upheld, attributed to the contributor). Plaintext is NOT revealed."
+- "**Dismissed** → the leader clears the open report with a `clear_report` tx (`report_cleared = true`, `is_reported = false`; `was_reported` stays true)."
 
-**Stage 1 — On-chain report.** The consumer files the report from the plugin. Filing is **wallet-gated**: the reporter signs the report transaction from their own wallet and pays gas, and the reporter's **public wallet is recorded on-chain**. Filing sets on-chain flags on the memory: **`is_reported`** (an open report stands), **`was_reported`** (reported at least once — permanent, never unset), and later **`report_cleared`** (set only if the leader dismisses — see Stage 2). Filing is rate-limited on-chain to **one report per reporter per 24 hours** (block-height scoped), so one consumer cannot spam reports, and it starts a **one-week resolution window**.
+*Stage 3 — Expose (gated, final), triggered by window elapse or dismissal:*
+- "The reporter's public report unlocks and reveals the memory plaintext, anchored to the contributor-signed hash (§7.4). The block explorer renders it with full provenance — contributor pubkey, leader pubkey, org ID, original commit height, and the reporter's signed reason. One escalation per report; no re-publishing."
 
-Because the reporter is wallet-gated and gas-paying, the client broadcasts the report (and the later expose) **directly to chain RPC** — the canonical public RPC, env-overridable — with a WeVibe-operated relay as retry fallback only. No user-signed accountability transaction requires WeVibe infrastructure to reach the chain, so neither a captured org nor WeVibe itself can silently suppress the filing.
+*Diagram 6. Revealing is last because it is irreversible. A captured organization cannot both refuse to act and prevent the public record.*
 
-The memory **keeps serving** during the window; removal happens only on resolution, so a wave of frivolous reports cannot disrupt an honest org.
+### 7.6 The Expose Gate, Dispute, and Silent Acquiescence
 
-**Stage 2 — Resolution, or public escalation.** Resolution is decided off-chain by the org — by the **leader directly** (advisory input from members holding `can_moderate` may inform the decision, but the leader is the sole authority):
+Ordering is deliberate: file without reveal, allow one-week resolution, unlock reveal on dismissal/inaction, then allow one immutable leader counter-statement.
 
-- **Valid →** the leader **claws back the memory's storage deposit** and **deletes the ciphertext blob**. A minimal **on-chain transparency record** is kept — that this memory was reported and the report was upheld, attributed to the contributor. The plaintext is *not* revealed; the deleted blob plus the upheld record are the outcome.
-- **Dismissed →** the leader clears the open report with a `clear_report` transaction (`report_cleared = true`, `is_reported = false`; `was_reported` stays true).
+> **Silent acquiescence.** A leader who neither upholds nor dismisses during the window implicitly accepts the claim: reveal unlocks, and the on-chain report remains visible.
 
-If the org does neither and **the one-week window elapses with no leader action**, **or the leader dismisses** (`report_cleared`), the original reporter's **public report** unlocks. The reporter publishes a public on-chain report that **reveals the memory plaintext**, anchored to the contributor-signed hash (§5.4) so anyone can verify it independently; the block explorer renders it with full provenance — contributor pubkey, leader pubkey, org ID, original commit height, and the reporter's signed reason. Because all chain data is public, the plaintext reveal is irreversible and is therefore the **last** step — only after the org has had its governed window. One escalation per report; no re-publishing, no escalation loops. This recourse is what makes capture economically unsustainable: a captured org cannot both refuse to act and prevent the public record.
+### 7.7 Standing: Computed, Not Stored
 
-### 5.6 The Expose Gate, Dispute, and Silent Acquiescence
+**WeVibe's dashboard is not the courtroom. The chain is.** WeVibe surfaces do not aggregate or rank report statistics. The chain is publication; public judgment happens externally via explorer URLs.
 
-The ordering above is deliberate and gated:
+> There is no tribunal. There is only publication of unforgeable evidence on a chain no one controls.
 
-1. **File (no reveal).** The on-chain report names the memory and reason, sets `is_reported`/`was_reported`, and starts the one-week window. The plaintext is not revealed. The filing is a permanent, unsuppressable record.
-2. **Org's window to act.** The org upholds (clawback + blob deletion + transparency record) or dismisses (`clear_report`). A genuine uphold needs no public exposure; a dismissal does not protect the org — it unlocks the public report.
-3. **Expose (gated, final).** If the window elapses with no action, or the report is dismissed, the reporter's public plaintext reveal unlocks. Revealing is last because it is irreversible.
-4. **Dispute.** Once a memory is publicly exposed, the leader may publish exactly one leader-signed counter-statement on-chain, permanent and public at the same block-explorer URL. One response, no revisions — the single-reply rule forces a deliberate, final answer.
+The same principle governs the quieter, continuous judgment that decides whether a memory keeps surfacing at all.
 
-**Silent acquiescence.** A leader who neither upholds nor dismisses within the window has implicitly accepted the claim — silence in the face of a public claim is tacit agreement. The unresolved report unlocks the public reveal and the memory's `is_reported` flag stands.
+**What standing is.** Standing is a memory's current claim on a consumer's attention: whether it is eligible to surface, and how strongly it competes when it does. It is not a field. It is the output of a function:
 
-**The memory keeps serving during the window.** A report does not immediately remove the memory from retrieval — removal happens only on an upheld resolution (deposit clawback + blob deletion). The cost of filing falls on the reporter (gas); the cost of resolving falls on the leader; the memory keeps serving until one of those costs is paid. This prevents a coordinated wave of frivolous reports from disrupting an honest org.
+```
+standing(memory) = policy_v( events(memory) )
+```
 
-### 5.7 No Internal Courtroom
+where `events(memory)` is that memory's slice of the public, append-only evidence log (§9.5), and `policy_v` is a published, versioned, deterministic function whose hash is anchored on-chain.
 
-WeVibe's dashboard is not the courtroom. The chain is.
+**What that buys.**
 
-WeVibe's own surfaces — the dashboard, discovery pages, reputation profiles — never display report counts, report aggregates, per-org report statistics, or per-actor report metrics. The reasoning is structural:
+- **Anyone can check.** Given the public log and the anchored policy version, any client, auditor, or replacement hub computes the same standing, byte for byte. A hub that reports something else is caught by arithmetic, not by trust.
+- **The record cannot rot.** Because standing is never written to the chain, there is no stored judgment to become wrong, and no migration that would have to rewrite history to correct it.
+- **Policy can improve.** A better interpretation of the same evidence ships as a new anchored version. Old standing remains exactly reproducible under its own version; no history is edited to accommodate the change.
+- **Nothing is deleted.** A memory whose standing falls below the surfacing threshold stops competing for attention. It is not erased, not archived out of the chain, and not unrecoverable: if evidence changes, or policy changes, or an organization pins a different version, it returns. Withdrawal of infrastructure cannot destroy it, because the infrastructure never held it.
 
-- Any in-app aggregation of reports is gameable via sybil reporters. A coordinated set of attackers could inflate report counts on an honest org, weaponizing the platform against legitimate operators.
-- Any in-app aggregation is also censorable. Whoever controls the dashboard surface controls which reports get amplified and which get suppressed.
-- Any in-app aggregation creates the perception that WeVibe-the-protocol or WeVibe-the-team is the tribunal. There is no tribunal. There is no judging body. There is only publication of unforgeable evidence on an immutable chain that neither the org nor WeVibe controls.
+**What the evidence is.** Three kinds of observation carry most of the weight, and they are deliberately different from one another:
 
-The chain is the publication mechanism. The block explorer is the viewer. WeVibe provides the reporter a permanent on-chain transaction; the reporter shares the block-explorer URL wherever they choose — a social network, a competitor's community, a blog post, a Discord channel. The court of public opinion happens outside the system. WeVibe gets out of the way.
+- **A serve** records that a memory was retrieved, cleared the relevance floor, was shown to a human, and was accepted into a context. It is evidence of *relevance*, and by itself that is all it is.
+- **A block** records that a human deliberately refused a memory permanently. It is rare, high-intent, and unambiguous — the only negative judgment a person issues on purpose.
+- **An outcome** records what happened to the work that used the memory. It is evidence of *efficacy*, and it is the load-bearing signal (§7.8).
 
-The reporter's own dashboard view is the one exception: each reporter sees a private list of their own published reports with copy-link buttons (§7.5). That is ammunition for the reporter to share, nothing more. The leader receives a notification when a report is filed against a memory they committed, plus a response interface labeled with the response-window timeout and the leader's one-shot dispute — again, visible only to the leader.
+A serve alone does not credit a memory. Attention is not endorsement, and a corpus that rewards being looked at will fill with memories that are good at being looked at. Credit for a use is held until an outcome for that use is observed; if none is observed within the policy's window, the use contributes nothing in either direction. This is deliberate: the honest treatment of an unobserved use is silence, not a vote.
 
-### 5.8 Silent Denial as Cheap Negative Signal
+> **The honest boundary of standing.** Standing is a claim about evidence, not a claim about truth. A memory with strong standing has been used by people whose work then succeeded; it has not been proven correct, and no amount of accumulated evidence makes it so. Correctness in the strong sense belongs to the goal-sealed receipts of §8.12, to leader curation, and to the consumer reading the memory at the gate. Standing decides what competes for attention; it never decides what is true, and it never overrides the human gate.
 
-The plugin's four-button approval UI (Accept / Deny / Block / Report) gives the consumer two complementary negative paths beyond the session-scoped Deny. Reports — the on-chain filing and, if unresolved, the public escalation — are the high-friction, high-stakes accountability primitive described above. Blocks emit the low-friction, low-stakes denial signal that feeds retrieval ranking.
+**Contextual suppression (designed, disclosure-gated).** A memory is rarely wrong everywhere — it is wrong in a context. The evidence schema therefore reserves the ability for a block event to carry the *situation* in which the memory was refused, so that suppression can be scoped to similar situations rather than applied globally. This capability is specified but not activated: publishing a situation embedding on-chain would widen the disclosed semantic shadow of §4.5 from the memory side to the query side, and that is a confidentiality decision that must be made explicitly and disclosed plainly before the field carries data, not after. Until then, block evidence is scope-free.
 
-Denials and reports are status/accountability signals, not direct payout triggers. WeVibe keeps the social signal and economic payout paths decoupled.
+### 7.8 The Use Leg: Outcome as Evidence
 
-Clicking Block is silent: no confirmation modal, no required reason, no new UI surface. The reason field is optional. There is no gating — any consumer, trial or paid, may block any memory. There are no caps, no rate limits, no reputation weighting. Every denial event counts as exactly one denial event.
+The signal that decides whether a wrong memory leaves the corpus is not a button. It is what happened next.
 
-A denial does two things:
+**What is observed.** The plugin already segments a session deterministically into failure episodes: a failing signal appears, edits follow, and the signal either disappears or persists. When a memory was injected into an episode, the episode's conclusion is the observation — the work resolved, or it did not. That observation is signed as an outcome event bound to the memory, the episode, and an evidence reference.
 
-1. **Local suppression.** The memory is never re-served to this developer.
-2. **A negative signal to the retrieval layer.** The denial flows to the org's retrieval/storage component, which mirrors the chain's decay arithmetic locally. Retrieval ranking degrades immediately — a memory denied N times since the last on-chain settlement ranks lower than its chain-recorded weight would imply.
+**Why it is harvested, not reported.** Asking a developer "did that memory help?" produces a survey, not a measurement: it is answered rarely, by the wrong people, and with the biases of anyone rating a stranger's contribution. The build system already knows. Observation reads the machine's own record of what happened rather than a human's recollection of it, and the human's own report is retained only as a dispute path, not as the data source.
 
-**The optimistic ledger.** The chain remains the eventual source of truth for keyword weights and the decay state of every memory. Between on-chain settlements, the retrieval layer maintains an optimistic mirror: for each memory, the locally-applied decay reproduces the chain's Earned Trust formula — recomputing `denial_rate`, the trust gate, and the per-event decay/boost using the same parameters the chain will apply at settlement. The arithmetic mirrors the chain's exactly, so optimistic and authoritative ranking states are indistinguishable at retrieval time. When the relay's batch commits on-chain, the local mirror reconciles to the new authoritative weights and resumes from the new baseline.
+**Why no model judges it.** The observation is produced by deterministic code over the session event stream. A model asked to grade an episode is a judge on the contributor's hardware — the exact failure §2.7 exists to remove. The extraction model drafts; it does not grade. The observer counts; it does not opine.
 
-**Why silent and frictionless.** A denial is the cheap, low-stakes negative signal. UI friction (required reason, confirmation modal, rate caps) suppresses the signal and starves the decay model that depends on it. Reports remain the high-friction path with reporter accountability for cases where a single signal needs disproportionate weight. The two paths are complementary, not duplicative.
+**Three honest limits, stated plainly.**
 
-**Why no caps or reputation weighting on denials.** A single consumer cannot drive a memory to archived via denials alone. Archive requires every keyword weight to fall below the retrieval threshold (default 1500 bps), which under Earned Trust requires either sustained denial pressure pushing the denial rate above the trust gate, OR no offsetting serves over a long quiet period — both of which require organic volume that one actor cannot fake. Caps would protect against an abuse that has no payoff: a malicious consumer who spams denials can at worst suppress memories from their own recall queue (which they could do anyway through the local blacklist). Reputation weighting would create a class system where senior consumers have heavier "votes" than new joiners, require online reputation lookups on the recall hot path, and reproduce the reporter-accountability infrastructure for a signal whose semantics are explicitly lighter.
+- **Attribution.** An episode that resolved with a memory in context did not necessarily resolve *because* of it, and one that failed did not necessarily fail because of it. Episode-level scoping narrows the confounding considerably relative to session-level accounting, but it does not eliminate it. Outcome evidence is a correlation with provenance, not a causal proof; the causal instrument is the ablation receipt of §8.12, which is expensive and available only sometimes.
+- **Coverage.** Not every episode reaches an observable conclusion within the window. Uses that do not are recorded as nothing at all — neither positive nor negative. Coverage is therefore a property the network must measure and report, because a corpus whose evidence is thin is a corpus whose standing is weakly grounded, and pretending otherwise would be the same error as crediting unobserved uses.
+- **Label accuracy.** The observer can be wrong in both directions: a suite that goes green for unrelated reasons, an episode that resolves outside the observer's view. The accuracy of the observation is an empirical property of the harvester in a given environment, not a constant, and it varies with the task and the model doing the work. It is measured and published per environment rather than assumed.
 
-**Hub-relay settlement.** Serve and denial events settle on-chain through the hub→chain relay, not a manual leader action. The relay packs multiple epochs' `MsgSubmitServeBatch` / `MsgSubmitDenialBatch` messages into one multi-message commit-mode transaction per org, carried by the org's whitelisted serving key with gas paid via the org-account feegrant. The optimistic ledger means retrieval ranking already reflects every denial in real time; the relay commit is purely the settlement act — making the decay permanent across restarts and hub migrations and contributing to the org's on-chain activity record.
-
-The leader does not review individual denials. Denials are quantitative consumer signals, not editorial content; the relay settles accumulated decay, and the leader does not adjudicate individual user preferences.
+**Anti-gaming.** Outcome evidence would be worthless if a contributor could manufacture it. Three controls apply, in addition to the general integrity controls of §8.7: outcomes on a contributor's own memories are discounted, as self-serve attribution already is; events are deduplicated on-chain by fingerprint so retries and replays cannot inflate a count; and outcome events reference the evidence that produced them, so a claim of success is checkable against a trajectory rather than asserted.
 
 ---
 
-## 6. Provenance, Reputation, and the Social Graph
+## 8. Provenance, Reputation, and the Social Graph
 
-### 6.1 Reputation Is Provenance Made Visible
+### 8.1 Reputation Is Provenance Made Visible
 
-Reputation on WeVibe is not a gamification layer bolted onto a memory tool. It is the provenance layer rendered human-readable.
+Reputation is a presentation layer over signed chain events: what was contributed, where it served, under whose curation, and what happened afterwards.
 
-Every claim a profile makes is backed by a chain event someone signed and paid for: a contribution a bonded leader committed, a serve a real consumer's key attested, a domain built from curated keyword taxonomies. No platform captures this problem-solving exhaust today — GitHub shows repository output, LinkedIn is self-reported, and most AI-assisted debugging knowledge disappears into terminal history. WeVibe turns that daily exhaust into a public, verifiable record: contribution history, serve attribution, and badge progression tied to real chain events.
+### 8.2 Serve Attribution Is a Social Signal, Not an Economic One
 
-The two loops reinforce each other: memory retrieval quality is the utility loop; attributed public history is the motivation loop. Both are downstream of the same primitive — provenance.
+Serve attribution is public and on-chain, but decoupled from payout.
 
-### 6.2 Serve Attribution Is a Social Signal (Not an Economic Primitive)
+### 8.3 Identity and Attribution Model
 
-Serve attribution is kept on-chain and made public, but it is not part of VIBE payout mechanics.
+| Key | Role |
+|---|---|
+| `global_contributor_key` | Public identity for authorship and contributor-profile reputation. |
+| `org_serve_key` | Per-organization pseudonymous key used for retrieval, serve, and outcome events. |
 
-When a memory is served, attribution increments aggregate counters for:
+*Table 14. The `org_serve_key` proves organization activity and supports deduplication without auto-linking retrieval behavior across organizations. Users can opt in to publicly link selected organization activity to a profile.*
 
-- the **contributor** whose memory was served, and
-- the **org** where the serve happened.
+### 8.4 Open-Source Social Graph Client
 
-Those counters are source-of-truth chain state, read through RPC, and rendered by the social graph.
+The social graph is an open-source, forkable client over chain RPC; chain state remains source of truth.
 
-This decoupling is deliberate. Retrieval-based rewards are excluded from economics because they are gameable (manufactured retrieval loops can fake demand). Serve attribution is kept anyway because it is valuable as public status/reputation evidence. The signal remains; the payout coupling is removed.
+### 8.5 Badge Taxonomy and Display Scope
 
-### 6.3 Identity and Attribution Model
+Badge taxonomy is normative but non-economic. Canonical badge families and display semantics are specified in Appendix B.
 
-Serve attribution uses per-org pseudonymous serve keys. Each user has:
+### 8.6 Badge Scoping and Canonical Criteria
 
-- `global_contributor_key` — public identity for authorship and contributor profile reputation
-- `org_serve_key` — per-org pseudonymous key used for retrieval/serve attribution events
+Badges are earned per organization and optionally summarized on contributor profiles. No global cross-organization leaderboard is published.
 
-`org_serve_key` proves org membership activity and supports deduplication rules without auto-linking all retrieval behavior across orgs. Users can opt in to publicly link selected org activity to a profile.
+### 8.7 Signal Integrity and Anti-Gaming
 
-**Reputation is keyed by the passkey identity, not the wallet.** A contributor earns and accrues reputation under their passkey-derived contributor key from the moment they contribute — no wallet required. Earnings accrue on-chain to the same passkey identity (a claim-later balance), not to the wallet; a Cosmos wallet is an optional later upgrade for *withdrawal authority and leadership/bond*, not identity, and linking one does not by itself move reputation or unlock earnings. Carrying reputation onto a wallet is a deliberate, explicit **migration**, modeled as an **on-chain, dual-signed alias** (passkey pubkey → wallet address) that is gated by the contributor's own memory-contribution trail and recorded with an `is_migrated` flag. Until migration, reputation stays keyed to (and is resolved by) the passkey pubkey; after migration it resolves to the wallet via the alias. The chain is append-only, so no prior history is rewritten.
+Integrity controls include on-chain deduplication by fingerprint, per-epoch event caps, self-serve and self-outcome discounting, diminishing returns, and per-entry signature verification. Human review, block events, and the report rail provide additional negative feedback. Because standing is computed rather than stored, an anti-gaming improvement ships as a policy version rather than a chain migration.
 
-### 6.4 Open-Source Social Graph Client (Forkable, Self-Hostable)
+### 8.8 Public Discovery Interface (Opt-In)
 
-The social graph is an open-source display client over chain RPC. Anyone can fork and self-host it.
+| Visible to non-members (if public) | Not visible to non-members |
+|---|---|
+| Organization name, specialization, description, memory count, member count, age, leader identity, total serves, social-badge summary, standing-policy version in force, and the two unfakeable org-health signals below. | Memory content (encrypted on-chain), member identities (privacy-preserving), review history, payout rules. |
 
-Its role is presentation, not consensus. Chain state remains the source of truth; the social graph reads and renders:
+*Table 16. Discovery is opt-in per organization.*
 
-- contributor serve/contribution counters
-- org-level aggregate serve/contribution counters
-- reputation summaries and domain views
-- badge status and per-org badge breakdown
+> **Two unfakeable org-health signals**
+> - **Leader last active.** Timestamp of the latest leader-signed on-chain action.
+> - **Voluntary departure rate.** Share of members who left voluntarily over the trailing window.
 
-Because the client is forkable, WeVibe maintains canonical badge criteria in the reference display spec (§6.5, §7.2) so tier names stay comparable across forks. This is the exit guarantee applied to the social layer: WeVibe cannot kill anyone's public record, because the record is chain state and the viewer is forkable.
+Discovery surfaces do not aggregate report statistics.
 
-### 6.5 Badge Families (Status-Only, Per-Org Scope)
+### 8.9 Leader and Member Interfaces
 
-Badges are a first-class social feature with three families:
+Leader surfaces include review queue, member management, taxonomy, relay status, standing-policy version selection, and report-response controls. Member surfaces include role, contribution/serve summaries, and badge progress.
 
-1. **Serve-milestone badges** — thresholds based on how often a contributor's memories are served.
-2. **Rarity-tier badges** — derived from per-memory keyword supply/demand tiers, computed read-time by the social-graph display client; on-chain freeze of rarity semantics lands at mainnet.
-3. **Contribution-volume badges** — thresholds based on approved memory contribution volume.
+### 8.10 Reporter's Private View
 
-Scoping is per-org, with profile breakdowns instead of a single global ladder. This keeps competition bounded and useful: you can see where someone built reputation, without forcing all contributors into one network-wide leaderboard.
+Each reporter has a private list of their own reports and published escalations.
 
-Badge status is strictly non-economic: no VIBE reward, no emissions multiplier, no payout coupling.
+### 8.11 Session Provenance: The Honest Boundary
 
-### 6.6 Signal Integrity and Anti-Gaming
+Every provenance claim in this section rests on signatures over *submitted content*: the contributor signs the canonical body (§7.4), the leader's bonded signature publishes it, and evidence accrues to it on-chain. That chain of signatures proves **who submitted and who curated**. It does not cryptographically prove that the underlying coding session occurred as described.
 
-Even as status-only signals, attribution must stay hard to fake. The reputation layer deduplicates repeat serves, caps serves per memory per epoch, discounts serves a user makes to their own memories, and applies diminishing returns on repeated serves. Serve deduplication is hardened: the chain recomputes the fingerprint itself — from the memory id, the user's per-org serve key, and the epoch window — rather than trusting a client-supplied identifier, and each serve/denial entry carries a per-entry consumer signature the chain verifies, counting only verified entries.
+> **What provenance does not yet prove.** A contributor could fabricate a plausible "session" and submit memories extracted from it. Today's defenses against this are human and reputational — leader review, the contributor's reputation and wallet age shown at the gate, and the report rail — and they are real, but they are judgment, not proof. Accordingly, the word "verified" anywhere in this document means leader-curated and contributor-signed; it never implies session or model attestation.
 
-Human review (§5) remains the first anti-gaming gate: low-quality memories should fail approval before they can accrue social status. Denial and report systems (§5.5–§5.8) provide additional negative feedback signals without coupling directly to token payout.
+The designed answer is a cryptographic session-attestation rail (the `x/attestation` socket, held inactive in current scope). Hardware-attested inference can produce signed attestation receipts that bind a session — and, folded one step further, the extraction that distills it into a memory — to an attested model and the contributor's identity. Such receipts carry only cryptographic hashes, never session text, so any client can verify them without the session being disclosed; commercial confidential-inference gateways ship receipts with exactly these properties today [30][31]. When this rail ships, it arrives as an optional, per-field-graded provenance label — never a contribution gate, and never a single "certified" badge over a claim only partly proven.
 
-Optional attestation dimensions (difficulty/verification quality) are post-mainnet expansion points (§3.11–3.12).
+**Producer-model provenance and capability admission.** Every committed memory carries an immutable on-chain producer-model stamp plus a session/attestation reference riding the `x/attestation` envelope family. The stamp is immutable fact: canonical producer-model identity for the model that produced the source session. The hub remains rebuildable from chain state and materializes/indexes producer identity, attestation status, capability-registry snapshot ID, and a derived capability tier + uncertainty band.
 
----
+Capability classification is versioned policy rather than immutable fact: a pinned, dated index snapshot as primary with a coding-specific index as cross-check; tier + uncertainty-band output only (never raw scalar ordering); canonical upstream identity owns classification and aliases inherit with provenance; manual overrides are explicit, expiring, and auditable as supersessions. Missing classification fails closed.
 
-## 7. Organization Social Graph
+Recall applies capability eligibility before relevance ranking: a memory may inject only from a producer into equal-or-lower-capability consumers; lower→higher injection is forbidden; unknown producer/consumer classification fails closed; exact-self injection is allowed only when producer identity is cryptographically proven. This is an admission-stage pre-scoring filter, never a retrieval-scoring input, and it is distinct from standing (§7.7): eligibility asks whether a memory may be offered at all, standing asks how strongly it competes among those that may.
 
-### 7.1 Public Discovery Interface (opt-in)
+**Three legs, two pathways, one serving gate.** Admissible provenance resolves to exactly two pathways: **P1 `ATTESTED_EXECUTION`** (open-weight execution with verifiable workload/model identity — pluggable TEE/confidential-compute receipts today, CommitLLM-class local verifiable execution the recorded gap for local users) and **P2 `PROVIDER_WITNESSED`** (closed-weight sessions captured through a blind-witness TLS/transport commitment; the hub is the initial witness; it sees ciphertext + unavoidable metadata only and commits to the provider-authenticated request/response bytes). **P2 proves the real provider endpoint returned the committed bytes and binds the provider-reported model label — it does NOT prove which hidden weights ran.** `SELF_DECLARED`/`UNATTESTED` are absence states, never served. Major closed-weight providers do not expose cryptographic hidden-weight proof to ordinary API consumers; this is the honest limit, not a WeVibe defect.
 
-**Visible to non-members (if public):** Organization name, specialization, description, memory count, member count, age, leader identity, total serves, social badge summary, and two unfakeable org-health signals introduced below.
+Provenance admissibility is a distinct **SERVING gate** (moderation labels and contribution stay advisory/ungated; commit does not imply serveable). It is enforced two-tier: a hub pre-scan before ranking and gas-bearing work, then a receiving-client final check immediately before injection — the client wins, and unknown/missing/invalid evidence fails closed.
 
-**Not visible to non-members:** Memory content (encrypted on-chain), member identities (privacy-preserving), review history, payout rules.
+A servable memory needs admissible evidence for its **producer-session leg** (an ordered event/turn commitment root — versioned hash chain or Merkle accumulator — replacing the inadequate flat session hash) and its **extraction-session leg** (extraction is post-hoc, user-triggered, itself an LLM session — one call if it fits, else overlapping chunk fan-out; never one WeVibe-controlled call), joined by welds that bind producer-evidence→substrate, substrate/chunk-plan→every extraction request, and extraction-responses→the submitted memory.
 
-**Unfakeable org-health signals.** Discovery surfaces two behavioral metrics that are capture-resistant by construction:
+To these the evidence log adds a third: the **consumer-session use leg** (§7.8). Where the first two legs establish that a memory was honestly derived from a real session, the use leg establishes what happened when a stranger relied on it — bound to the consumer's session identity and evidence reference, signed by the consumer, and carrying the same absence semantics as the others. It is weaker than the producer legs by construction: it attests an observation about work, not a cryptographic property of execution.
 
-- **Leader last active.** Aggregated timestamp of the most recent on-chain action signed by the org leader's wallet — batch memory commits, denial settlements, member changes, report responses, epoch rotations. The signal requires a real wallet signature on a real transaction paying real gas. A dormant or captured org cannot fake it.
-- **Voluntary departure rate.** Members who left of their own accord in the trailing 90 days, expressed as a fraction of total membership. Departures are first-class on-chain events; sybils can be invited and can file reports, but they cannot fake people walking away. A cohort exiting a captured org is the strongest negative signal the public can read.
+**Provenance proves exact inputs, responses, identities, and deterministic derivation; it can never prove the synthesized memory is semantically faithful or correct** — that stays leader review, consumer judgment, accumulated outcome evidence, and objective engineering evidence. Later validators verify these legs; folding/IVC may compress the checks into one succinct proof bound to the trajectory root, but folding compresses existing trust and cannot manufacture missing evidence.
 
-**What is deliberately NOT surfaced.** Discovery does not display per-org report counts, report aggregates, dispute counts, dismissed-report counts, or any other report-derived statistic. The rationale is structural and is the same as in §5.7: every in-app aggregation of reports is gameable, weaponizable, and censorable. The chain is the public record; the block explorer is the viewer. Prospective joiners who want to investigate report history can do so on-chain; WeVibe's own discovery surface does not turn that history into a leaderboard.
+### 8.12 Goal-Sealed Trajectory Verification
 
-### 7.2 Badge Scoping and Canonical Criteria
+Section 8.11 fixed the honest boundary: signatures prove who submitted and who curated, never that the underlying session occurred. This section makes part of that gap irrelevant rather than closing it. Instead of proving the session, WeVibe proves the outcome — against a target fixed before the outcome existed. A memory that turns a pre-sealed check green is real knowledge even if its transcript is theater; for the class of work that admits an executable definition of done, the session-occurrence question dissolves.
 
-Organization profiles expose badge state in a per-org breakdown for both contributors and the org aggregate itself.
+**The goal seal.** At session start the plugin reads the project goal asserted in `AGENTS.md`, asks the contributor to confirm an executable test predicate that defines completion — often the currently failing test — and seals both, together with a hash of the starting working tree, under the contributor's signature and a signed timestamp.
 
-- **Per-org scope:** badges are earned and displayed in org context, then optionally summarized on contributor profiles.
-- **No cross-org leaderboard:** WeVibe does not publish a global rank table.
-- **Canonical criteria for display tiers:** rarity tier is computed read-time by the reference social-graph display client, with on-chain freeze of rarity semantics at mainnet; serve-milestone and contribution-volume thresholds come from a canonical reference spec used by the reference social graph so labels like "Legendary" remain consistent across forks.
+```
+goal_seal {
+  goal_id          : unique identifier; the goal stays open while the predicate is red
+  goal_text_hash   : sha256(goal statement as asserted in AGENTS.md at seal time)
+  predicate_hash   : sha256(test command || test file contents)
+  state0_hash      : sha256(working-tree manifest at seal time)
+  repo_binding     : .wevibe/org.json marker reference
+  sealed_at        : signed local timestamp
+  contributor_sig  : Ed25519 signature over all fields above
+  chain_anchor     : optional anchoring transaction hash (hook; unset in MVP)
+}
+```
 
-This canonical-spec-in-display approach preserves fork freedom while keeping badge semantics legible across the ecosystem.
+Seals are immutable. A wrong goal is never edited; it is abandoned and a new goal sealed, and every seal still predates its own outcome — which is the entire anti-backfill property. Abandoned goals still yield negative receipts.
 
-### 7.3 Leader Interface
+**The trajectory chain.** The plugin extends its session-signal harvesting (§5.2) by hashing working-tree states into a chained record of diffs, `state_0 → state_n`. The chain belongs to the goal, not the session: sessions attach to open goals ("Continuing goal X?") and continue the chain where the previous session ended, with each session boundary stamped with the predicate's color at that point. External changes between sessions — collaborator pushes, edits made outside the plugin — are recorded as explicit chain gaps: per-memory receipts survive a gap, but the completeness claim over the chain weakens, and the receipt says so.
 
-Hub-hosted web dashboard (`wevibe-dashboard`): pending review queue, memory browser, historical decisions, member management, org configuration, keyword taxonomy management, recovery status, direct memory authoring, bandwidth usage monitoring, relay/settlement status, and the report response interface.
+**Goal close.** When the sealed predicate passes, the goal closes and extraction unlocks over the entire chain, not the final session alone. Necessity is judged against the finish line, not the chapter: a fix from a mid-chain session that ended red can still be the load-bearing fix. Memories submitted before their goal closes carry tier T0 and are receipt-upgraded when it does.
 
-Serve and denial settlement runs automatically through the hub→chain relay (§5.8), not a manual leader action; the dashboard surfaces relay/settlement status (pending counts, last batch commit) for visibility. There is no per-denial review — denials are quantitative signals the relay batches and settles on-chain.
+**Diagram 7 — One goal, many sessions.**
+- Seal node: "Goal sealed: predicate + state_0, signed, timestamped."
+- Session 1: "Config change → predicate: RED."
+- Session 2: "Timeout raised → predicate: RED."
+- Session 3: "Timeout reverted; pool recycling added → predicate: RED."
+- Session 4: "Retry double-release fixed → predicate: GREEN. Goal closes."
+- Below-rail (session 3): "Ablation: revert pool recycling from final state → RED ⇒ load-bearing (T2)."
+- Below-rail (session 2): "Negative receipt: present at a red state, absent from the final green state (dnd)."
+- Terminal: "Extraction unlocks over the whole chain."
 
-The report response interface surfaces an open report against a memory the leader committed: during the response window it shows the remaining time and the uphold/dismiss actions; after a memory has been publicly exposed it offers the one-shot leader dispute. It links to the on-chain transaction once a response is published.
+*Diagram 7. The seal belongs to the goal, not the session. Receipts are judged against the finish line: a red chapter can still contain the decisive fix.*
 
-### 7.4 Member Interface
+**Receipts.** Each extracted memory cites the specific diff in the chain where its insight was earned. Three receipt types attach to that citation:
 
-Members see: role, contribution count, serve count, reputation summary, and per-org badge progress/status.
-
-### 7.5 Reporter's Private View
-
-Each reporter has a private list of their own reports and published escalations. Each entry shows a memory excerpt, the org name, the submission date, the leader's response status (pending / upheld / dismissed / unaddressed / disputed), and a copy-link to the on-chain transaction. This view is visible only to the reporter — it is the reporter's own record of escalations, and the place from which they share block-explorer URLs to whatever public forum they choose. No other user sees it.
-
----
-## 8. Storage Architecture
-
-### 8.1 On-Chain Encrypted Memory Storage
-
-Memory content is stored as encrypted blobs directly on the WeVibe chain. Each approved memory is a transaction that writes:
-- Encrypted ciphertext (AES-256-GCM)
-- Wrapped DEK (sealed to epoch key)
-- Plaintext metadata: org ID, epoch, contributor pub key, keywords/weights, stack tags, timestamp, provenance tier, and MC-1 schema version (`mc_version`)
-- Merkle leaf hash for the epoch batch
-
-Every validator replicates every memory. This is the storage guarantee — no separate challenge mechanism needed. Chain consensus IS the storage layer.
-
-**Size economics.** A typical memory is 500 bytes to 2KB encrypted. At 10,000 memories, that's ~10-20MB of chain state. At 100,000 memories, ~100-200MB. Cosmos SDK chains handle this comfortably. Pruning strategies for dormant orgs keep long-term state manageable.
-
-### 8.2 Keyword Index (On-Chain Metadata)
-
-Plaintext per-memory keyword weights are stored alongside encrypted memories on-chain. This enables keyword-based filtering without decryption. The tradeoff (keyword visibility) is accepted — see §3.7. The org-level keyword *taxonomy* itself — the controlled vocabulary a leader manages (add / merge / rename / deprecate) — is a hub-side capability (hub database + dashboard); both the org-level vocabulary version hash (`vocab_hash`) and the pinned `embedding_model_id` are anchored on-chain, so a rebuilt hub can (a) verify it restored the authoritative taxonomy and (b) re-embed under the correct model (§8.3 rebuildability; HUB-REBUILD §3.4). The chain carries each memory's keyword weights.
-
-### 8.3 Semantic Vector Index (Hub Qdrant)
-
-Vector embeddings are NOT stored on-chain. Stored-memory embeddings are computed at approval and upserted to the hub's Qdrant index, where similarity search runs over vectors plus keyword metadata. For recall, the MCP/plugin computes the query embedding locally via Ollama and sends the query vector to the hub.
-
-Qdrant stores vector + keyword metadata only — no plaintext memory content and no ciphertext. This "not ciphertext" is scoped to Qdrant, not to the hub as a whole: the encrypted blob the hub *does* hold lives in Postgres (`pending_submissions`, `rotation_buffer`) and on-chain (`StoredMemoryCommitment.EncryptedBlob`, §8.1), and the hub cannot decrypt it — the DEK is wrapped to leader/moderator keys and the hub never receives the epoch secret (§3.6). Qdrant itself holds only the vector + keyword shadow. Embeddings are derived data and remain off-chain; the entire index is rebuildable from chain state plus org keys, and the clean embeddings are a disclosed semantic shadow.
-
-### 8.4 Memory Metadata
-
-- **contributor_pubkey** — on-chain identity of the contributor
-- **model_origin** — contributing model
-- **stack_tags** — freeform technology tags
-- **version** — nullable version string
-- **source** — `session` | `doc_import` | `authored`
-- **provenance** — `tee-attested` | `commitllm` | `proxy-attested` | `self-declared` | `unattested` (graded per field)
-- **certified_model** — TEE-attested model measurement (checkpoint hash) of the session's production model, if any; certifies session provenance, not memory text
-- **derivation** — `verbatim` | `edited-after-extraction` (whether the submitted memory matches the pinned-extraction output)
-- **difficulty** — difficulty value (1–10) on the attested-memory record; feeds the per-contributor difficulty histogram in `x/reputation`. Automated scoring (§3.12) is the post-mainnet populator.
-- **quality** — quality value (1–10) on the attested-memory record (reputation XP = difficulty × quality). The Layer-2 grading LLM (§3.12) is the post-mainnet populator.
-- **approved** — boolean moderation state
-- **is_reported** — an open report currently stands against this memory
-- **was_reported** — reported at least once; permanent historical flag
-- **report_cleared** — the leader dismissed the open report via `clear_report`
-- **quarantined** — flag for memories with repeated upheld rejections; retrieval-policy exclusion
-- **deprecated** — curator has marked stale
-- **mc_version** — Memory Contract (MC-1) schema version
-
----
-
-## 9. Security Analysis
-
-### 9.1 Sybil Resistance
-
-Free account creation cannot be prevented — a keypair is offline math — so WeVibe does not try to gate identity creation. Instead it makes free identities **inert** and locates the gate where harm can occur:
-
-- A membership-less identity can do nothing — no contribution, no recall, no earnings — so an attacker minting identities at scale gains nothing.
-- **Org membership is the scarce, gated resource.** Membership is invitation/approval-only, with the human leader as the bouncer (and the org-slot itself is a hard-capped, auction-burned, forfeitable bond on the leader).
-- **Reputation is the soft stake** for wallet-free contributors: it is destroyed on removal, so a contributor who built standing and then turns malicious loses it and restarts at zero under a fresh, re-approval-gated identity.
-- **Contributors carry no bond and can never publish unilaterally** — every contribution is leader-gated and committed under the leader's sole signature (§9.7), so the leader's slot is the bond behind all published content. This is why frictionless, wallet-free contribution does not open a Sybil hole: the blast radius of a Sybil contributor is "wasted reviewer time," not "poisoned network," and that is bounded by rate-limits, booting, and cheap join-door friction (cooldowns, invite codes).
-
-### 9.2 Memory Poisoning
-
-Defense layers: submission-time wevibe-guard (advisory), OCR sanitization, human review with steganography detection, contributor reputation visible during review, recall-time blacklist + quarantine, recall-time wevibe-guard, recall-time OCR, artifact extraction with egress enforcement, plugin approval gate with contributor trust signals. Residual risk: semantic payloads, subtly wrong recommendations.
-
-### 9.3 Leader Key Compromise
-
-K_master compromise exposes all epoch-derived content. Mitigation: offline recovery phrase, encrypted vault with Argon2id, threshold recovery.
-
-Separately, hub infrastructure is treated as untrusted transport, not a trust root: endpoint authority comes from leader-signed on-chain `hub_endpoints` updates on the canonical chain, and client verification of hub-signed responses against on-chain `hub_serving_address` is the transport MITM defense.
-
-### 9.4 Chain State Observability
-
-On-chain data is public (encrypted blobs + plaintext metadata). An observer can see: org sizes, submission frequency, keyword distributions, serve patterns, contributor activity, reputation scores, report flags. They cannot see: memory content, decryption keys, member identities beyond pub keys, local blacklist state.
-
-### 9.5 Network-Level Anti-DDOS
-
-Anti-DDoS uses two complementary mechanisms. On testnet — where faucet tokens are free and so carry no economic deterrent — `x/bandwidth` enforces flat per-org per-epoch rate-limit caps; the chain rejects submissions/serves exceeding the cap. On mainnet, the per-memory **storage deposit** (a VIBE cost per committed memory) is the economic anti-spam, and `x/bandwidth` retires at mainnet launch. No org can flood the network regardless of off-chain resources.
-
-### 9.6 Content Suitability Policy
-
-**Suitable:** Coding patterns/anti-patterns, architecture lessons, debugging notes, dependency guidance, tool usage, process workflows, version-specific gotchas, negative knowledge.
-
-**Unsuitable:** Credentials/secrets, customer PII, regulated data, legal/HR records, high-sensitivity security incident details.
-
-### 9.7 Org Capture and Public Escalation
-
-A single actor wearing multiple hats — leader, every member with `can_moderate`, every contributing member — can fully capture an org's internal governance. Inside the org, every approval, every report dismissal, and every chain commit can be coordinated. Internal accountability primitives (advisory votes, dispute counts, internal review queues) provide no protection against this case: the captured operator simply approves their own malicious memories and dismisses every report filed against them.
-
-The system's security model is therefore not "prevent capture through internal governance." The system's security model is:
-
-> Make capture economically unsustainable through transparent on-chain accountability, frictionless exit for members, and a public escalation primitive designed so that a captured org cannot suppress it.
-
-The four load-bearing properties:
-
-1. **The chain is the unforgeable audit log.** Every consequential action — memory commit, denial settlement, report resolution, dispute publication, member departure — is a signed on-chain transaction. Neither the captured org nor WeVibe-the-protocol nor any platform operator can edit or suppress it after the fact.
-2. **Consumers hold an escalation path the org cannot close.** A dismissed (`clear_report`) or unaddressed on-chain report unlocks a reporter-signed public escalation — wallet-gated and gas-paid, revealing plaintext only after the one-week window elapses or the leader dismisses, anchored to the contributor-signed hash the leader cannot poison (§5.4) — and once published it cannot be edited or deleted. The reporter broadcasts the filing and expose **directly to chain RPC**, with the WeVibe-operated relay as retry fallback only: the censorship-resistance path does not depend on WeVibe-operated infrastructure, so neither a captured org nor WeVibe itself can suppress it.
-3. **Exit is unfakeable.** Members leaving voluntarily is a first-class on-chain event. Sybils can be invited and can file frivolous reports, but they cannot fake people walking away. The voluntary-departure-rate signal on public discovery (§7.1) lets prospective joiners read the most honest possible signal about whether existing members trust the org.
-4. **Hub compromise is a per-org degradation event, not network takeover.** Per-memory Umbral crypto and consumer-side wevibe-guard still gate plaintext/injection, and hub responses must verify against on-chain serving keys. A compromised endpoint can at worst degrade or poison recall for that org; it cannot mint identities, steal contributor keys, or affect other orgs. The endpoint can be rotated on-chain by leader signature, with clients auto-switching and passively notifying once.
-
-Worst case in this class is degraded/poisoned recall quality for one org, typically surfaced by guard/crypto checks and reversible by on-chain endpoint rotation.
-
-**The leader bears sole signature.** Co-attestation of additional reviewer pubkeys on leader-signed chain transactions is explicitly excluded (§5.3). A leader's chain commit binds the leader's wallet only. This concentrates responsibility on the actor who actually signs and prevents implicating advisory reviewers in chain-level decisions they did not directly authorize. The trade-off — accountability for individual advisory approvals becomes an org-local rather than chain-public concern — is acceptable because internal advisory-vote history cannot defend against a capture scenario anyway, and because making leaders sole signatories sharpens the public attribution of every consequential action.
-
-**Why no platform tribunal.** WeVibe deliberately does not become a tribunal that adjudicates published reports. Any in-app judging body is a capture vector — whoever controls the tribunal controls the verdict. The chain publishes the evidence; the block explorer renders it; the reporter shares the URL wherever they choose; the public judges on its own merits in whatever forums it chooses. WeVibe-the-protocol has no editorial role in that judgment (§5.7).
-
-**Residual: contributor-leader collusion.** If the contributor who submitted a memory and the leader who committed it are both adversaries, the contributor can sign a false plaintext hash, the leader can commit it, and a public report's plaintext reveal will not match the on-chain hash — making the report look invalid even when the underlying claim is true. The on-chain ciphertext + capsule remain as a final backstop: any future key disclosure (epoch rotation, org closure, legal discovery) lets independent parties decrypt and verify after the fact (§5.4). This residual cannot be eliminated at submit time — when content creator and content approver are the same adversary, there is no honest party in the verification chain to sign over.
-
----
-
-## 10. Decentralized Architecture
-
-### 10.1 Chain Architecture
-
-WeVibe's chain is a sovereign L1 appchain built on Cosmos SDK + CometBFT. Not a rollup — WeVibe requires deterministic finality (CometBFT provides this; rollups have multi-day challenge windows). The chain halts before it forks — safety-over-liveness is correct for memory attestation and storage.
-
-Chain org state carries `hub_endpoints` (an ordered list of 1–3 transport URLs for failover redundancy, set through a leader-signed setter transaction), while `hub_serving_address` remains the serve/deny signing-authorization key; clients resolve transport from chain RPC rather than manual URL config.
-
-### 10.2 The Four Roles
-
-**Developer (user).** Codes with an LLM. Onboards in seconds with a **passkey** (Face ID / fingerprint) — no wallet or seed phrase required to create an account, join an org, contribute, or recall. Sessions stay local by default, and contribution is explicit through the dashboard extraction/review/submit flow. May consume paid recall access through orgs, but chain mechanics stay abstracted behind plugin/hub UX. A wallet is an optional later upgrade — needed only to claim earned VIBE or pay mainnet fees. Experience: "I code, I choose what to contribute, my profile shows what I've solved."
-
-**Org leader (economic operator + curator).** Acquires an org slot (auction burn) and signs registration from their own wallet, curates memories, manages membership, and sets the org's recall-access/payment model (price + policy). Leader revenue comes from members' VIBE payments for org access, settled through an **on-chain demand-leg router** that enforces a protocol burn (`max(n%, floor)`) and routes the remainder **in-transaction to the leader's own wallet** — the network holds no revenue account. Members holding `can_moderate` are paid at leader discretion. The leader carries ongoing skin-in-the-game via the slot (self-assessed-value rent + forced-sale-in-window) and per-memory storage deposits. **Leaders earn no emissions.**
-
-**Validator.** Stakes VIBE, runs CometBFT consensus, stores all chain state (including encrypted memories), earns validator/staking emissions. Everything deterministic — no subjective judgments. Validators are the storage and availability layer.
-
-**WeVibe-the-protocol.** Open-source software. No company in the middle. WeVibe-the-company may run validators and operate orgs early on, but the protocol does not depend on any single entity.
-
-### 10.3 Token Economics
-
-Single token: **VIBE**. Used for staking, org-slot acquisition (auction burns), per-memory storage deposits, demand-leg router settlement, and contributor payouts.
-
-**Org slots (scarce, capped, auctioned).** Org capacity is a hard-capped set of registry-allocated slots (governance param: 32 alpha / 320 testnet / 3200 mainnet). Primary allocation is an ascending price per subsequent slot until the cap fills; a freed slot (abandoned/closed/lapsed) is re-homed by a descending (Dutch) resale. The acquisition payment is split 50/50: half is burned and half capitalizes the org's own on-chain account. The slot `org_id` is permanent and leader-independent. Scarcity + the burn is the network-level anti-spam.
-
-**Self-assessed-value rent (Harberger-style).** A leader posts a self-assessed value V for their slot, pays rent `r × V` per period, and anyone may force-buy the slot at V during a bid window. This keeps slots in productive hands without right-of-first-refusal chilling or grief-bidding. Non-payment/abandonment frees the slot back to Dutch resale and marks the org dormant.
-
-**Per-memory storage deposit (a keeper/liveness function, not a participation cost).** Each committed memory carries a small VIBE deposit that decays as storage rent and is keeper-claimable as a deletion bounty when exhausted/abandoned; pruning deletes the ciphertext blob but permanently retains accountability metadata. Its purpose is **storage hygiene and liveness** — it lets keepers **reap dead memories** and reclaim perpetual storage, and it provides the path to prune an org's memories if the **leader goes AWOL** (org abandoned/dormant) so the network is not stuck paying to store orphaned blobs forever. It is explicitly **not** a cost on contributing or a contributor bond (contributors pay nothing); the deposit is funded from the org side and prices the real (perpetual storage) externality at the granularity it occurs. A memory under an open report has its deposit frozen (unprunable until resolved). Parameterized ~0 on testnet (where `x/bandwidth` is the rate-limit guard instead).
-
-**Serve/deny receipt loop (earned trust — no VIBE).** Recall runs through the hub's **serve/deny route**: when a consumer recalls (or blocks) a memory, the hub relay submits a serve/denial batch to the chain (per-entry consumer-signed; carried by the org's whitelisted serving key, gas covered by the org-account feegrant). The chain folds those serve/denial events into each memory's **Earned Trust** standing, so a memory's retrieval weight rises with demonstrated usefulness and decays toward archival when it is denied or never served. This loop is **separate from the storage deposit**: it moves *no* VIBE and is purely the trust/decay signal — the deposit is the storage-liveness lever, the serve/deny loop is the quality lever.
-
-**Demand-leg router.** Members' recall-access payments settle through an on-chain router whose one job is to enforce the protocol burn `max(n%, floor)` and route the remainder **in-transaction to the leader's wallet** (the network holds no revenue account); `n`/`floor`/`r`/slot-cap are governance params.
-
-**Contributor payouts (contribution-only).** Contributors are paid per **approved memory** from the network contributor-emission budget, gated by a **network-set** qualification threshold. There is no payout per serve/retrieval. Reputation tiers may scale payout-per-approved-memory, but retrieval counts are excluded from VIBE flows.
-
-#### 10.3.1 Emission Schedule (locked)
-
-The protocol mints VIBE on a fixed **32-year schedule** from genesis:
-
-| Allocation | Amount | Notes |
+| Receipt | What it attests | Strength |
 |---|---|---|
-| Total supply | 1,000,000,000 VIBE | 10^6 uvibe per VIBE |
-| Foundation (genesis) | 10% = 100,000,000 VIBE | unlocked at genesis |
-| Validator (genesis) | 1% = 10,000,000 VIBE | docker validator self-delegation |
-| Validator 32-yr pool | 570,000,000 VIBE | emitted linearly over the schedule |
-| Contributor 32-yr pool | 320,000,000 VIBE | 1%/yr, capped at 10,000,000 VIBE/year |
+| **Predicate receipt** | The sealed test passed at `state_n`: exit status, environment fingerprint, and chain reference, signed. | A fact at goal close: the outcome met a definition of done fixed before the outcome existed. |
+| **Ablation receipt** | Reverting the memory's cited diff from the final state and rerunning the sealed predicate turns it red. | Necessity: the cited fix was load-bearing for the outcome. Best-effort — revert conflicts and flaky predicates void it; it is a graded bonus, never a rung every memory reaches. |
+| **Negative receipt** | The cited change was present at `state_x`, the predicate ran red there, and the change is absent from the final green state. | Deliberately weak: proves "not sufficient as tried, then" — never "wrong." A masked or incomplete idea earns the same receipt as a bad one. |
 
-**Per-epoch emission.** Validator emission = `validator_pool_remaining / remaining_epochs`. Contributor budget = `min(contributor_pool_remaining / remaining_epochs, annual_cap / epochs_per_year)`. The schedule length is 11,680 epochs (32 × 365).
+*Table 21. Receipts are contributor-machine artifacts: checkable claims, not proofs. See the boundary callout below.*
 
-**Qualifying contributors** are those with at least `contributor_qualify_threshold` (default 1) approved memories network-wide in the epoch. The contributor budget is split evenly among them. **Global rollover:** if no one qualifies in an epoch, that epoch's contributor budget rolls forward; the integer remainder of an even split also carries forward, so no VIBE is burned by rounding.
+**Failure-episode evidence.** Extractor evidence spans are produced by deterministic, code-only segmentation of the session stream into failure episodes: a failing signal, the edits that followed, and whether that signal later disappeared or persisted. Resolved episodes yield grounded symptom→diff→validation spans; unresolved episodes emit negative candidates ("tried X, symptom Y, unresolved") — **but only within a session that resolved at least one problem. A session that resolves zero problems produces zero memories; extracting from a zero-progress session is a hard integrity failure.** This is the substrate-level slice of receipt semantics — before seals, signatures, tiers, ablation runs, or chain anchors — with attribution bound to the full attempt diff (never a guessed line) and coincidental green flips explicitly disclosed. The same segmentation is what makes the consumer-side use leg observable (§7.8); one mechanism serves contribution and evidence alike.
 
-**Genesis seeding.** The emission pool (`validator_pool_remaining_uvibe`, `contributor_pool_remaining_uvibe`, `contributor_rollover_uvibe`, `start_epoch`) is written at chain genesis. Emission and decay both run in the chain's epoch-end hook.
+Leave-one-out ablation has a known blind spot: if either of two surviving changes alone keeps the predicate green, reverting one leaves it green and neither earns the badge, even though together they mattered. Full subset testing is combinatorial and deliberately out of scope.
 
-**Contributor attribution.** Emissions credit the *authoritative* contributor recorded on the committed memory (`contributor_address`), not a consumer-supplied serve payload field. The same address drives serve attribution.
+**Tier grading.** Receipts compose into a per-memory verification tier:
 
-**Claim path.** Contributor rewards accrue on-chain to a claim-later balance keyed to the passkey identity. They become withdrawable to a wallet only after the contributor links a Cosmos wallet **and** performs the explicit dual-signed on-chain migration (`is_migrated`; link ≠ migrate; §6.3). Privileged capabilities are the exception to wallet-optionality: a leader always has a linked wallet, and members granted `can_moderate` likewise require a linked wallet (they sign their advisory votes), since the leader is the sole wallet-signing bond for published content. The mint+claim transfer path carries a reentrancy guard and a double-claim/duplication guard as consensus-level invariants.
+| Tier | Requires | What it says at the gate |
+|---|---|---|
+| **T0** | Contributor signature over the canonical body (§7.4). | Today's baseline: a signed, leader-curated claim. |
+| **T1** | Goal seal + trajectory chain + predicate receipt. | The outcome met a pre-sealed definition of done. |
+| **T2** | T1 + ablation receipt. | The cited fix was shown necessary for that outcome. |
+| **T3** | T2 + attested-run receipt through the `x/attestation` socket (§8.11). | The receipts themselves were produced by an attested runtime, not merely claimed. |
+| **T4** | k independent contributors, k independent seals, matching context fingerprint, convergent fix [36]. | Stranger convergence: the certification is the agreement itself. A sybil must actually solve the task k times against k pre-fixed predicates. Requires corpus traffic; inert at cold start. |
 
-### 10.4 Validator Economics
+*Table 22. Tiers are per-field, per-memory labels — rendered in review and at the plugin gate — and are never a contribution gate. Exploration, design judgment, and much negative knowledge have no executable predicate and contribute at T0 indefinitely, by design. Tiers do not enter retrieval scoring, and they are distinct from both model-capability tiers (§8.11) and from standing (§7.7): a tier says what was proven at contribution time, standing says what has been observed since, and neither may override the human gate.*
 
-Validators earn standard Cosmos SDK staking rewards for running consensus, supplemented by the linear validator-pool emission (§10.3.1). Validators store all encrypted memories as part of chain state — this is not separate "operator work," it is inherent to running a node. No separate storage challenges needed.
+**Surfaces.** The contributor sees one banner at seal time ("Goal locked."), one question when resuming ("Continuing goal X?"), one stamp at session end, and one optional action at extraction ("Prove this memory mattered" — runs the ablation check, costs local compute, skippable). The reviewer queue gains a per-memory receipt strip: goal sealed before work ✓ / predicate passed ✓ / ablation red ✓ — or blank. The consumer gate gains the single Verification row specified in Figure 2. The four-button gate (Table 3) is unchanged, and nothing is ever blocked for lacking a receipt.
 
-### 10.5 Demand-Leg Economics (Non-Custodial Router)
+> **Why fabrication buys nothing.** A target fixed before the answer existed cannot be retrofitted to whatever was produced. And to forge a green predicate receipt, a contributor must make the pre-sealed predicate actually pass — which is the work itself. Verification cost collapses onto honest cost: proof-of-work for knowledge.
 
-Serve/retrieval attribution is **social, not economic** (§6): serve counts drive public profiles and badges, but do not trigger VIBE payout.
-
-Economic demand is the org access leg:
-1. Users buy VIBE and pay orgs for recall access.
-2. Access/payment model and pricing are **leader-set**; payments settle through the **on-chain demand-leg router** (the hub `org_credits` ledger is a mirror of chain state, never the source of truth).
-3. The router burns `max(n%, floor)` of each payment (governance params) — the deflationary sink.
-4. The remainder is the leader's revenue. The router **routes the remainder in-transaction directly to the leader's wallet** — there is **no network-held revenue account**. The per-org on-chain account is the **operating account** only (gas, feegrants, storage deposits, the 50% acquisition-retain capitalization, voluntary leader top-ups); it never accumulates member revenue.
-5. Leader compensates members holding `can_moderate` at discretion from that revenue (their own wallet); there is no protocol-enforced split.
-
-**Router enforcement.** Org recall access is gated through the router: the hub's `membership_active` flag is set for non-trial members **only by the hub's chain watcher upon a confirmed router payment event**; `org_credits`/subscription state is a strict mirror of chain payment events (the chain-first/hub-mirrored pattern). Trial members remain on the orthogonal trial path.
-
-**Canonical closed loop:** emission → contributors (contribution-only, claim after wallet-link + migration) + validators/stakers (mint/sell) → users buy VIBE → users pay orgs (leader-set model & price) → router burn + remainder to leader → leader pays members holding `can_moderate` → stake/secure → repeat.
-
-Leaders earn no emissions, there is no per-serve royalty, and there is no protocol-enforced split for members holding `can_moderate`. WeVibe is a **non-custodial** network — p2p payments + memory storage + reputation, holding no user or org funds. The only consensus-level economic infrastructure it requires here is the payment router that enforces the VIBE burn and routes the remainder in-transaction to the leader's wallet.
-
-### 10.6 On-Chain Modules
-
-Seven custom Cosmos SDK modules:
-
-- `x/org` — slot registry + acquisition auction (ascending primary; Dutch resale; self-assessed-value rent + forced-sale-in-window), per-org module account (operating account only — never holds member revenue), on-chain demand-leg router (membership payment → burn cut + remainder routed in-tx to the leader's wallet), membership, org-directory transport/auth fields (`hub_endpoints` — ordered list of 1–3 transport URLs for failover, via leader-signed setter tx; `hub_serving_address` serving/signing authorization key), serving-key feegrant, dormancy/abandonment detection
-- `x/memory` — pending commitment storage (hash + metadata, no blob until approved) with commitment expiry, approved memory blob storage (encrypted ciphertext as chain state), Merkle root submissions per epoch, contributor-signed verification anchor (plaintext/salt/ciphertext hashes), report flags (`is_reported`/`was_reported`/`report_cleared`), quarantine flagging
-- `x/serve` — batched serve receipt recording (per-org pseudonymous serve keys), per-entry consumer-signature verification, deduplication (memory_cid + serve_key + epoch), self-serve detection/discounting, contributor cross-org serve count aggregation for social attribution (non-economic)
-- `x/reputation` — per-contributor cross-org aggregated stats (serve count, org breadth, domain tags, rep score, wallet age). Enhanced mode per-org when attestation enabled (difficulty histogram, XP, provenance breakdown).
-- `x/emissions` — validator staking rewards, contributor emission distribution from the network pool, protocol-level emission schedule, claim-later balances + guarded mint/claim path
-- `x/bandwidth` — per-org per-epoch flat rate-limit caps (DDoS guard). This is the **testnet** anti-spam guard (faucet tokens are free, so economic deposits don't deter there); retires at **mainnet launch**, when the per-memory storage deposit takes over the anti-spam role
-- `x/attestation` — session-attestation storage socket. Held inactive until the pluggable attestation framework activates pre-mainnet; post-mainnet activation generalizes this socket into a typed proof artifact (`tee_receipt` / `zktls_proof` / `zkml_proof`)
-
-Standard SDK modules: `x/staking`, `x/auth`, `x/bank`, `x/gov` (wired for on-chain param updates), `x/slashing`, `x/distribution`.
-
-**Modules eliminated from v1.x:** `x/serving` (no separate operator serving sets — validators serve all), `x/challenge` (no storage challenges — consensus IS storage), `x/receipt` (replaced by x/serve), `x/operator` (merged into standard validator staking).
-
-### 10.7 Node Lifecycle (`wevibed`)
-
-The chain ships a runnable Cosmos SDK application and CLI (`wevibed`). A single-node bootstrap follows the standard pattern:
-
-1. `wevibed init {moniker} --chain-id {id}`
-2. `wevibed keys add validator --keyring-backend test`
-3. `wevibed genesis add-genesis-account {addr} 10000000000000uvibe`
-4. `wevibed genesis gentx validator 1000000000000uvibe --chain-id {id}`
-5. `wevibed genesis collect-gentxs`
-6. `wevibed start`
-
-The canonical local-devnet bootstrap (with the full genesis allocations from §10.3.1, epoch config, and emissions/reputation seeding) is `scripts/init-chain.sh`; the steps above are the standard skeleton.
+> **The honest boundary (checkable, not unforgeable).** T1–T2 receipts are produced on hardware the contributor controls and can be fabricated. Pre-commitment changes what a fabrication becomes: a forged receipt against a sealed predicate is a provable lie — reveal the sealed inputs, replay the predicate, watch it fail — anchored to the contributor's signature and handled through the same report rail as content disputes (§7.5). Replay requires the contributor's private states, so it bites only through the dispute path: a demanded reveal that is refused reads as silent acquiescence (§7.6), not as automatic detection. Two limits are permanent. A trivially weak sealed predicate yields technically true, practically empty receipts — a tier badge says "met its own pre-set bar," never "the bar was high"; bar quality remains with leader curation and the evidence log (§7.7). And no tier below T3 attests how the receipts were produced.
 
 ---
 
-## 11. Skill Model and Federation
+## 9. Storage Architecture
 
-### 11.1 Task-Context Skills (Roadmap)
+### 9.1 On-Chain Encrypted Memory Storage
 
-Curator-defined collections organized by task context. Skills are lightweight named sets of memories with a description that improve curation and social discoverability inside an org; ungrouped memories are allowed and skill assignment is optional.
+Approved memories are encrypted chain state: ciphertext, wrapped DEK, plaintext metadata, and batch Merkle leaves. Validators replicate all memory state.
 
-### 11.2 Cold-Start: Documentation Seeding (Roadmap)
+> **Size economics.** Typical encrypted memory size is 500 bytes–2 KB. At 10,000 memories: ~10–20 MB chain state; at 100,000: ~100–200 MB. Evidence events are far smaller per record but grow with usage rather than with corpus size; §9.5 states the compaction contract that bounds them.
 
-New organizations import canonical documentation as seed memories (source: `doc_import`), with session contributions extending and replacing seeds over time.
+### 9.2 Discovery Labels
 
-### 11.3 Federation (Design Phase)
+Per-memory labels are on-chain metadata: public plaintext terms that support discovery, browsing, and a capped retrieval bonus. Taxonomy management is hub-side but anchored by on-chain `vocab_hash` and `embedding_model_id`.
 
-Federation operates at the skill level. Orgs publish skill packages. Receiving orgs set quality thresholds. No individual contributor reputation crosses federation boundaries. Federation is deferred until the alpha curation loop is proven.
+Labels carry no weights in consensus, participate in no decay arithmetic, and have no bearing on whether a memory survives. A memory found purely by semantic similarity, matching no label at all, is a fully ordinary and fully countable retrieval; earlier designs that required a label intersection to record a use were removed, because the requirement rejected legitimate use and detected nothing.
+
+### 9.3 Semantic Vector Index (Hub Qdrant)
+
+Embeddings are hub-side derived data, rebuildable from chain state plus organization keys. Qdrant holds vectors + label metadata, not plaintext memory bodies; the confidentiality boundary and semantic-shadow concession are defined once in §4.5.
+
+### 9.4 Memory Metadata
+
+| Field | Meaning |
+|---|---|
+| `contributor_pubkey` | On-chain identity of the contributor. |
+| `model_origin` | Contributing model (producer-model stamp, §8.11). |
+| `stack_tags` | Freeform technology tags. |
+| `labels` | Public plaintext discovery labels (§9.2). Unweighted. |
+| `version` | Nullable version string. |
+| `source` | `session` \| `doc_import` \| `authored`. |
+| `approved` | Boolean moderation state. |
+| `is_reported` | An open report currently stands against this memory. |
+| `was_reported` | Reported at least once; permanent historical flag. |
+| `report_cleared` | The leader dismissed the open report via `clear_report`. |
+| `quarantined` | Flag for memories with repeated upheld rejections; retrieval-policy exclusion. |
+| `deprecated` | Curator has marked stale. |
+| `verification_tier` | T0–T4 receipt tier at commit time; upgradeable on goal close (§8.12). |
+| `receipt_refs` | Hashes of the goal seal, predicate receipt, and (if present) ablation receipt. Nullable. |
+| `mc_version` | Memory Contract (MC-1) schema version. |
+
+*Table 17. The per-memory metadata record. Note what is absent: there is no trust score, no weight, no standing, and no archive flag. Those are outputs of §7.7, not fields.*
+
+### 9.5 The Evidence Log
+
+The evidence log is the chain's record of what the network observed. It is the only substrate standing is computed from.
+
+**One envelope.** Every event carries `(event_type, org_id, memory_cid, window, signer_pubkey, nonce, [event fields], signature)` — Ed25519 over a canonical body, signed by the consumer's per-organization key. Every event is **content-free** (references and fingerprints only — never plaintext, keys, or memory content), **consumer-signed**, and **directly broadcastable** by the consumer; a WeVibe relay is retry-fallback only, never the required path. The organization serving key signs only the transaction envelope and carries gas under feegrant; it cannot mint event content.
+
+| Event | Records | Notes |
+|---|---|---|
+| **serve** | A memory was delivered to a consumer and accepted at the gate. | Content-free. No label condition of any kind. |
+| **block** | A human permanently refused a memory. | Optionally scoped to the situation of refusal — capability reserved, disclosure-gated (§7.7). |
+| **outcome** | The episode a memory was used in resolved, or did not. | The load-bearing signal (§7.8). Bound to episode identity and an evidence reference. |
+| **validity-predicate outcome** | A machine-checkable condition on the memory's applicability passed, failed, or could not be evaluated. | Staleness decided by fact rather than by elapsed time. Absence is recorded as absence, never inferred. |
+| **cost-to-discover** | What the originating work cost to reach the knowledge: cycles, tool calls, attempts. | Expensive to fabricate, since inflating it means doing the work. |
+| **convergence** | Independent sessions arrived at the same knowledge. | The positive counterpart of a dispute; underpins T4 (§8.12). |
+| **contest** | A memory is challenged as wrong, with counter-evidence. | Reserved; activation depends on the supersession mechanism. |
+| **sponsorship** | A principal stakes on a memory's continued presence in the index. | Reserved; presence only, never position — see §10.9. |
+
+*Table 23. The evidence event families. Reserved families carry defined slots and are not emitted until their dependent mechanisms exist; a reserved slot costs nothing, while a shipped-but-inert event type costs permanent state.*
+
+**The boundary rule.** No event may contain a verdict, a weight, a score, a trust value, an archive flag, or any derived judgment — and none may contain content. An event is an **observation with provenance**. Even an outcome's resolved/unresolved bit is a raw observed fact bound to evidence; what it *means* is policy's business, computed off-chain.
+
+**Growth and compaction.** Evidence accumulates with usage, not with corpus size, so the log grows without a natural bound and naive replay-from-genesis would grow with it. Two mechanisms keep the contract honest without breaking it. Old events may be **compacted** into windowed observation summaries — still observations, still content-free, never conclusions. And a computed standing state may be committed as a **hash anchor** for replay verification without the state itself becoming authoritative: a hash is a commitment to a computation, not a judgment about a memory. Both preserve the property that any party can independently arrive at the same standing from public inputs.
 
 ---
 
-## 12. Implementation Phases
+## 10. Security Analysis
 
-### Phase I: Alpha — The Knowledge Loop + The Accountability Rail
+### 10.1 Sybil Resistance
 
-- Working memory contribution/review/retrieval loop with encrypted on-chain memory storage
-- Org membership/role flows and leader-signed curation pipeline
-- Gated injection (four-button approval) across MCP/plugin entry points, with guard/sanitization
-- Consumer-filed on-chain reports, resolution window, public escalation, and direct-broadcast path
-- Chain-resolved hub endpoints with signed hub responses
-- Serve attribution counters on-chain for contributor + org provenance signals
+Free identity creation is not prevented; harm is gated at organization membership. Membership and publication are leader-gated, and contributor reputation is resettable on removal. Evidence events inherit the same gate: only members of an organization can sign events against its memories, and per-epoch caps plus on-chain deduplication bound what any one identity can contribute to standing.
 
-**Exit criteria:** A reliable daily loop from session output to approved memory to gated recall, with the report/expose accountability rail live end-to-end and attribution updating public provenance signals.
+### 10.2 Memory Poisoning
 
-### Phase II: Provenance Surfaces + Economic Settlement
+Canonical defenses and limits are specified in §4.7 (sanitization pipeline, Table 10) and §7.2 (review coverage limits). Residual risk remains semantic payloads and plausible-but-wrong guidance. The evidence log narrows the window on the second category specifically: a plausible-but-wrong memory that repeatedly fails to help the work accumulates the evidence of that failure, and standing falls. This is mitigation over time, not prevention at admission, and it is stated as such.
 
-- Public contributor/org profile surfaces over chain data (serve + contribution signals)
-- Badge surfaces for serve milestones, contribution volume, and rarity tiers in the reference social graph
-- Demand-leg router settlement, claim-later reward path, and slot resale/rent mechanics
-- Curator workflows for direct memory authoring, documentation seeding, and skill curation
+### 10.3 Leader Key Compromise
 
-### Phase III: Post-Mainnet — Attestation + Federation
+`K_master` compromise exposes epoch-derived content. Mitigations are recovery phrase handling, encrypted vaulting, threshold recovery, and on-chain serving-key verification.
 
-- Pluggable session-attestation framework (cryptographic and/or API-backed), per §3.11, generalizing `x/attestation` to typed proof artifacts
-- Two-layer difficulty scoring (§3.12) as an optional quality input once attestation infrastructure is live
-- Skill-level federation: publish/subscribe skill packages with receiver-side quality thresholds and no cross-org contributor-reputation portability
+### 10.4 Chain State Observability
+
+On-chain metadata is public; plaintext and local private state are not. Evidence events add a pattern surface: an observer sees which pseudonymous member used which memory and whether their work resolved. This is disclosed in the threat model (§4.1) and is a linkage consideration for any consumer who publicly links an organization identity to a profile (§8.3).
+
+### 10.5 Network-Level Anti-DDoS
+
+Alpha anti-DDoS is enforced by `x/bandwidth` per-organization per-epoch caps. Mainnet economic anti-spam is roadmap-scoped. Evidence events are rate-bounded by the same per-epoch caps.
+
+### 10.6 Content Suitability Policy
+
+| Suitable | Unsuitable |
+|---|---|
+| Coding patterns and anti-patterns, architecture lessons, debugging notes, dependency guidance, tool usage, process workflows, version-specific gotchas, negative knowledge. | Credentials/secrets, customer PII, regulated data, legal/HR records, high-sensitivity security-incident details. |
+
+*Table 18. What belongs in a WeVibe memory, and what does not.*
+
+### 10.7 Organization Capture and Public Escalation
+
+A single actor wearing every hat — leader, every member with `can_moderate`, every contributing member — can fully capture an organization's internal governance. Inside the organization, every approval, every report dismissal, and every chain commit can be coordinated. Internal accountability primitives provide no protection against this: the captured operator simply approves their own malicious memories and dismisses every report against them.
+
+The system's security model is therefore not "prevent capture through internal governance." It is:
+
+> Make capture economically unsustainable through transparent on-chain accountability, frictionless exit for members, and a public escalation primitive a captured organization cannot suppress.
+
+> **Four load-bearing properties**
+>
+> 1. **The chain is the unforgeable audit log.** Every consequential action — memory commit, evidence event, report resolution, dispute publication, member departure — is a signed on-chain transaction. Neither the captured organization, nor WeVibe, nor any platform operator can edit or suppress it after the fact. And because no judgment is written, there is no judgment to falsify: the log records what happened, and what it means is recomputable by anyone.
+> 2. **Consumers hold an escalation path the organization cannot close.** A dismissed or unaddressed on-chain report unlocks a reporter-signed public escalation — wallet-gated, gas-paid, revealing plaintext only after the window elapses or the leader dismisses, anchored to the contributor-signed hash the leader cannot poison (§7.4) — and once published it cannot be edited or deleted. The reporter broadcasts directly to chain RPC, with the WeVibe relay as retry fallback only.
+> 3. **Exit is unfakeable.** Members leaving voluntarily is a first-class on-chain event. Sybils can be invited and can file frivolous reports, but they cannot fake people walking away. The voluntary-departure-rate signal on discovery (§8.8) lets prospective joiners read the most honest possible signal.
+> 4. **Hub compromise is a per-organization degradation event, not a network takeover.** Per-memory Umbral crypto and consumer-side wevibe-guard still gate plaintext and injection, and hub responses must verify against on-chain serving keys. A compromised hub cannot mint standing either — it can only report standing that any client can recompute and reject. It can at worst degrade recall for that one organization; it cannot mint identities, steal contributor keys, or affect other organizations. The endpoint can be rotated on-chain by leader signature.
+
+**The leader bears sole signature.** Co-attestation of additional reviewer public keys on leader-signed chain transactions is explicitly excluded (§7.3). A leader's chain commit binds the leader's wallet only. This concentrates responsibility on the actor who actually signs and prevents implicating advisory reviewers in chain-level decisions they did not authorize.
+
+**Why no platform tribunal.** WeVibe deliberately does not adjudicate published reports. Any in-app judging body is a capture vector — whoever controls the tribunal controls the verdict. The chain publishes the evidence, the block explorer renders it, the reporter shares the URL, and the public judges on its own merits (§7.7).
+
+> **Residual: contributor-leader collusion.** If the contributor who submitted a memory and the leader who committed it are both adversaries, the contributor can sign a false plaintext hash, the leader can commit it, and a public report's plaintext reveal will not match the on-chain hash — making a true report look invalid. The on-chain ciphertext + capsule remain a final backstop: any future key disclosure lets independent parties decrypt and verify after the fact (§7.4). This residual cannot be eliminated at submit time — when the content creator and the content approver are the same adversary, there is no honest party in the verification chain to sign over.
+
+### 10.8 Receipt Integrity and Predicate Gaming
+
+Verification receipts move risk in one direction: they convert unverifiable narrative into checkable claims. Canonical semantics, tiers, and limits are specified in §8.12. Residual risks are three: fabricated T1–T2 receipts, detectable only through dispute-path reveal-and-replay; trivially weak sealed predicates, bounded by "met its own bar" label semantics and leader curation rather than cryptography; and leave-one-out ablation blindness to jointly redundant fixes. None of these widens the injection surface: tiers are labels rendered at the human gate, never bypasses of it, and a memory with no receipt is exactly as admissible as it is today.
+
+### 10.9 Standing-Policy Risk
+
+Moving judgment out of consensus removes a class of risk and introduces a smaller one that must be named.
+
+**The risk.** Standing is computed over the whole log, so a new policy version re-evaluates all history at once. A badly-drafted policy could therefore suppress a large fraction of an organization's corpus in a single deployment — with no vote, no signature, and no warning. Placing that power with whoever operates a deployment pipeline would recreate, in a new location, exactly the concentration the Four Exit Guarantees exist to prevent.
+
+**Three controls.**
+
+1. **Organizations pin their policy version.** The version in force for an organization's corpus is the organization's choice, recorded on-chain and upgraded deliberately. No operator can unilaterally re-judge a stranger's knowledge; a leader who declines an upgrade keeps the interpretation their members already accepted.
+2. **Every version is published before it is anchored,** with its behavioural delta against the incumbent measured on a fixed corpus. A policy that changes what survives must say so in advance, in numbers, or it does not ship.
+3. **Nothing is destroyed by a policy change.** Because standing is computed and no memory is deleted, a bad policy is reversible by pinning back. The worst case is a period of degraded surfacing, not a loss of knowledge — which is the correct failure direction for a system whose central promise is that knowledge cannot be killed.
+
+**Two open limits, stated rather than hidden.** The accuracy of outcome observation in production is an empirical quantity that varies by environment and must be measured per deployment rather than assumed from design (§7.8). And standing computed from evidence generated under a previous standing shapes what evidence is generated next — a feedback loop that a well-run deployment must measure directly, via randomized exposure and counterfactual comparison, rather than reason about from first principles.
 
 ---
 
-## 13. Open Design Questions
+## 11. Decentralized Architecture
 
-**Earned-Trust settlement lag.** What is the maximum acceptable divergence window between hub-optimistic ranking and chain-settled weights? The decay formula does not change — only event durability/timing semantics are in question (§5.8).
+### 11.1 Chain Architecture
 
-**Pending memory retention window.** How long do pending (unreviewed) commitments stay on-chain before auto-purging? 72 hours? Configurable per org?
+WeVibe runs as a sovereign L1 appchain on Cosmos SDK + CometBFT with deterministic finality and safety-over-liveness behavior. Organization state includes chain-resolved `hub_endpoints`; serving authority is separate (`hub_serving_address`); and the standing-policy version in force is anchored per organization.
 
-**On-chain storage limits.** At what scale does on-chain memory storage warrant tiered pruning beyond keeper reaping? 100K memories? 1M? Chain state growth and validator hardware requirements are modeled against adoption.
+### 11.2 The Four Roles in Detail
 
-**Embedding model evolution.** nomic-embed-text is confirmed for now. Future upgrades mean re-embedding all memories — this happens client-side at approval but needs coordination across org members.
+**Developer.** Onboards by passkey, contributes explicitly, recalls through the mandatory gate, and — passively — supplies the evidence that keeps the corpus honest.
 
-**Federation rollout scope.** Which minimum skill-package contract ships first (metadata, provenance, quality thresholds) when federation moves from design phase toward implementation?
+**Organization leader.** Signs org registration from their own wallet, is sole publishing authority for commits, and selects the standing-policy version in force.
 
-**Social-signal integrity for serves.** Serves are social/status signals (not payout inputs), but self-serve and coordinated-serve patterns still need monitoring policy and visibility.
+**Validator.** Runs consensus and stores encrypted chain state and the evidence log.
+
+**WeVibe (protocol).** Open-source software; no single operator is a required trust anchor, and no operator is an authority on what a memory is worth.
+
+### 11.3 On-Chain Modules
+
+| Module | Responsibility |
+|---|---|
+| `x/org` | Slot registry, membership, chain-resolved transport/auth fields (`hub_endpoints`, `hub_serving_address`), standing-policy version anchor, feegrant, dormancy/abandonment detection. |
+| `x/memory` | Pending commitments, approved encrypted blobs, epoch Merkle roots, contributor-signed anchors, report/quarantine flags. |
+| `x/serve` | The evidence log: recording and signature-verification of serve, block, outcome, and related event families; deduplication by fingerprint; self-authored discounting; per-epoch caps; compaction of aged windows. Holds no weights and computes no standing. |
+| `x/identity` | Passkey-derived contributor identity and key registry. |
+| `x/reputation` | Cross-organization contributor aggregates (contribution counts, serve breadth, domain tags). |
+| `x/emissions` | Validator rewards, contributor emissions, schedule controls, claim path. |
+| `x/bandwidth` | Per-organization per-epoch flat rate-limit caps in testnet/alpha anti-DDoS mode. |
+| `x/attestation` | Session-attestation storage socket (inactive in current scope; §8.11). Reserved anchor point for optional goal-seal and verification-receipt commitments (§8.12). |
+
+*Table 20. Custom modules. Standard SDK modules also in use: `x/staking`, `x/auth`, `x/bank`, `x/gov`, `x/slashing`, `x/distribution`.*
+
+### 11.4 Node Lifecycle (`wevibed`)
+
+`wevibed` follows standard Cosmos bootstrap patterns.
 
 ---
 
-## 14. References
+## 12. References
 
-[1] Song, D., Wagner, D., Perrig, A. (2000). Practical Techniques for Searches on Encrypted Data. *IEEE S&P.*
-[2] Curtmola, R., et al. (2006). Searchable Symmetric Encryption. *ACM CCS.*
-[3] Cormack, G.V., et al. (2009). Reciprocal rank fusion. *SIGIR '09.*
-[4] Reimers, N. & Gurevych, I. (2019). Sentence-BERT. *EMNLP 2019.*
-[5] Kusupati, A. et al. (2022). Matryoshka Representation Learning. *NeurIPS 2022.*
-[6] Greshake, K. et al. (2023). Indirect Prompt Injection. *arXiv:2302.12173.*
-[7] OWASP. (2025). Top 10 for LLM Applications.
-[8] Sha, F. et al. (2025). Lessons from Defending Gemini Against Indirect Prompt Injections. *Google DeepMind.*
-[9] Zou, A. et al. (2024). PoisonedRAG. *arXiv:2402.07867.*
-[10] Google DeepMind. (2026). AI Agent Traps.
-[11] MLS Architecture (RFC 9420).
-[12] Lambda Class. CommitLLM: Cryptographic commit-and-audit for LLM inference. *github.com/lambdaclass/CommitLLM.*
-[13] Morris, J. et al. (2023). Text Embeddings Reveal (Almost) As Much As Text. *EMNLP 2023.*
-[14] Huang, Y. et al. (2024). Transferable Embedding Inversion Attacks. *ACL 2024.*
-[15] Núñez, D. et al. (2018). Umbral: A Threshold Proxy Re-Encryption Scheme. *NuCypher / NICS Lab, Universidad de Málaga.*
+1. Song, D., Wagner, D., Perrig, A. (2000). *Practical Techniques for Searches on Encrypted Data.* IEEE S&P.
+2. Curtmola, R., et al. (2006). *Searchable Symmetric Encryption.* ACM CCS.
+3. Cormack, G. V., et al. (2009). *Reciprocal Rank Fusion.* SIGIR '09.
+4. Reimers, N. & Gurevych, I. (2019). *Sentence-BERT.* EMNLP 2019.
+5. Kusupati, A., et al. (2022). *Matryoshka Representation Learning.* NeurIPS 2022.
+6. Greshake, K., et al. (2023). *Indirect Prompt Injection.* arXiv:2302.12173.
+7. OWASP (2025). *Top 10 for LLM Applications.*
+8. Sha, F., et al. (2025). *Lessons from Defending Gemini Against Indirect Prompt Injections.* Google DeepMind.
+9. Zou, A., et al. (2024). *PoisonedRAG.* arXiv:2402.07867.
+10. Google DeepMind (2026). *AI Agent Traps.*
+11. *MLS Architecture* (RFC 9420).
+12. Lambda Class. *CommitLLM: Cryptographic commit-and-audit for LLM inference.* github.com/lambdaclass/CommitLLM.
+13. Morris, J., et al. (2023). *Text Embeddings Reveal (Almost) As Much As Text.* EMNLP 2023.
+14. Huang, Y., et al. (2024). *Transferable Embedding Inversion Attacks.* ACL 2024.
+15. Núñez, D., et al. (2018). *Umbral: A Threshold Proxy Re-Encryption Scheme.* NuCypher / NICS Lab, Universidad de Málaga.
+16. OpenAI. *ChatGPT Memory — Memory FAQ.* (accessed July 2026).
+17. Anthropic. *Claude Memory + Projects / Memory Tool.* (accessed July 2026).
+18. Google. *Gemini Personal Intelligence / memory.* (accessed July 2026).
+19. GitHub. *About GitHub Copilot Memory.* (accessed July 2026).
+20. Bhartendu-Kumar et al. *Rules & Memory-Bank pattern (Cursor / Windsurf / Cline / Roo).* (accessed July 2026).
+21. Mem0. *Mem0 — memory layer for AI agents.* (accessed July 2026).
+22. Letta AI. *Letta (formerly MemGPT).* (accessed July 2026).
+23. Zep AI. *Zep / Graphiti — temporal knowledge-graph memory.* arXiv:2501.13956 (accessed July 2026).
+24. LangChain. *LangMem / LangGraph long-term memory.* (accessed July 2026).
+25. *RAG-over-a-wiki (Notion/Confluence + vector DB).* Widely-used integration pattern (accessed July 2026).
+26. Recall Network. *Recall — decentralized intelligence layer.* (accessed July 2026).
+27. Ceramic Network. *Ceramic / ComposeDB.* (accessed July 2026).
+28. Arweave / AO. *Permanent storage protocol + compute layer.* (accessed July 2026).
+29. GaiaNet. *GaiaNet — GenAI agent network (litepaper).* (accessed July 2026).
+30. TLSNotary (Privacy Stewards of Ethereum). *TLSNotary — data provenance without compromising privacy.* (accessed July 2026).
+31. RedPill / Phala. *Confidential AI inference: attestation reports and signed receipts.* (accessed July 2026).
+32. Apple Security Engineering and Architecture. *Private Cloud Compute.* (June 2024; accessed July 2026).
+33. Google. *Private AI Compute.* (accessed July 2026).
+34. *Are Online Skill and Memory Modules Always Worth Their Tokens? A Budget-Constrained Study of Web Agents.* arXiv:2606.15017 (accessed July 2026).
+35. Wang, Z., et al. (2025). *Agent Workflow Memory.* ICML 2025; arXiv:2409.07429.
+36. *WISE-Flow: Workflow-Induced Structured Experience for Self-Evolving Conversational Service Agents.* arXiv:2601.08158 (accessed July 2026).
+
+---
+
+## Appendix A — Cryptographic Procedures
+
+Each organization has a master key `K_master`. Per-epoch keys derive from it via HKDF. The leader derives these keys locally.
+
+```
+K_enc(e)    = HKDF-SHA256(K_master, info="wevibe-enc-"   || epoch_be_bytes)
+K_audit(e)  = HKDF-SHA256(K_master, info="wevibe-audit-" || epoch_be_bytes)
+epoch_sk(e) = HKDF-SHA256(K_master, info="wevibe-umbral-epoch-" || epoch_decimal_ascii)[:32]   → Umbral secret key
+```
+
+- **K_enc(e)** wraps per-memory DEKs for approved memories in epoch *e*.
+- **K_audit(e)** is reserved for audit and receipt verification.
+- **epoch_sk(e)** is derived on the leader machine and never transmitted; the hub receives only `umbral_pk` and finished kfrags.
+
+Each memory is encrypted with a fresh DEK.
+
+```
+DEK             = random(32)
+ciphertext      = AES-256-GCM(DEK, nonce, plaintext_memory)
+wrapped_dek_mod = seal_to_pubkey(DEK, PK_mod(e))
+```
+
+On approval, the reviewer re-wraps DEK under the epoch encryption key.
+
+```
+wrapped_dek_enc = AES-256-GCM(K_enc(e), nonce, DEK)
+```
+
+The approved bundle (`ciphertext`, `wrapped_dek_enc`, metadata) is then published on-chain.
+
+```
+seal_to_pubkey:
+  1. Generate an ephemeral X25519 keypair.
+  2. ECDH between the ephemeral private key and the recipient's X25519 public key.
+  3. Derive a symmetric key via HKDF (info: "wevibe-envelope-v1").
+  4. Encrypt with AES-256-GCM.
+  5. Output: ephemeral_pubkey (32 bytes) || nonce (12 bytes) || ciphertext+tag
+```
+
+**Custody model invariant.** Each organization's `K_master` is independent random entropy.
+
+**Recovery.** BIP39 24-word recovery phrase; Shamir 2-of-3 threshold recovery; encrypted leader vault (`~/.wevibe/vault.enc`) with Argon2id (t=3, m=64 MB, p=4).
+
+---
+
+## Appendix B — Badge & Reputation Taxonomy
+
+| Family | Basis |
+|---|---|
+| **Serve-milestone badges** | Thresholds on how often a contributor's memories are served. |
+| **Outcome badges** | Thresholds on observed outcomes attributable to a contributor's memories, discounted for self-authored use (§8.7). |
+| **Contribution-volume badges** | Thresholds on approved-memory contribution volume. |
+
+*Table 15. Scoping is per-organization, with profile breakdowns instead of a single global ladder. Badge status is strictly non-economic: no reward and no payout coupling.*
+
+Organization-level badge state is canonical. Contributors may optionally summarize across organizations, but WeVibe does not publish a global leaderboard.
+
+---
+
+## Appendix C — The Document Set
+
+WeVibe is a family of interoperable services. This general architecture document captures the shared threat model, encryption design, evidence model, and contributor experience. Deeper, implementation-specific material lives alongside the source for each product: the consensus-layer economics and keeper architecture; the client stack (SDK, MCP server, guard, protocol assets) and plugin UX; the standing-policy implementations and their published version history; and the operational surfaces (hub, dashboard, infrastructure) with their deployment models. Use this document for cross-cutting concerns and the per-product sets for implementation specifics. Forward-looking capabilities and the token-economic model are specified separately in `ROADMAP.md`.
 
 ---
 
