@@ -7,6 +7,9 @@ with sprint-based milestones (no software version releases).
 
 ## [Unreleased]
 
+### Sprint-33
+- Recall-trigger supersession canon landed (2026-08-08): recall no longer fires per user prompt — it fires on ONE gated condition (second failure under the same stable failureKey while still red, D-RECALL-TRIGGER-REPEAT) and on nothing else; the four-button gate remains as specified but appears on the repeat-failure trigger and blocks (D-RECALL-GATE-BLOCKS). Supersession notes added across RECALL-PIVOT-SPEC, RECALL-SYSTEM, CANONICALUX, EXTRACTION-FLOW, MATCHING_ENGINE, MCP-TOOLS, RUNBOOK, DECISIONS, WHITEPAPER, WP-DESIGN-SPEC.
+
 ### Sprint-32
 - Identity/onboarding architecture locked: passkey-first, wallet-optional.
 - Storage-market economy folded into DECISIONS: slot auction, 50/50 burn/account split, per-memory deposit, and org-account feegrant.

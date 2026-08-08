@@ -113,6 +113,15 @@ The trust gate uses on-chain per-memory lifetime totals (`serve_count_total`, `d
 
 The retrieval engine produces a ranked list of memories to inject into the agent's context. The key change from naive top-N ranking is a two-phase position assignment:
 
+### Retrieval shape: FILTER-THEN-SEARCH (2026-08-08, RECALL-TRIGGER canon)
+
+The retrieval shape is now **FILTER-THEN-SEARCH** (D-RECALL-KEY-SPLIT applied to retrieval): the **stable facet** — the failureKey-derived episode/predicate identity, the stable filter dimension — is a **payload filter** applied to the candidate set *before* ranking; the **volatile need signature** (`needSignature`) is the **query vector** that ranks within it. This mirrors the two-key split of D-RECALL-KEY-SPLIT — opposite requirements, never fused:
+
+- **Stable dimension (payload filter):** the failureKey-derived identity narrows the candidate set *before* scoring.
+- **Volatile dimension (query vector):** the need signature ranks within the narrowed set.
+
+The γ/δ label boost is **UNCHANGED** by this shape. Candidate scoring remains Phase 1 (D-9.3, below): `keyword_boost = Σ(query_keyword_weight × memory_keyword_weight)`, `capped_boost = min(γ·keyword_boost, δ·vector_score)`, `final_score = vector_score + capped_boost`, defaults γ = 0.1, δ = 0.15.
+
 ### Phase 1: Candidate scoring (D-9.3 unchanged)
 
 Candidate score per memory:

@@ -281,6 +281,8 @@ throughout (§5, §7). Style so each action's name stands out.
 
 Two properties make the gate trustworthy. **No plugin installed means no memory injection path** — the MCP server has no route to force memory into an agent's context without the plugin front end. And injection is **per session, not per turn**: recall is queried on each user prompt, but a recalled memory is injected once per coding session (keyed to the session identifier), not re-pushed on every model turn; a relevance floor and surface budget keep the injected volume small.
 
+> **2026-08-08 — SUPERSEDED (RECALL-TRIGGER canon).** The claim that recall is queried on each user prompt is superseded. Recall is NO LONGER queried per user prompt. Recall now fires on ONE gated condition — the second failure under the same stable failureKey while still red (D-RECALL-TRIGGER-REPEAT) — and on nothing else. The four-button gate REMAINS as specified above; what changes is WHEN it appears (on the repeat-failure trigger, not per prompt) and that it BLOCKS (no timeout, no fallthrough — D-RECALL-GATE-BLOCKS). Full design: RECALL-PIVOT-SPEC §8.7 (workspace copy) and RECALL-SYSTEM §6.1.
+
 ### 2.6 Protocol, Not Platform
 
 WeVibe is a protocol with open, auditable surfaces. The chain, hub, local client, and plugin each perform one narrow role.
@@ -600,12 +602,16 @@ Top-to-bottom nodes:
 Mandatory branch (shared/org production memory):
 - **[Gated approval]:** explicit user action on every candidate — ACCEPT → inject context + attest serve on-chain · DENY → block for this session/context (no corpus signal) · BLOCK → personal blacklist + corpus denial signal · REPORT → file on-chain report (`is_reported`); the memory keeps serving until resolved.
 
+> **2026-08-08 — SUPERSEDED (RECALL-TRIGGER canon).** The gated-approval branch above REMAINS as specified — the four buttons are unchanged. What changes is WHEN the gate appears: it is presented on the repeat-failure trigger (second failure under the same stable failureKey while still red, D-RECALL-TRIGGER-REPEAT), not on every candidate per prompt. The gate BLOCKS — no timeout, no fallthrough (D-RECALL-GATE-BLOCKS). Full design: RECALL-PIVOT-SPEC §8.7 (workspace copy) and RECALL-SYSTEM §6.1.
+
 Benchmark/test-only note (outside shared-memory safety contract):
 - **Benchmark/test mode:** evaluation mode may auto-approve candidates for throughput testing; never enabled for production shared/org recall.
 
 Terminal node: "Agent continues, with or without memory."
 
 *Caption:* Diagram 3. Recall is queried on every prompt; shared-memory production flow uses a single mandatory human gate, with benchmark/test mode explicitly out of contract.
+
+> **2026-08-08 — SUPERSEDED (RECALL-TRIGGER canon).** The claim that recall is queried on every prompt is superseded. Recall is NO LONGER queried per prompt; it fires on ONE gated condition — the second failure under the same stable failureKey while still red (D-RECALL-TRIGGER-REPEAT) — and on nothing else. The shared-memory production gate REMAINS a single mandatory human gate; what changes is WHEN it appears (on the repeat-failure trigger, not per prompt) and that it BLOCKS (no timeout, no fallthrough — D-RECALL-GATE-BLOCKS). Full design: RECALL-PIVOT-SPEC §8.7 (workspace copy) and RECALL-SYSTEM §6.1.
 
 ---
 

@@ -2,7 +2,7 @@
 
 Last reviewed: Sprint 32 (2026-06)
 
-WeVibe Network exposes five tools via the Model Context Protocol.
+WeVibe Network exposes six tools via the Model Context Protocol.
 
 ## `wevibe_context`
 
@@ -72,3 +72,21 @@ List current org memberships.
 **Parameters:** None.
 
 **Returns:** Org IDs, roles, epochs, and egress modes.
+
+---
+
+## `wevibe_bind`
+
+Detect and confirm the verification predicate for the current repo — the verification-predicate binding tool.
+
+**Purpose:** Bind is where the verification predicate is detected and confirmed — one prompt, once per repo (D-RECALL-BIND-DECLARES-PREDICATE). Where no framework is recognized, the responsibility sits with the user: choose a matching org, open a PR, or fork and host a compatible client.
+
+**Predicate adapter (public contribution surface):** since the fork-if-unsupported answer puts framework coverage on contributors, the predicate adapter is ONE small documented interface — not framework handling scattered through the plugin. Contributors need exactly ONE file to copy. The adapter contract shape:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `runnable` | boolean | whether the predicate can run in this environment |
+| `exit_code` | number | run result status (0 = pass) |
+| `failing_identifiers` | string[] | identifiers the run failed on |
+
+**Returns:** Predicate binding status and the detected/confirmed adapter contract.
