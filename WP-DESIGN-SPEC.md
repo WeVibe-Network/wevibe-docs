@@ -502,7 +502,7 @@ WeVibe organizations are public developer communities. On-chain metadata is inte
 |---|---|
 | Organization IDs and topic tags; contributor public keys; encrypted memory blobs; plaintext keyword terms and weights; submission timestamps; memory sizes; epoch boundaries; serve receipts (batched per epoch); reputation aggregates; bandwidth consumption; quarantine state; report flags. | Decrypted memory plaintext; local wevibe-guard and blacklist state; session context profiles. |
 
-*Caption:* Table 9. Embedding vectors and keyword-weight metadata live in the hub's Qdrant (§9.3); the hub stores ciphertext and vectors but never decrypts.
+*Caption:* Table 9. The chain stores the encrypted memory blob; the hub's Qdrant holds embedding vectors and label metadata, alongside the Umbral PRE materials (capsule plus the DEK wrapped to the organization's epoch key) — never the memory plaintext, and never a key that opens it (§9.3).
 
 ### 4.7 Defense-in-Depth: The Memory Sanitization Pipeline
 
@@ -628,12 +628,12 @@ Local components are the MCP server + plugin, Umbral sidecar, and wevibe-guard. 
 | 1. Harvest session signals and build the deterministic need-card. | 1. Extract atomic memory candidates from the captured session substrate only when the contributor clicks `/sessions` → **Extract Memories** (client-side candidate generation, no submission yet). |
 | 2. Compute the query embedding locally via Ollama (`nomic-embed-text`). | 2. Sanitize, encrypt, and sign submission material. |
 | 3. Send the query vector (plus context filters) to the hub retrieval endpoint. | 3. Submit commitment data to the chain (organization pays submission bandwidth), then follow the moderation/finalization flow. |
-| 4. Fetch candidate ciphertext (chain is source of truth; hub serves it cached with Umbral PRE materials). | |
+| 4. Fetch candidate ciphertext from the chain, which stores it (batched commitment query); the hub supplies the Umbral PRE materials that unwrap the DEK. | |
 | 5. Decrypt locally through the Umbral sidecar. | |
 | 6. Run wevibe-guard sanitization/policy checks. | |
 | 7. Present the human approval gate and inject only approved context. | |
 
-*Caption:* Table 11. Vector retrieval itself is hub-side; the hub stores and serves ciphertext, vectors, and keyword metadata, and never decrypts plaintext.
+*Caption:* Table 11. Vector retrieval itself is hub-side; the memory ciphertext comes from the chain, while the hub serves vectors, label metadata, and the Umbral PRE materials, and never decrypts plaintext.
 
 **The extraction substrate.** A captured local session is the full plugin event stream: user messages (including repair/feedback turns), assistant text, tool calls with outputs (test runs, builds, and error output), and file-edit events. One deterministic substrate builder assembles that stream and is shared byte-identically by the dashboard Extract path and benchmark harnesses, so benchmark extraction and production extraction run over the same session bytes.
 
