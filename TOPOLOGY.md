@@ -1212,7 +1212,7 @@ src/
 ├── embed-card.ts
 ├── retrieval-card.ts
 ├── moderation.ts
-├── sidecar.ts
+├── umbral.ts
 ├── vault.ts
 ├── pending-vault.ts
 ├── key-store.ts
@@ -2011,11 +2011,12 @@ USER PROMPT (opencode session)
 **Call chain:**
 1. `handleRecall` (`http-server.ts:231`) — authorize; `flushDenials()` fire-and-forget (`:236`); parse body, apply governor defaults for limit/relevance_floor/surface_budget (`:239-256`); require `query` (`:263`); call `retrieve(input)` (`:281`).
 2. `retrieve()` (`retrieve-cli.ts:262`) — `initCrypto` → `ensureIdentity` (lazy biometric, registers PRE pubkey) → `loadMemberships` (`org-client.ts:240`) → select org → `getActiveHubUrlForOrg` → `buildQueryHarvest` (`:188`) → `buildNeedCard` (`retrieval-card.ts:84`) → `dissect_to_keywords` → `computeLocalEmbedding` (`embedding.ts`) → **`queryOrgMemories`** (`org-client.ts:121`, POSTs `/v1/orgs/{orgId}/query`) → `deserializeMemoryResult` (`deserialize.ts:56`).
-3. **Per-memory decrypt loop** (`retrieve-cli.ts:386-483`) — fetch ciphertext via `hubFetchVerified` `GET /v1/orgs/{orgId}/memories/{cid}` (`:392`); `decryptMemoryBlob` (`org-client.ts:403`): `getOrCreatePreIdentity` → `getEpochUmbralPk` → **`umbralDecryptReencrypted`** (`sidecar.ts:120`) → `decryptSymmetric(ciphertext, dek)` (AES); then `extractArtifacts` / `checkArtifactPolicy` / `transformMemoryContent` / `formatTrustPanel`; build `MemoryOutput`.
+3. **Per-memory decrypt loop** (`retrieve-cli.ts:386-483`) — fetch ciphertext via `hubFetchVerified` `GET /v1/orgs/{orgId}/memories/{cid}` (`:392`); `decryptMemoryBlob` (`org-client.ts:403`): `getOrCreatePreIdentity` → `getEpochUmbralPk` → **`umbralDecryptReencrypted`** (`umbral.ts`) → `decryptSymmetric(ciphertext, dek)` (AES); then `extractArtifacts` / `checkArtifactPolicy` / `transformMemoryContent` / `formatTrustPanel`; build `MemoryOutput`.
 4. Back in `handleRecall` — **`runWeVibeGuard`** per memory (`http-server.ts:302`); provider-policy check (`:321-328`); emit `{status:'ok', memories:[…], reason_code?}` (`:354`).
 
 **Decrypt + guard mechanics:**
-- **Umbral sidecar = `execFile` child process** (`sidecar.ts:54`). Binary from `WEVIBE_UMBRAL_SIDECAR_BIN` — **REQUIRED, no fallback; throws if unset** (`sidecar.ts:14`). Args `--capsule --cfrags --ciphertext --receiving-sk --delegating-pk`; returns `{plaintext}` on stdout. PRE secret key stored in OS keychain via `keytar` (`auth.ts:47`).
+- **Umbral = in-process WASM call** (`umbral.ts`), loaded from `vendor/umbral-wasm` relative to the package — **no environment variable, no binary, no subprocess**. Compiled from `wevibe-umbral/crates/core`, the same source as the native binary, so ciphertext stays byte-compatible in both directions. PRE secret key stored in OS keychain via `keytar` (`auth.ts:47`).
+  - Superseded the `execFile` sidecar in 0.3.0. The old path required `WEVIBE_UMBRAL_SIDECAR_BIN` at every launch site and broke three times (2026-07-05, 07-13, 08-14) when a launch script dropped it. It also passed secrets as argv, where `ps` could read them.
 - **wevibe-guard = `spawnSync`** (`guard.ts:43`); binary from `WEVIBE_GUARD_BIN` or relative fallback (`guard.ts:19-29`); JSON stdin → `{passed, detections, flags}`.
 - **Guard does NOT block** — failing memories are still returned with `guard.passed=false` attached (`http-server.ts:314-318`); blocking is delegated to the plugin.
 - **Decrypt failure silently skips the memory** (`retrieve-cli.ts:477-482` `continue`); only if ALL fail does `reason_code:'decrypt_failed'` surface. Partial loss is invisible to the caller.
