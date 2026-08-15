@@ -184,7 +184,7 @@ separate and lists every gap in §D and every mismatch in §10.
 **Code (the CURRENT implementation, §A):**
 - `wevibe-mcp/src/retrieve-cli.ts` — recall client `retrieve()`; contested-twin suppression.
 - `wevibe-mcp/src/config.ts`, `embedding.ts`, `embedding-config.ts`, `retrieval-card.ts`, `embed-card.ts`,
-  `query-scrub.ts`, `org-client.ts`, `sidecar.ts`, `http-server.ts` — client embedding/card/scrub/decrypt/route.
+  `query-scrub.ts`, `org-client.ts`, `umbral.ts`, `http-server.ts` — client embedding/card/scrub/decrypt/route.
 - `wevibe-server/wevibe-hub/internal/api/handlers/retrieval.go`, `internal/retrieval/{retrieval.go,ranking_core.go}`,
   `internal/config/config.go`, `internal/serves/serves.go`, `internal/umbral/service.go`,
   `internal/api/handlers/{keyword_extraction.go,recall_inspector.go}` — hub retrieval/scoring/serve/observability.
@@ -437,7 +437,7 @@ Every claim here is file:line-grounded and on-touch-validated 2026-07-15.
   policy before returning. (The `X-Agent-Signature` Ed25519 header is used **outbound** on the client→hub query,
   `org-client.ts:165`, not on this inbound route.)
 - **Decrypt.** `decryptMemoryBlob` (`org-client.ts:506`): fetch receiving-sk + delegating-pk
-  (`getEpochUmbralPk`) → `umbralDecryptReencrypted` (`sidecar.ts:206`, shells the Umbral sidecar binary) → DEK
+  (`getEpochUmbralPk`) → `umbralDecryptReencrypted` (`umbral.ts`, in-process WASM — no binary, no env var) → DEK
   (validated 32 bytes) → `decryptSymmetric`. Ciphertext fetched with fallback `ciphertext_hex ?? encrypted_blob`
   (`retrieve-cli.ts:454`). The receiving-sk / delegating-pk are the client's registered PRE keypair and the
   hub-served `umbral_pk` — see §12; all logs are fingerprints + sizes only — never raw secrets.
@@ -1096,7 +1096,7 @@ fingerprints, a correlation trace, outcome, and full errors — never raw secret
   decrypted_count`; `final memories returned count`. Structured op-log `recall.suppress` under
   `wevibe-meta/.logs/ops/`.
 - **Crypto fingerprints only.** Decrypt logs emit `capsule_fp`, `delegating_pk_fp`, `receiving_pk_fp`, `dek_len`
-  (32) and sizes — **never** raw keys / DEK / plaintext / ciphertext (`sidecar.ts` `redactSecretArgs`;
+  (32) and sizes — **never** raw keys / DEK / plaintext / ciphertext (`umbral.ts` (secrets no longer cross a process boundary at all);
   `org-client.ts` `recall.decrypt` op). Fingerprint = first-8-hex of `sha256(key)` per convention.
 - **Inject logs (`[inject]`).** These fire in **both** prod and test (not test-only): `start sid/eligible`;
   `injected count/chars/newly_served`; per-memory `<ISO> sid=… : <cid>(score,"preview")`; `nothing injected
@@ -1208,9 +1208,9 @@ shared-memory path.)*
       NOT a container — re-spawned by the plugin on fresh dist, so **restart opencode** after any redeploy or
       `:4450` stays stale); (b) a **container MCP** published on host `:4452` (container `4450`) to coexist with
       (a); (c) internal service ports. `mcp.wevibe.enabled:false` in opencode.json is intentional (the plugin is
-      the sole `:4450` spawner — it injects `WEVIBE_UMBRAL_SIDECAR_BIN`/`WEVIBE_GUARD_BIN`).
+      the sole `:4450` spawner — it injects `WEVIBE_GUARD_BIN`; Umbral needs none).
 - [ ] **Umbral sidecar** reachable on the Docker network at `wevibe-umbral:4460` — **Docker-internal only**, no
-      host `:4460` port is published; `WEVIBE_UMBRAL_SIDECAR_BIN` set for the host-side decrypt helper.
+      host `:4460` port is published. The host-side MCP does NOT use it — host Umbral is in-process WASM.
 - [ ] **Embedding endpoint** live; `~/.config/wevibe/dashboard.json` currently sets `embedding_provider: "ollama"`
       with `embedding_ollama_model: "nomic-embed-text:v1.5"` (Ollama `:11434`; LM Studio `:1234` is the alternate
       provider). **`search_query:`/`search_document:` prefixing is code-derived** (auto-on when the model name
