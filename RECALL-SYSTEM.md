@@ -131,7 +131,7 @@ re-encryption — the hub's only crypto op, and it still cannot read plaintext),
   It anchors org config (`vocab_hash`, `embedding_model_id`) and the edge policy (`policy_version` + hash), including
   `edge-policy-v1` at height 45 with hub `status=anchor_verified`; contributor-signed anchors and reputation remain
   separate chain records.
-- **Umbral sidecar (`wevibe-umbral`, Rust)** — the `ReEncrypt` primitive (hub-side) and local decrypt helper.
+- **Umbral (`wevibe-umbral`, Rust)** — the `ReEncrypt` primitive (hub-side `wevibe-umbral:4460` container) and the local decrypt module, which runs in-process from WASM shipped inside `wevibe-mcp` (`vendor/umbral-wasm`) — no binary, no path, no env var.
 - **Guard (`wevibe-guard`, Rust/YARA-X + regex)** — advisory sanitization at submit and at recall.
 
 **Design vs reality, honestly.** `WP-DESIGN-SPEC.md` is written as **the alpha product as-if-shipped** — it
@@ -274,11 +274,11 @@ stages appear only as the source of the encrypted, indexed corpus recall reads.
                              ▲ ReEncrypt(capsule,kfrag)=cfrag             │
         ┌────────────────────┴───────────────────────────────────────────┴──────┐
         │  LOCAL MACHINE  (the ONLY place plaintext lives at recall)              │
-        │  ┌────────────┐   ┌─────────────┐   ┌──────────────┐   ┌────────────┐  │
-        │  │  Plugin    │──▶│  MCP client  │──▶│ Umbral sidecar│  │ wevibe-guard│ │
-        │  │ (fire/gate/│   │ (embed/query/│   │  (decrypt)    │  │ (sanitize)  │ │
-        │  │  inject)   │◀──│  decrypt)    │◀──│               │  │             │ │
-        │  └────────────┘   └─────────────┘   └──────────────┘   └────────────┘  │
+        │  ┌────────────┐   ┌─────────────┐   ┌────────────┐  │
+        │  │  Plugin    │──▶│  MCP client  │──▶│ wevibe-guard│ │
+        │  │ (fire/gate/│   │ (embed/query/│   │ (sanitize)  │ │
+        │  │  inject)   │◀──│  decrypt)    │   │             │ │
+        │  └────────────┘   └─────────────┘   └────────────┘  │
         │  Ollama / LM Studio embedding endpoint (nomic-embed-text:v1.5, 768-d)  │
         └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -302,7 +302,7 @@ flowchart TD
     M --> N[contested = gap pos1,pos2 < 0.20 ?]
     N --> O[Umbral ReEncrypt each capsule toward member key -> cfrag]
     O --> P[return encrypted candidates + cfrag + contested + breakdown]
-    P --> Q[MCP fetch ciphertext; decrypt locally via Umbral sidecar]
+    P --> Q[MCP fetch ciphertext; decrypt locally in-process via WASM]
     Q --> R[extract artifacts + guard scan + sanitize]
     R --> S{contested === true and >=2 ?}
     S -- yes --> T[suppress twin pos2; keep pos1]
@@ -331,7 +331,7 @@ flowchart TD
 | **Provenance admissibility (SERVING gate; two-tier)** | hub + receiving client | distinct from eligibility and from moderation/receipts: serve only with admissible provenance for BOTH producer-session and extraction-session legs, graded to pathway P1 `ATTESTED_EXECUTION` / P2 `PROVIDER_WITNESSED` (absence states never served; commit ≠ serveable). Hub pre-scan before ranking/gas-bearing work, then receiving-client final check before injection; client wins; unknown/missing/invalid fails closed (D-PROVENANCE-ADMISSIBILITY-2026-07-23 §22; UNBUILT). |
 | **Filters / gates / governance** | hub (relevance_floor/surface_budget; membership/trial/rate-limit; memory-approval admission at intake) + MCP scrub + MCP-edge memory-approval admission | governor + auth gates on the capability-eligible set; unapproved memories fail admission before serving/intake. |
 | **Scoring / ranking / rerank** | hub | weighted-sum score + ranking, then power-law sampler + contested flag. (Model rerank: deferred.) |
-| **Decrypt / serve** | MCP + Umbral sidecar + hub ReEncrypt | cfrag → local decrypt → DEK → AES-decrypt. |
+| **Decrypt / serve** | MCP (in-process WASM) + hub ReEncrypt | cfrag → local decrypt → DEK → AES-decrypt. |
 | **User-facing behavior** | plugin + TUI | four-button gate, risk color, injection, toasts. |
 | **Attribution / standing interface** | plugin serve relay → hub serves → chain events → edge policy | serve/outcome events; D1+D3 serve-income-hold until outcome or pending window; standing recomputed at the edge from events + anchored `policy_version`. |
 | **Observability** | hub query_log/candidate_scores + per-op logs + traces | `/recall-health`, `[recall]`/`[inject]` logs, `X-WeVibe-Trace-Id`. |
@@ -608,9 +608,9 @@ numbers are the spec's own.
   twin-suppression is the shipped default; a model-based rerank is "optional, deferred, not part of the shipped
   path." §5.2 Diagram 3 shows the auto-query, plugin-gated flow with a benchmark/test auto-approve note explicitly
   *outside* the shared-memory contract.
-- **§6 Local architecture.** MCP server + plugin, Umbral sidecar, wevibe-guard. Recall-side local
-  responsibilities: harvest → embed via Ollama → send vector + filters to hub → fetch ciphertext → decrypt via
-  sidecar → guard → gate → inject. Clients do not download full corpora. §6.7 chain-resolved hub endpoints
+- **§6 Local architecture.** MCP server + plugin (in-process Umbral WASM), wevibe-guard. Recall-side local
+  responsibilities: harvest → embed via Ollama → send vector + filters to hub → fetch ciphertext → decrypt
+  in-process → guard → gate → inject. Clients do not download full corpora. §6.7 chain-resolved hub endpoints
   (untrusted transport, signature-verified responses).
 - **§7 Review & accountability.** Pre-commit lifecycle `pending_keyword → pending_chain → committed` (+ terminal
   `denied`), leader sole signer. §7.4 contributor-signed anchor (`plaintext_hash`, `salt`, `ciphertext_hash`
@@ -1344,7 +1344,7 @@ These are the author's suggestions, NOT decisions. Each names a failure mode; no
 
 - **Canon:** `wevibe-docs/DECISIONS.md`, `CANONICALUX.md`, `wevibe-docs/WP-DESIGN-SPEC.md`,
   `wevibe-docs/MATCHING_ENGINE.md`, `wevibe-docs/GAPS-LOG-2026-07-10.md`.
-- **Code (recall path):** `wevibe-mcp/src/{retrieve-cli,config,embedding,embedding-config,retrieval-card,embed-card,query-scrub,org-client,sidecar,http-server}.ts`;
+- **Code (recall path):** `wevibe-mcp/src/{retrieve-cli,config,embedding,embedding-config,retrieval-card,embed-card,query-scrub,org-client,umbral,http-server}.ts`;
   `wevibe-server/wevibe-hub/internal/{api/handlers/retrieval.go,retrieval/{retrieval,ranking_core}.go,config/config.go,serves/serves.go,umbral/service.go,api/handlers/{keyword_extraction,recall_inspector}.go}`;
   `wevibe-opencode-plugin/plugins/{wevibe-plugin,recall-harvest}.ts`, `tui/wevibe.tsx`;
   `wevibe-chain/x/memory/keeper/lifecycle.go` + `x/memory/types/params.go`; `x/{serve,org,reputation,attestation,bandwidth}`.

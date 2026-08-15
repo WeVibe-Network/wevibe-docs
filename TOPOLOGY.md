@@ -1786,11 +1786,11 @@ KFrag store updated (kfrags deleted for removed member)
 5. Member can no longer have memories re-encrypted for them
 
 **Approval + retrieval flow (CO-221/CO-222):**
-1. Moderator approval in wevibe-mcp decrypts DEK, fetches epoch manifest (`umbral_pk`), and calls sidecar `encrypt`.
+1. Moderator approval in wevibe-mcp decrypts DEK, fetches epoch manifest (`umbral_pk`), and encrypts in-process via WASM (`vendor/umbral-wasm`).
 2. wevibe-mcp sends `umbral_capsule` + `umbral_ciphertext` in approve payload; hub stores both in `pending_submissions`.
 3. Retrieval query uses Qdrant + chain for attestation, then loads capsule/ciphertext from PostgreSQL.
 4. Hub calls sidecar `ReEncrypt` with stored capsule and member PRE pubkey to obtain cfrag.
-5. Hub returns `cfrag + capsule + umbral_ciphertext`; wevibe-mcp calls sidecar `decrypt-reencrypted` with local PRE secret key and epoch delegating pubkey to recover DEK locally.
+5. Hub returns `cfrag + capsule + umbral_ciphertext`; wevibe-mcp decrypts in-process via WASM with local PRE secret key and epoch delegating pubkey to recover DEK locally.
 
 **Chain metadata parity flow (CO-224):**
 1. On approval, hub writes retrieval metadata into Qdrant payload: `keyword_weights`, `lifecycle_state`, `memory_type`, and embedding metadata.
@@ -1821,10 +1821,10 @@ KFrag store updated (kfrags deleted for removed member)
 4. For each memory with a capsule: hub calls `ReEncrypt` on sidecar (org_id, epoch_id, member_pk, capsule)
 5. Sidecar applies stored kfrag → returns cfrag
 6. Hub returns cfrag + capsule + umbral_ciphertext to consumer (hub never sees plaintext DEK)
-7. Consumer decrypts locally with `decrypt-reencrypted`
+7. Consumer decrypts locally via in-process WASM (`decrypt-reencrypted`)
 
 **Leader-side kfrag lifecycle (D-LEADER-SIDE-UMBRAL-MINT — supersedes CO-218 "Option C"):**
-- The LEADER mints kfrags locally (MCP umbral CLI, from the K_master-derived epoch_sk + member pre_pubkey) and StoreKFrags the finished kfrag to the hub sidecar (the hub never holds epoch_sk and never mints).
+- The LEADER mints kfrags locally (MCP in-process WASM, from the K_master-derived epoch_sk + member pre_pubkey) and StoreKFrags the finished kfrag to the hub sidecar (the hub never holds epoch_sk and never mints).
 - Hub triggers kfrag deletion on member removal (calls sidecar `DeleteKFrags`)
 - No chain event subscription needed for Phase 1
 
@@ -1958,7 +1958,7 @@ USER PROMPT (opencode session)
            → chain attest + Umbral ReEncrypt + contributor stats
            → QueryResponse{results,…}  ────────────────────────────────┐
                                                                         ▼
-[Stage 2]  per-memory: fetch ciphertext → Umbral sidecar decrypt (execFile)
+[Stage 2]  per-memory: fetch ciphertext → in-process Umbral WASM decrypt (`umbral.ts`)
            → AES decryptSymmetric → artifact policy → wevibe-guard scan (annotate only)
            → {status, memories[]}  ────────────────────────────────────┐
                                                                         ▼
