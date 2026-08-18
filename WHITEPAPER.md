@@ -86,7 +86,7 @@ And a shared corpus that only grows is not a corpus. Knowledge goes stale, and s
 
 The rest of this specification is structured as explicit answers to the six trust questions:
 
-1. **Authenticity** — is this really from who it claims? → contributor signatures + wallet identity; the contributor-signed anchor (§7.4) and the provenance/two-key model (§8). The remaining gap — proving the *session* itself — is stated openly in §8.11.
+1. **Authenticity** — is this really from who it claims? → contributor signatures + wallet identity; the contributor-signed anchor (§7.4) and the attribution key model (§8.3). The remaining gap — proving the *session* itself — is stated openly in §8.11.
 2. **Correctness** — is it right? → accountable human curation by the organization leader (§7); goal-sealed trajectory verification where the work admits an executable check (§2.7, §8.12); and, after the fact, outcome evidence: what happened in the sessions that used it (§7.7, §7.8). Human judgment admits it; recorded outcomes decide whether it stays.
 3. **Safety** — will it harm my agent? → local wevibe-guard sanitization plus a mandatory human injection gate (§4.7, §2.5 / §5.2).
 4. **Confidentiality** — who can read it? → Umbral proxy re-encryption; the hub cannot decrypt stored ciphertext, with the semantic-shadow boundary stated openly (§4.5).
@@ -296,6 +296,8 @@ Participants hold Ed25519 identity keys plus X25519 encryption keys. Contributor
 *Table 6. Removing a member advances the epoch. Rotation provides forward secrecy only — a removed member retains previously distributed epoch keys and can still decrypt content from their membership period.*
 
 > **Wallet-free contributor onboarding.** A contributor can create an account with a passkey (Face ID / fingerprint), install the plugin, and join an organization without a wallet. Contribution remains explicit and dashboard-driven with two consent gates: **Extract** then **Submit**. Evidence events are signed with the member's per-organization key and carried under the organization feegrant, so a consumer never needs a wallet or gas to be counted. A wallet is optional later for rewards and mainnet fees; the leader still requires a wallet to register and hold the organization slot.
+
+> **Identity and the wallet.** A wallet is optional and never an entry requirement: wallet-less users onboard with a passkey and join/contribute without a wallet; the leader still requires a wallet to register and hold the organization slot. There is ONE identity per human — the wallet is never a second identity, and identity is LINKED, never DERIVED (switching wallets never changes who the user is; prior history is never re-keyed). For wallet-holders the wallet is the identity root; for wallet-less users the passkey is.
 
 Chain state is authoritative for membership transitions; the hub mirrors chain events.
 
@@ -621,7 +623,7 @@ Every memory's submit-time canonical body includes three fields that, together w
 
 The contributor signs the canonical body with their own key. The canonical body, the signature, and the ciphertext all travel through moderation and land on the chain together. The leader's batch commit includes the contributor's signature; the leader cannot modify the signed fields without invalidating that signature.
 
-This is what makes the public report tier (§7.5) trustworthy without trusting the leader. Any future reveal of plaintext + salt can be verified against the on-chain `plaintext_hash` by a direct SHA-256 check, and the on-chain ciphertext can be verified against `ciphertext_hash`. The leader is removed from the verification chain entirely; a captured leader cannot poison the anchor because they do not sign it. The contributor cannot substitute ciphertext between submit and commit (the signature binds the specific `ciphertext_hash`), and cannot later claim different plaintext at escalation (the `plaintext_hash` binds them, and SHA-256 collision resistance prevents a second matching pair).
+This is what makes the public report tier (§7.5) trustworthy without trusting the leader. Any future reveal of plaintext + salt can be verified against the on-chain `plaintext_hash` by a direct SHA-256 check, and the on-chain ciphertext can be verified against `ciphertext_hash`. The leader is removed from the verification chain entirely; a captured leader cannot poison the anchor because they do not sign it. *(This guarantee presumes the contributor and leader are distinct principals. Where one principal legitimately wears both hats — a leader contributing to and curating its own organization's memories — the leader does sign the anchor, so this anti-capture guarantee weakens; the residual assurance is the leader's own slot-bonded accountability, not an independent contributor signature. See D-12.10 solo-hat discipline.)* The contributor cannot substitute ciphertext between submit and commit (the signature binds the specific `ciphertext_hash`), and cannot later claim different plaintext at escalation (the `plaintext_hash` binds them, and SHA-256 collision resistance prevents a second matching pair).
 
 > **Why the signature covers all three fields jointly.** A signature over `plaintext_hash` alone — without salt and without ciphertext binding — is vulnerable to contributor-plus-leader collusion: the contributor signs one hash while the leader commits ciphertext encrypting different content, and the asymmetry is undetectable. Binding all three fields in one signature closes the gap. The leader has no signing role in the anchor; the contributor has no opportunity to substitute ciphertext after signing.
 
@@ -725,6 +727,8 @@ Serve attribution is public and on-chain, but decoupled from payout.
 | `org_serve_key` | Per-organization pseudonymous key used for retrieval, serve, and outcome events. |
 
 *Table 14. The `org_serve_key` proves organization activity and supports deduplication without auto-linking retrieval behavior across organizations. Users can opt in to publicly link selected organization activity to a profile.*
+
+*(Terminology: the "two-key model" named here is the contributor's global key + the per-org serve key. The ADMINISTRATION two-key model — the leader's admin key (held on the leader's machine, pubkey logged on-chain) versus the hub's serve key (`hub_serving_address`, bounded serving authority on infra, §9) — is a different split and should not be conflated with this attribution table.)*
 
 ### 8.4 Open-Source Social Graph Client
 
