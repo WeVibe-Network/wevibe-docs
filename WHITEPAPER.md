@@ -283,17 +283,7 @@ Participants hold Ed25519 identity keys plus X25519 encryption keys. Contributor
 
 **Operation.** Members join by leader approval. The leader distributes sealed key envelopes for the current epoch.
 
-**Rotation.** Removing a member sets `rotation_pending` and requires epoch advancement.
-
-| Step | Action |
-|---|---|
-| 1 | **Removal triggers `rotation_pending`.** The chain marks the organization pending rotation; the removed member's envelope is deleted. |
-| 2 | **New submissions are buffered.** Contributors can still submit, but submissions enter a hub-side rotation buffer — not admitted to the chain, not indexed for retrieval, not assigned a final epoch. |
-| 3 | **Leader completes rotation.** The leader derives new epoch keys from K_master via HKDF, generates a new moderation keypair SK_mod(e+1)/PK_mod(e+1), and re-seals envelopes for all remaining members. |
-| 4 | **Buffer finalizes.** After rotation completes, buffered submissions are released to the chain under the new epoch. |
-| 5 | **Grace-period escalation.** If rotation is not completed within 72 hours, the organization's submission bandwidth is suspended until it is. |
-
-*Table 6. Removing a member advances the epoch. Rotation provides forward secrecy only — a removed member retains previously distributed epoch keys and can still decrypt content from their membership period.*
+> **Superseded — epoch-0 pivot.** Epoch rotation was removed; WeVibe now uses a single fixed epoch-0. Epoch keys are derived once and never re-keyed, and removing a member no longer advances the epoch, buffers submissions, or re-seals envelopes for remaining members. Landed in commits `81be93d` (chain: remove MsgRotateEpoch), `3254fe8` (mcp: remove rotateEpoch), `c0e7678` (server: remove epoch rotation), `0089e92` (umbral: single kfrag per member).
 
 > **Wallet-free contributor onboarding.** A contributor can create an account with a passkey (Face ID / fingerprint), install the plugin, and join an organization without a wallet. Contribution remains explicit and dashboard-driven with two consent gates: **Extract** then **Submit**. Evidence events are signed with the member's per-organization key and carried under the organization feegrant, so a consumer never needs a wallet or gas to be counted. A wallet is optional later for rewards and mainnet fees; the leader still requires a wallet to register and hold the organization slot.
 
@@ -395,7 +385,7 @@ Decrypt   (client-side, on the member's device, REQUIRES the secret b)
 >
 > For search, the hub holds — in Qdrant — clean float32 embeddings plus plaintext label metadata: a disclosed, lossy, realistically-invertible **semantic shadow** of each memory (§4.6, §9.3). Published embedding-inversion research [13][14] shows approximate content recovery from clean embeddings is realistic. The mitigations here are **operational, not cryptographic**: Qdrant API auth, internal-network deployment, per-organization collection isolation, and signed responses. Encrypted vector search is the documented evaluation trigger — formally evaluated when an organization requests confidentiality-sensitive hosting, or when public-testnet launch planning begins, whichever comes first. WeVibe makes **no** claim of a zero-knowledge index or a content-confidential hub. "Cannot decrypt" and "learns nothing" are different guarantees, and only the first is made.
 
-Two further notes. **The consumer-side injection gate is live and enforced today** — a blocking, fail-closed human-approval step (Accept/Deny/Block/Report, §2.5) that injects only human-approved memories; benchmark/test mode outside the shared-memory safety contract may auto-approve for evaluation only. **Key locality:** the hub never receives `epoch_sk`; only the epoch public key and finished kfrags cross the wire, and the confidentiality proof rests on this locality holding cleanly.
+Two further notes. **The consumer-side injection gate is live and enforced today** — a blocking, fail-closed human-approval step (Accept/Deny/Block/Report, §2.5) that injects only human-approved memories; test/verification mode outside the shared-memory safety contract may auto-approve for verification purposes. **Key locality:** the hub never receives `epoch_sk`; only the epoch public key and finished kfrags cross the wire, and the confidentiality proof rests on this locality holding cleanly.
 
 ### 4.6 Metadata Visibility Model
 
@@ -462,7 +452,7 @@ Retrieval is hub-served; plaintext handling remains local. The hub retrieval pla
 > - **dnd** — negative knowledge: what *not* to do, and why.
 > - **stack** — the specific technologies involved.
 >
-> This atomic form is preserved end-to-end: every extraction consumer, benchmark harnesses included, operates on individual memory objects. Collapsing multiple atomic memories into a single text blob is a conformance violation.
+> This atomic form is preserved end-to-end: every extraction consumer operates on individual memory objects. Collapsing multiple atomic memories into a single text blob is a conformance violation.
 
 **Retrieval scoring.**
 
@@ -500,12 +490,12 @@ Mandatory branch (shared/org production memory):
 Post-injection (no user action required):
 - **[Observation]:** the plugin watches the episode the memory was injected into. If it reaches an observable conclusion, an outcome event is signed and broadcast. If it does not, nothing is signed and nothing is claimed (§7.8).
 
-Benchmark/test-only note (outside shared-memory safety contract):
-- **Benchmark/test mode:** evaluation mode may auto-approve candidates for throughput testing; never enabled for production shared/org recall.
+Test/verification-only note (outside shared-memory safety contract):
+- **Test/verification mode:** may auto-approve candidates for throughput testing; never enabled for production shared/org recall.
 
 Terminal node: "Agent continues, with or without memory."
 
-*Diagram 3. Recall is queried on every prompt; the shared-memory production flow uses a single mandatory human gate, with benchmark/test mode explicitly out of contract.*
+*Diagram 3. Recall is queried on every prompt; the shared-memory production flow uses a single mandatory human gate, with test/verification mode explicitly out of contract.*
 
 > **2026-08-08 — SUPERSEDED (RECALL-TRIGGER canon).** The claim that recall is queried on every prompt is superseded. Recall is NO LONGER queried per prompt; it fires on ONE gated condition — the second failure under the same stable failureKey while still red (D-RECALL-TRIGGER-REPEAT) — and on nothing else. The shared-memory production gate REMAINS a single mandatory human gate; what changes is WHEN it appears (on the repeat-failure trigger, not per prompt) and that it BLOCKS (no timeout, no fallthrough — D-RECALL-GATE-BLOCKS). Full design: RECALL-PIVOT-SPEC §8.7 (workspace copy) and RECALL-SYSTEM §6.1.
 
@@ -530,7 +520,7 @@ Local components are the MCP server + plugin, Umbral sidecar, and wevibe-guard. 
 
 *Table 11. Vector retrieval itself is hub-side; the memory ciphertext comes from the chain, while the hub serves vectors, label metadata, and the Umbral PRE materials, and never decrypts plaintext. Observation is local because only the local machine can see what happened.*
 
-**The extraction substrate.** A captured local session is the full plugin event stream: user messages (including repair/feedback turns), assistant text, tool calls with outputs (test runs, builds, and error output), and file-edit events. One deterministic substrate builder assembles that stream and is shared byte-identically by the dashboard Extract path and benchmark harnesses, so benchmark extraction and production extraction run over the same session bytes.
+**The extraction substrate.** A captured local session is the full plugin event stream: user messages (including repair/feedback turns), assistant text, tool calls with outputs (test runs, builds, and error output), and file-edit events. One deterministic substrate builder assembles that stream, so all extraction runs operate over the same session bytes.
 
 **The observation substrate.** The same event stream is what makes outcome observation possible: deterministic, code-only segmentation partitions it into failure episodes — a failing signal, the edits that followed, and whether that signal later disappeared or persisted. Observation reads those episodes; it does not ask a model for an opinion (§7.8).
 

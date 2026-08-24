@@ -209,18 +209,20 @@ Only the high-relevance + high-risk quadrant earns an interruption.
 - **Popup border is color-coded by risk:** green (safe/trusted/guard-clean) / amber (low-trust or low-confidence) / red (guard-flagged).
 - **Four consumer options (2×2, retires "risk appetite"):** content `[All memories | Negative signals only]` × gate `[Direct inject | Approval gate]`. Default = All + Approval gate.
 - **Non-defeatable safety override:** in ALL four modes a wevibe-guard-flagged candidate forces a one-off popup. "No gate" governs the routine path only; the scanner is never skipped.
-- **Deferred-but-planned:** per-candidate quality labelling, the batched quality tray, and the "gated on risk" smart-gate third mode. For now the four binary options stand, and the floor + surface budget contain fatigue by keeping injected volume small.
+- **Deferred-but-planned:** per-candidate selection-threshold labelling, the batched quality tray, and the "gated on risk" smart-gate third mode. For now the four binary options stand, and the floor + surface budget contain fatigue by keeping injected volume small.
 
 ### Feedback: Accept / Deny / Block / Report (D-RECALL-FEEDBACK-FOUR-BUTTON)
 
 | Action | Meaning | Local | Corpus (D-4.2) |
 |---|---|---|---|
 | Accept | use it | injected | **serve** (positive) |
-| Deny | "not useful now" | suppress this session/context | **neutral** (context ≠ quality) |
+| Deny | "not useful now" | suppress this session/context | **neutral** (context ≠ memory quality) |
 | Block | "not useful ever" | permanent personal blacklist | **global denial** (aggregate of distinct blockers) |
 | Report | harmful / wrong | block + escalate | on-chain accountability |
 
 The global corpus down-vote moves **Deny → Block** (Deny was previously conflated as both local-forever + global down-vote). The decay FORMULA is unchanged (R-DECAY-FROZEN); only the upstream action that emits a denial event moves. **Auto-injected memories emit a *serve*, never an *approval*** — the relevance floor is what makes that auto-serve an honest D-4.2 signal. The Block/Deny negative path is the load-bearing self-correction once the safe majority auto-serves; keep it cheap, and never fabricate a synthetic negative (an ignored injection is not a denial).
+
+> Note: these four consumer-feedback buttons are distinct from the removed `user_feedback` failing-signal source — that signal was the grader speaking (external judgment, not evidence), never a failing signal.
 
 ### Anticipatory / "story" recall (D-RECALL-TRAJECTORY — planned, tuning-gated)
 
@@ -308,7 +310,7 @@ Hub mirrors chain state to Qdrant payload
 
 ### Deterministic need-card query construction (RATIFIED 2026-07-22; feed implementation pending)
 
-Recall query construction runs through the deterministic need-card (D-RECALL-ALIGNMENT): harvested session signals (`intent`, `task`, `stack`, `deps`, `errorStrings`, `files`) are assembled into one canonical query input shared by the product plugin and the benchmark path. Per D-FIXLOOP-RECALL (Walter-ratified 2026-07-22), the harvest seam `buildFailing` / `testFailing` is now mandated to be fed from live build/test failure signals so repair-round recall queries include the actual failing checks and error strings via this same card. No per-recall LLM call is added on the recall path.
+Recall query construction runs through the deterministic need-card (D-RECALL-ALIGNMENT): harvested session signals (`intent`, `task`, `stack`, `deps`, `errorStrings`, `files`) are assembled into one canonical query input shared by all consumers of the path. Per D-FIXLOOP-RECALL (Walter-ratified 2026-07-22), the harvest seam `buildFailing` / `testFailing` is now mandated to be fed from live build/test failure signals so repair-round recall queries include the actual failing checks and error strings via this same card. No per-recall LLM call is added on the recall path.
 
 ---
 

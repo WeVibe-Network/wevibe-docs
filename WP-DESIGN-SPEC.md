@@ -490,7 +490,7 @@ Two statements must not be conflated:
 
 For search, the hub holds — in Qdrant — clean float32 embeddings plus plaintext keyword weights: a disclosed, lossy, realistically-invertible **semantic shadow** of each memory (§4.6, §9.3). Published embedding-inversion research [13][14] shows approximate content recovery from clean embeddings is realistic. The mitigations here are **operational, not cryptographic**: Qdrant API auth, internal-network deployment, per-organization collection isolation, and signed responses. Encrypted vector search is the documented evaluation trigger — formally evaluated when an organization requests confidentiality-sensitive hosting, or when public-testnet launch planning begins, whichever comes first. WeVibe makes **no** claim of a zero-knowledge index or a content-confidential hub. "Cannot decrypt" and "learns nothing" are different guarantees, and only the first is made.
 
-Two further notes. **The consumer-side injection gate is live and enforced today** — a blocking, fail-closed human-approval step (Accept/Deny/Block/Report, §2.5) that injects only human-approved memories; benchmark/test mode outside the shared-memory safety contract may auto-approve for evaluation only. **Key locality:** the hub never receives `epoch_sk`; only the epoch public key and finished kfrags cross the wire, and the confidentiality proof rests on this locality holding cleanly.
+Two further notes. **The consumer-side injection gate is live and enforced today** — a blocking, fail-closed human-approval step (Accept/Deny/Block/Report, §2.5) that injects only human-approved memories; test/verification mode outside the shared-memory safety contract may auto-approve for verification purposes. **Key locality:** the hub never receives `epoch_sk`; only the epoch public key and finished kfrags cross the wire, and the confidentiality proof rests on this locality holding cleanly.
 
 ### 4.6 Metadata Visibility Model
 
@@ -564,7 +564,7 @@ Each memory is a single, self-contained technical insight with four fields:
 - **context** — the environment, versions, and conditions where it applies.
 - **dnd** — negative knowledge: what *not* to do, and why.
 - **stack** — the specific technologies involved.
-This atomic form is preserved end-to-end: every extraction consumer, benchmark harnesses included, operates on individual memory objects. Collapsing multiple atomic memories into a single text blob is a conformance violation.
+This atomic form is preserved end-to-end: every extraction consumer operates on individual memory objects. Collapsing multiple atomic memories into a single text blob is a conformance violation.
 
 **Retrieval scoring.**
 
@@ -587,7 +587,7 @@ Vector similarity is primary; keyword overlap is additive and capped. Parameters
 [[DIAGRAM 3 — "Recall flow"]]
 [[DESIGN NOTE]] A single top-to-bottom flow with one mandatory human approval gate.
 Group nodes into three swimlanes by owner: "Local plugin," "Hub," "Local plugin"
-again. Include a clearly labeled benchmark/test-only note outside the production
+again. Include a clearly labeled test/verification-only note outside the production
 shared-memory flow.
 
 Top-to-bottom nodes:
@@ -604,12 +604,12 @@ Mandatory branch (shared/org production memory):
 
 > **2026-08-08 — SUPERSEDED (RECALL-TRIGGER canon).** The gated-approval branch above REMAINS as specified — the four buttons are unchanged. What changes is WHEN the gate appears: it is presented on the repeat-failure trigger (second failure under the same stable failureKey while still red, D-RECALL-TRIGGER-REPEAT), not on every candidate per prompt. The gate BLOCKS — no timeout, no fallthrough (D-RECALL-GATE-BLOCKS). Full design: RECALL-PIVOT-SPEC §8.7 (workspace copy) and RECALL-SYSTEM §6.1.
 
-Benchmark/test-only note (outside shared-memory safety contract):
-- **Benchmark/test mode:** evaluation mode may auto-approve candidates for throughput testing; never enabled for production shared/org recall.
+Test/verification-only note (outside shared-memory safety contract):
+- **Test/verification mode:** may auto-approve candidates for throughput testing; never enabled for production shared/org recall.
 
 Terminal node: "Agent continues, with or without memory."
 
-*Caption:* Diagram 3. Recall is queried on every prompt; shared-memory production flow uses a single mandatory human gate, with benchmark/test mode explicitly out of contract.
+*Caption:* Diagram 3. Recall is queried on every prompt; shared-memory production flow uses a single mandatory human gate, with test/verification mode explicitly out of contract.
 
 > **2026-08-08 — SUPERSEDED (RECALL-TRIGGER canon).** The claim that recall is queried on every prompt is superseded. Recall is NO LONGER queried per prompt; it fires on ONE gated condition — the second failure under the same stable failureKey while still red (D-RECALL-TRIGGER-REPEAT) — and on nothing else. The shared-memory production gate REMAINS a single mandatory human gate; what changes is WHEN it appears (on the repeat-failure trigger, not per prompt) and that it BLOCKS (no timeout, no fallthrough — D-RECALL-GATE-BLOCKS). Full design: RECALL-PIVOT-SPEC §8.7 (workspace copy) and RECALL-SYSTEM §6.1.
 
@@ -635,7 +635,7 @@ Local components are the MCP server + plugin, Umbral sidecar, and wevibe-guard. 
 
 *Caption:* Table 11. Vector retrieval itself is hub-side; the memory ciphertext comes from the chain, while the hub serves vectors, label metadata, and the Umbral PRE materials, and never decrypts plaintext.
 
-**The extraction substrate.** A captured local session is the full plugin event stream: user messages (including repair/feedback turns), assistant text, tool calls with outputs (test runs, builds, and error output), and file-edit events. One deterministic substrate builder assembles that stream and is shared byte-identically by the dashboard Extract path and benchmark harnesses, so benchmark extraction and production extraction run over the same session bytes.
+**The extraction substrate.** A captured local session is the full plugin event stream: user messages (including repair/feedback turns), assistant text, tool calls with outputs (test runs, builds, and error output), and file-edit events. One deterministic substrate builder assembles that stream, so all extraction runs operate over the same session bytes.
 
 ### 6.2 Dependencies
 
